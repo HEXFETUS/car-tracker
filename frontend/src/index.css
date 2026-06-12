@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --color-brand-teal: #35858E;    /* Deep Blue-Teal — primary accent */
+  --color-brand-sage: #7DA78C;    /* Sage Green — borders, secondary */
+  --color-brand-moss: #C2D099;    /* Light Moss Green — subtle bg, hover */
+  --color-brand-cream: #E6EEC9;   /* Pale Cream-Ivory — light bg, alt rows */
+
+  /* Soft ambient shadow tinted with brand teal — use in place of border-heavy cards */
+  --shadow-brand: 0 4px 24px -4px rgba(53, 133, 142, 0.16), 0 0 0 rgba(0,0,0,0);
+  --shadow-brand-lg: 0 8px 40px -8px rgba(53, 133, 142, 0.18), 0 0 0 rgba(0,0,0,0);
+  --shadow-brand-xl: 0 12px 56px -12px rgba(53, 133, 142, 0.20), 0 0 0 rgba(0,0,0,0);
+}

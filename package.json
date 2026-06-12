@@ -1,0 +1,17 @@
+{
+  "name": "car-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n frontend,backend -c cyan,green \"pnpm run dev:frontend\" \"pnpm run dev:backend\"",
+    "dev:frontend": "pnpm --filter car-tracker-frontend dev",
+    "dev:backend": "pnpm --filter car-tracker-backend dev",
+    "build": "pnpm --filter car-tracker-backend build && pnpm --filter car-tracker-frontend build",
+    "build:frontend": "pnpm --filter car-tracker-frontend build",
+    "build:backend": "pnpm --filter car-tracker-backend build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
