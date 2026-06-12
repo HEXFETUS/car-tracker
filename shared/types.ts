@@ -42,6 +42,35 @@ export interface ActivityEntry {
   timestamp: string;
 }
 
+// ── Vehicle ────────────────────────────────────────────────────
+
+export interface Vehicle {
+  id: string;
+  plateNumber: string;
+  make: string;
+  model: string;
+  year: number;
+  color?: string;
+  vehicleType?: string;
+  fuelType?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Driver ─────────────────────────────────────────────────────
+
+export interface Driver {
+  id: string;
+  fullName: string;
+  phone: string;
+  email: string;
+  address?: string;
+  licenseNumber: string;
+  expiryDate: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   data: T;
