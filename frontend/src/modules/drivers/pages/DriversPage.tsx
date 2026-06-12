@@ -20,7 +20,7 @@ function isExpired(dateStr: string): boolean {
 }
 
 export function DriversPage() {
-  const { toast } = useNotification();
+  const { toast, confirm } = useNotification();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -49,6 +49,13 @@ export function DriversPage() {
     licenseNumber: string;
     expiryDate: string;
   }) {
+    const confirmed = await confirm({
+      title: 'Save Driver?',
+      message: `You are about to register "${payload.fullName}" as a new driver. This action can be modified later.`,
+      type: 'info',
+    });
+    if (!confirmed) return;
+
     try {
       await createDriver(payload);
       toast('Driver added successfully!', 'success');

@@ -71,9 +71,47 @@ export interface Driver {
   updatedAt: string;
 }
 
+// ── GPS Trip Log ───────────────────────────────────────────────
+
+export type TripStatus = 'departed' | 'en-route' | 'arrived' | 'cancelled' | 'completed';
+
+export interface GpsTripLog {
+  id: string;
+  gpsRecordNo: string;
+  tripDate: string; // ISO date (YYYY-MM-DD)
+  vehicleId: string;
+  driverId: string;
+  originGpsStartPoint: string;
+  destinationGpsEndPoint: string;
+  actualRouteRoadTaken: string;
+  departureTimeGps: string; // ISO datetime
+  arrivalTimeGps: string; // ISO datetime
+  gpsDistanceKm: number;
+  engineHours: number;
+  maxSpeedKph: number;
+  tripStatusGps: TripStatus;
+  travelOrderId?: string | null;
+  toStatusAuto?: string | null;
+  anomalyFlag: boolean;
+  notesRemarks?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Generic API ────────────────────────────────────────────────
+
 export interface ApiResponse<T> {
   success: boolean;
   data: T;
   message?: string;
   error?: string;
+}
+
+export interface PaginatedResponse<T> {
+  success: boolean;
+  data: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  message?: string;
 }

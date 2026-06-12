@@ -9,7 +9,9 @@
     "dev:backend": "pnpm --filter car-tracker-backend dev",
     "build": "pnpm --filter car-tracker-backend build && pnpm --filter car-tracker-frontend build",
     "build:frontend": "pnpm --filter car-tracker-frontend build",
-    "build:backend": "pnpm --filter car-tracker-backend build"
+    "build:backend": "pnpm --filter car-tracker-backend build",
+    "tracker": "pnpm --filter @car-tracker/tracker start",
+    "tracker:sync": "pnpm --filter @car-tracker/tracker start"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

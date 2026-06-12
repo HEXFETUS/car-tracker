@@ -1,6 +1,6 @@
 import type { Driver, ApiResponse } from '@car-tracker/shared';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3500';
 
 export async function fetchDrivers(): Promise<Driver[]> {
   const res = await fetch(`${API_BASE}/api/drivers`);

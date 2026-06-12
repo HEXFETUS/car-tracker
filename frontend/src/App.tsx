@@ -11,6 +11,7 @@ import { DashboardPage } from '@/modules/dashboard/pages/DashboardPage';
 import { VehiclesPage } from '@/modules/vehicles/pages/VehiclesPage';
 import { ReportsPage } from '@/modules/reports/pages/ReportsPage';
 import { TravelOrdersPage } from '@/modules/travel-orders/pages/TravelOrdersPage';
+import { GpsLogsPage } from '@/modules/gps-logs/pages/GpsLogsPage';
 import { DriversPage } from '@/modules/drivers/pages/DriversPage';
 import { SettingsPage } from '@/modules/settings/pages/SettingsPage';
 
@@ -43,6 +44,16 @@ function AppRoutes() {
           <ProtectedRoute>
             <AppLayout>
               <VehiclesPage />
+            </AppLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/gps-logs"
+        element={
+          <ProtectedRoute>
+            <AppLayout>
+              <GpsLogsPage />
             </AppLayout>
           </ProtectedRoute>
         }

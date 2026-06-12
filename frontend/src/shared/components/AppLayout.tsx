@@ -12,6 +12,7 @@ import {
   ChevronDown,
   Plane,
   Users,
+  MapPin,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useState } from 'react';
@@ -19,6 +20,7 @@ import { useState } from 'react';
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/travel-orders', label: 'Travel Orders', icon: Plane },
+  { to: '/gps-logs', label: 'GPS Logs', icon: MapPin },
   { to: '/vehicles', label: 'Vehicles', icon: Car },
   { to: '/drivers', label: 'Drivers', icon: Users },
   { to: '/reports', label: 'Reports', icon: FileSpreadsheet },

@@ -6,7 +6,7 @@ import { fetchVehicles, createVehicle } from '../api/vehicles-api';
 import type { Vehicle } from '@car-tracker/shared';
 
 export function VehiclesPage() {
-  const { toast } = useNotification();
+  const { toast, confirm } = useNotification();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -36,6 +36,13 @@ export function VehiclesPage() {
     vehicleType?: string;
     fuelType?: string;
   }) {
+    const confirmed = await confirm({
+      title: 'Save Vehicle?',
+      message: `You are about to add "${payload.year} ${payload.make} ${payload.model}" (${payload.plateNumber}) to your fleet. This action can be modified later.`,
+      type: 'info',
+    });
+    if (!confirmed) return;
+
     try {
       await createVehicle(payload);
       toast('Vehicle added successfully!', 'success');
