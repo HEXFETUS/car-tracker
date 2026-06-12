@@ -1,0 +1,728 @@
+// ── Fleet Telemetry & Alert Engine ────────────────────────────
+//
+// Core tracking module: fetches fleet data from the Cartrack API,
+// extracts vehicle status, computes speeding/idling/fuel thresholds,
+// generates Telegram notifications, and persists alerts to Supabase.
+//
+// Environment Variables (loaded automatically via process.env):
+//   CARTRACK_API_URL, CARTRACK_USERNAME, CARTRACK_PASSWORD
+//   SPEED_LIMIT_KMH (default 120)
+//   LOW_FUEL_LITERS (default 4)
+//   ALERT_DEDUPE_SECONDS (default 300)
+//   CARTRACK_TIMEOUT_MS (default 15000)
+//   CARTRACK_RETRIES (default 1)
+//   FLEET_CACHE_SECONDS (default 30)
+//   FLEET_STALE_CACHE_SECONDS (default 3600)
+//   BOT_TOKEN, CHAT_ID (Telegram)
+
+import { alreadySentRecently, getJson, setJson } from './state.js';
+import { insertAlertsToSupabase, isSupabaseConfigured } from './supabase.js';
+
+// ── Configuration from Environment ────────────────────────────
+
+export const SPEED_LIMIT_KMH = Number(process.env.SPEED_LIMIT_KMH || 120);
+export const LOW_FUEL_LITERS = Number(process.env.LOW_FUEL_LITERS || 4);
+export const IDLE_ALERT_THRESHOLDS_MINUTES = [10, 30, 60];
+export const IDLE_LIMIT_MINUTES = IDLE_ALERT_THRESHOLDS_MINUTES[0];
+export const ALERT_DEDUPE_SECONDS = Number(process.env.ALERT_DEDUPE_SECONDS || process.env.SYNC_INTERVAL_SECONDS || 300);
+export const CARTRACK_TIMEOUT_MS = Number(process.env.CARTRACK_TIMEOUT_MS || 15000);
+export const CARTRACK_RETRIES = Number(process.env.CARTRACK_RETRIES || 1);
+export const FLEET_CACHE_SECONDS = Number(process.env.FLEET_CACHE_SECONDS || 30);
+export const FLEET_STALE_CACHE_SECONDS = Number(process.env.FLEET_STALE_CACHE_SECONDS || 3600);
+
+// ── Vehicle Key Heuristics ────────────────────────────────────
+
+const VEHICLE_ID_KEYS = ['vehicle_id', 'vehicleId', 'id', 'unit_id', 'unitId', 'asset_id', 'assetId', 'device_id', 'deviceId', 'registration'];
+const VEHICLE_NAME_KEYS = ['vehicle_name', 'vehicleName', 'registration', 'reg', 'plate', 'plate_number', 'license_plate', 'name', 'label'];
+const VEHICLE_MODEL_KEYS = ['model', 'vehicle_model', 'vehicleModel', 'make_model', 'makeModel', 'asset_model', 'assetModel'];
+const VEHICLE_DETAIL_KEYS = ['registration', 'reg', 'plate', 'plate_number', 'license_plate', 'vehicle_id', 'vehicleId', 'unit_id', 'unitId', 'asset_id', 'assetId', 'device_id', 'deviceId'];
+const VEHICLE_LIST_KEYS = ['data', 'vehicles', 'vehicle', 'items', 'results', 'fleet', 'assets', 'units'];
+
+const VEHICLE_MODEL_BY_PLATE = {
+  KAR6444: 'Toyota Hilux',
+  KAR6412: 'Toyota Innova',
+  KAR6558: 'Toyota Hilux',
+};
+
+const VEHICLE_EMOJI = {
+  KAR6444: '🛻',
+  KAR6412: '🚐',
+  KAR6558: '🚙',
+};
+
+// ── Helpers ───────────────────────────────────────────────────
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isRetriableFetchError(error) {
+  const code = error?.cause?.code || error?.code;
+  return [
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_BODY_TIMEOUT',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'EAI_AGAIN',
+  ].includes(code);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = CARTRACK_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export function firstPresent(...values) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+export function firstKey(data, keys) {
+  if (!data || typeof data !== 'object') return null;
+  for (const key of keys) {
+    if (data[key] !== undefined && data[key] !== null) return data[key];
+  }
+  return null;
+}
+
+export function firstNestedKey(data, keys) {
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const value = firstNestedKey(item, keys);
+      if (value !== null && value !== undefined) return value;
+    }
+    return null;
+  }
+  if (!data || typeof data !== 'object') return null;
+
+  const direct = firstKey(data, keys);
+  if (direct !== null && direct !== undefined) return direct;
+
+  for (const value of Object.values(data)) {
+    const nested = firstNestedKey(value, keys);
+    if (nested !== null && nested !== undefined) return nested;
+  }
+  return null;
+}
+
+export function toNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+export function toBool(value, fallback = false) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', 'on', '1', 'yes', 'y', 'running'].includes(normalized)) return true;
+    if (['false', 'off', '0', 'no', 'n', 'stopped'].includes(normalized)) return false;
+  }
+  return Boolean(value);
+}
+
+// ── Formatting ────────────────────────────────────────────────
+
+export function formatSpeed(speed) {
+  const num = Number(speed);
+  return Number.isInteger(num) ? String(num) : String(num);
+}
+
+export function formatFuelLiters(value) {
+  if (value === null || value === undefined) return 'Unknown';
+  return `${formatSpeed(value)} L`;
+}
+
+export function formatMinutes(minutes) {
+  const value = Math.max(0, toNumber(minutes, 0));
+  const text = Number.isInteger(value) ? String(value) : String(Math.round(value * 10) / 10);
+  return `${text} minute${text === '1' ? '' : 's'}`;
+}
+
+export function getManilaFormatter() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
+
+function getDatePart(parts, type) {
+  return parts.find((part) => part.type === type)?.value || '';
+}
+
+export function formatEventTime(eventTime) {
+  const text = String(eventTime || '').trim();
+  if (!text) return 'Unknown time';
+
+  let normalized = text.includes('T') ? text : text.replace(' ', 'T');
+  if (/[+-]\d\d$/.test(normalized)) {
+    normalized = `${normalized}:00`;
+  } else if (!normalized.endsWith('Z') && !/[+-]\d\d:?\d\d$/.test(normalized)) {
+    normalized = `${normalized}+08:00`;
+  }
+
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return text;
+
+  const parts = getManilaFormatter().formatToParts(date);
+  const year = getDatePart(parts, 'year');
+  const month = getDatePart(parts, 'month');
+  const day = getDatePart(parts, 'day');
+  const hour = String(Number(getDatePart(parts, 'hour')) || 12);
+  const minute = getDatePart(parts, 'minute');
+  const second = getDatePart(parts, 'second');
+  const dayPeriod = getDatePart(parts, 'dayPeriod').replace(/\./g, '').toUpperCase();
+
+  return `${year}-${month}-${day} ${hour}:${minute}:${second} ${dayPeriod} PHT`;
+}
+
+function formatAlert(header, ...lines) {
+  return [header, '', ...lines].join('\n');
+}
+
+function formatLocationTime(location, eventTime) {
+  return [`📍 ${location}`, `🕘 ${formatEventTime(eventTime)}`];
+}
+
+export function formatSpeedingAlert(name, speed, location, eventTime, toNumber = null, driver = null) {
+  const excess = Math.max(0, speed - SPEED_LIMIT_KMH);
+  const extraLines = [];
+  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  return formatAlert(
+    `🚨 SPEEDING - ${name}`,
+    `⚡ Speed: ${formatSpeed(speed)} km/h (Limit: ${SPEED_LIMIT_KMH} km/h)`,
+    `📈 Excess: +${formatSpeed(excess)} km/h over limit`,
+    ...extraLines,
+    ...formatLocationTime(location, eventTime),
+  );
+}
+
+export function formatIgnitionAlert(name, ignition, location, eventTime, toNumber = null, driver = null) {
+  const extraLines = [];
+  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  return formatAlert(
+    `${ignition ? '🔑 IGNITION ON' : '🔒 IGNITION OFF'} - ${name}`,
+    ...extraLines,
+    ...formatLocationTime(location, eventTime),
+  );
+}
+
+export function formatMotionAlert(name, location, eventTime, toNumber = null, driver = null) {
+  const extraLines = [];
+  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  return formatAlert(`🟢 MOTION STARTED - ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
+}
+
+export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber = null, driver = null) {
+  const extraLines = [];
+  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  return formatAlert(
+    `🗺 LOCATION UPDATE - ${name}`,
+    `📍 ${location}`,
+    `⚡ Speed: ${formatSpeed(speed)} km/h`,
+    `⛽ Fuel: ${formatFuelLiters(fuel)}`,
+    ...extraLines,
+    `🕘 ${formatEventTime(eventTime)}`,
+  );
+}
+
+export function formatIdleAlert(name, location, eventTime, toNumber = null, driver = null) {
+  const extraLines = [];
+  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  return formatAlert(`⏱ IDLING - ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
+}
+
+export function formatIdlingTooLongAlert(name, idleMinutes, fuel, location, eventTime, toNumber = null, driver = null) {
+  const extraLines = [];
+  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  return formatAlert(
+    `⏱ IDLING TOO LONG - ${name}`,
+    `⏱ Idling for ${formatMinutes(idleMinutes)}`,
+    `⛽ Fuel: ${formatFuelLiters(fuel)}`,
+    ...extraLines,
+    ...formatLocationTime(location, eventTime),
+  );
+}
+
+export function formatFuelAlert(name, fuel, location, eventTime, toNumber = null, driver = null) {
+  const extraLines = [];
+  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  return formatAlert(
+    `⛽ FUEL LOW - ${name}`,
+    `Fuel: ${formatFuelLiters(fuel)} (Warning below ${LOW_FUEL_LITERS} L)`,
+    ...extraLines,
+    ...formatLocationTime(location, eventTime),
+  );
+}
+
+// ── Telegram ──────────────────────────────────────────────────
+
+export async function sendTelegram(message) {
+  const { BOT_TOKEN, CHAT_ID } = process.env;
+  if (!BOT_TOKEN || !CHAT_ID) {
+    console.log('Missing Telegram config - BOT_TOKEN or CHAT_ID not set');
+    return { ok: false, error: 'missing_telegram_config' };
+  }
+
+  const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ chat_id: CHAT_ID, text: message }),
+  });
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.ok) console.log('Telegram error:', response.status, result);
+  return result;
+}
+
+// ── Alert Dispatch ────────────────────────────────────────────
+
+function normalizeAlert(entry) {
+  if (typeof entry === 'string') return { type: 'message', message: entry, vehicle_id: null, location: null, speed: null, fuel: null };
+  if (!entry || typeof entry !== 'object') return null;
+  return {
+    type: entry.type || 'message',
+    message: entry.message,
+    vehicle_id: entry.vehicle_id ?? null,
+    location: entry.location ?? null,
+    speed: entry.speed ?? null,
+    fuel: entry.fuel ?? null,
+  };
+}
+
+export async function sendVehicleAlerts(alerts) {
+  const result = { queued: alerts.length, sent: 0, skipped: 0, failed: 0, persisted: 0 };
+  if (!alerts.length) return result;
+  const nowMs = Date.now();
+  const accepted = [];
+  for (const raw of alerts) {
+    const alert = normalizeAlert(raw);
+    if (!alert?.message) continue;
+    if (await alreadySentRecently(alert.message, nowMs, ALERT_DEDUPE_SECONDS)) {
+      result.skipped += 1;
+      continue;
+    }
+    const telegram = await sendTelegram(alert.message);
+    if (telegram?.ok) result.sent += 1;
+    else result.failed += 1;
+    accepted.push(alert);
+  }
+  if (accepted.length && isSupabaseConfigured()) {
+    try {
+      const persistResult = await insertAlertsToSupabase(accepted);
+      if (persistResult?.ok) result.persisted = persistResult.count || accepted.length;
+    } catch (error) {
+      console.error('Supabase alert persist error:', error.message);
+    }
+  }
+  return result;
+}
+
+// ── Cartrack API ──────────────────────────────────────────────
+
+export async function getFleetData() {
+  const { CARTRACK_API_URL, CARTRACK_USERNAME, CARTRACK_PASSWORD } = process.env;
+  if (!CARTRACK_API_URL) throw new Error('Missing CARTRACK_API_URL');
+  const auth = Buffer.from(`${CARTRACK_USERNAME}:${CARTRACK_PASSWORD}`).toString('base64');
+  let lastError;
+
+  for (let attempt = 0; attempt <= CARTRACK_RETRIES; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(CARTRACK_API_URL, {
+        headers: { authorization: `Basic ${auth}` },
+      });
+      if (!response.ok) throw new Error(`Cartrack API error ${response.status}: ${await response.text()}`);
+      return response.json();
+    } catch (error) {
+      lastError = error;
+      if (!isRetriableFetchError(error) || attempt >= CARTRACK_RETRIES) break;
+      await delay(500 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+}
+
+export async function getFleetDataCached() {
+  const ttl = FLEET_CACHE_SECONDS;
+  const cached = await getJson('fleet:cache', null);
+  if (cached?.timestamp && Date.now() - cached.timestamp < ttl * 1000) return cached.data;
+
+  try {
+    const data = await getFleetData();
+    const value = { data, timestamp: Date.now() };
+    await setJson('fleet:cache', value, ttl);
+    await setJson('fleet:cache:last', value, FLEET_STALE_CACHE_SECONDS);
+    return data;
+  } catch (error) {
+    const stale = await getJson('fleet:cache:last', null);
+    if (stale?.data) {
+      console.warn('Cartrack API unavailable; using cached fleet data:', error.message);
+      return stale.data;
+    }
+    throw error;
+  }
+}
+
+// ── Vehicle Extraction ────────────────────────────────────────
+
+export function getVehicleId(vehicle) {
+  return firstKey(vehicle, VEHICLE_ID_KEYS);
+}
+
+export function getVehicleName(vehicle) {
+  return firstKey(vehicle, VEHICLE_NAME_KEYS) || getVehicleId(vehicle) || 'Vehicle';
+}
+
+export function getVehicleModel(vehicle) {
+  const name = String(getVehicleName(vehicle)).trim().toUpperCase();
+  return VEHICLE_MODEL_BY_PLATE[name] || firstKey(vehicle, VEHICLE_MODEL_KEYS);
+}
+
+export function getVehicleDisplayName(vehicle) {
+  const name = String(getVehicleName(vehicle)).trim();
+  const toNumber = getTravelOrderNumber(vehicle);
+  return toNumber ? `${name} (TO-${toNumber})` : name;
+}
+
+export function getVehicleSpeed(vehicle) {
+  return toNumber(firstKey(vehicle, ['speed', 'speed_kph', 'speedKph', 'speed_kmh', 'speedKmh', 'current_speed', 'currentSpeed']), 0);
+}
+
+export function getVehicleFuel(vehicle) {
+  let fuelValue = firstNestedKey(vehicle, ['fuel_level', 'fuelLevel', 'tank_level', 'tankLevel', 'fuel']);
+  if (fuelValue && typeof fuelValue === 'object' && !Array.isArray(fuelValue)) {
+    fuelValue = firstKey(fuelValue, ['level', 'value', 'remaining', 'liters', 'litres', 'liter', 'litre']);
+  }
+  if (fuelValue === null || fuelValue === undefined) return null;
+  return toNumber(fuelValue, null);
+}
+
+export function getVehicleFuelPercent(vehicle) {
+  let value = firstNestedKey(vehicle, ['fuel_percent', 'fuelPercent', 'fuel_percentage', 'fuelPercentage', 'fuel_level_percentage', 'fuelLevelPercentage', 'fuel_tank_percentage', 'fuelTankPercentage', 'fuel_level_perc', 'fuelLevelPerc', 'fuel_perc', 'fuelPerc']);
+  if (value && typeof value === 'object' && !Array.isArray(value)) value = firstKey(value, ['percent', 'percentage', 'value', 'remaining', 'fuel_percent', 'fuelPercent']);
+  if (value === null || value === undefined) return null;
+  const percent = toNumber(value, null);
+  if (percent === null) return null;
+  return percent > 0 && percent <= 1 ? percent * 100 : percent;
+}
+
+export function isLowFuel(fuelLiters) {
+  return fuelLiters !== null && fuelLiters !== undefined && fuelLiters < LOW_FUEL_LITERS;
+}
+
+export function getVehicleIdleMinutes(vehicle) {
+  const idleMinutes = firstKey(vehicle, ['idle_minutes', 'idling_minutes', 'idle_duration_minutes', 'idleDurationMinutes', 'idle_time_minutes', 'idleTimeMinutes']);
+  if (idleMinutes !== null && idleMinutes !== undefined) return toNumber(idleMinutes, 0);
+  const idleSeconds = firstKey(vehicle, ['idle_seconds', 'idling_seconds', 'idle_duration_seconds', 'idleDurationSeconds', 'idle_time_seconds', 'idleTimeSeconds']);
+  if (idleSeconds !== null && idleSeconds !== undefined) return toNumber(idleSeconds, 0) / 60;
+  return null;
+}
+
+export function getIdleStatus(ignition, moving, prev = {}, apiIdleMinutes = null) {
+  if (!ignition || moving) return { idleStartedAt: null, idleMinutes: 0, idlingTooLong: false, idleAlertCount: 0, previousIdleAlertCount: 0 };
+
+  const now = Date.now();
+  const previousMilestoneCount = prev.idling_too_long_alert_threshold_count;
+  const previousIdleAlertCount = previousMilestoneCount !== undefined && previousMilestoneCount !== null
+    ? Number(previousMilestoneCount || 0)
+    : IDLE_ALERT_THRESHOLDS_MINUTES.filter((threshold) => threshold <= Number(prev.idling_too_long_alert_count || 0) * IDLE_LIMIT_MINUTES).length;
+  let idleStartedAt;
+  let idleMinutes;
+
+  if (apiIdleMinutes !== null && apiIdleMinutes !== undefined) {
+    idleMinutes = Math.max(0, toNumber(apiIdleMinutes, 0));
+    idleStartedAt = now - idleMinutes * 60 * 1000;
+  } else {
+    idleStartedAt = prev.idle_started_at || now;
+    idleMinutes = Math.max(0, (now - Number(idleStartedAt)) / 60000);
+  }
+
+  const idleAlertCount = IDLE_ALERT_THRESHOLDS_MINUTES.filter((threshold) => idleMinutes >= threshold).length;
+  return { idleStartedAt, idleMinutes, idlingTooLong: idleMinutes >= IDLE_LIMIT_MINUTES, idleAlertCount, previousIdleAlertCount };
+}
+
+export function looksLikeVehicle(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  const hasIdentity = firstKey(record, [...VEHICLE_ID_KEYS, ...VEHICLE_NAME_KEYS]) !== null;
+  if (!hasIdentity) return false;
+  return !VEHICLE_LIST_KEYS.some((key) => Array.isArray(record[key]));
+}
+
+export function extractVehicles(payload) {
+  const vehicles = [];
+  const seen = new Set();
+
+  function addVehicle(vehicle) {
+    const vehicleId = getVehicleId(vehicle) || getVehicleName(vehicle) || Math.random();
+    const key = String(vehicleId);
+    if (seen.has(key)) return;
+    seen.add(key);
+    vehicles.push(vehicle);
+  }
+
+  function scan(value) {
+    if (Array.isArray(value)) return value.forEach(scan);
+    if (!value || typeof value !== 'object') return;
+
+    for (const key of VEHICLE_LIST_KEYS) {
+      if (value[key] !== undefined && value[key] !== null) scan(value[key]);
+    }
+
+    if (looksLikeVehicle(value)) return addVehicle(value);
+
+    for (const nested of Object.values(value)) {
+      if (nested && typeof nested === 'object') scan(nested);
+    }
+  }
+
+  scan(payload);
+  return vehicles;
+}
+
+export function getVehicleTime(vehicle) {
+  return firstPresent(vehicle.event_time, vehicle.event_ts, vehicle.timestamp, vehicle.time, vehicle.gps_time, vehicle.gpsTime, vehicle.server_time, vehicle.serverTime, vehicle.recorded_at, vehicle.recordedAt, vehicle.last_update, vehicle.updated_at, new Date().toISOString());
+}
+
+export function getIgnition(vehicle) {
+  return toBool(firstPresent(vehicle.ignition, vehicle.engine, vehicle.engine_on, vehicle.engine_status, vehicle.ignition_status, vehicle.acc), false);
+}
+
+// ── Reverse Geocoding ─────────────────────────────────────────
+
+export async function reverseGeocode(latitude, longitude) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`;
+    const response = await fetch(url, { headers: { 'user-agent': 'CarTracker/1.0' } });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const address = data.address || {};
+    const parts = [];
+    const road = address.road || address.highway || address.pedestrian || address.path;
+    const suburb = address.suburb || address.neighbourhood || address.residential;
+    const city = address.city || address.town || address.municipality;
+    if (road) parts.push(road);
+    if (suburb) parts.push(suburb);
+    if (city) parts.push(city);
+    if (parts.length) return parts.join(', ');
+    if (data.display_name) return data.display_name.split(',').slice(0, 3).join(',').trim();
+  } catch (error) {
+    console.log('Reverse geocoding failed:', error.message);
+  }
+  return null;
+}
+
+function parseCoordinateString(value) {
+  const match = String(value || '').trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  return { latitude, longitude };
+}
+
+export function getVehicleCoordinates(vehicle) {
+  let location = firstPresent(vehicle.location, vehicle.position, vehicle.current_position, vehicle.gps, {});
+  if (typeof location === 'string') {
+    const coordinates = parseCoordinateString(location);
+    if (coordinates) return coordinates;
+  }
+  if (!location || typeof location !== 'object' || Array.isArray(location)) location = {};
+  const latitude = firstPresent(vehicle.latitude, vehicle.lat, location.latitude, location.lat);
+  const longitude = firstPresent(vehicle.longitude, vehicle.lng, vehicle.lon, location.longitude, location.lng, location.lon);
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { latitude: lat, longitude: lng };
+}
+
+export async function getVehicleLocation(vehicle) {
+  let location = firstPresent(vehicle.location, vehicle.position, vehicle.current_position, vehicle.gps, {});
+  if (location && typeof location === 'object' && !Array.isArray(location)) {
+    if (location.position_description) return String(location.position_description);
+    const latitude = firstPresent(location.latitude, location.lat);
+    const longitude = firstPresent(location.longitude, location.lng, location.lon);
+    if (latitude !== undefined && longitude !== undefined) {
+      const street = await reverseGeocode(Number(latitude), Number(longitude));
+      return street || `${latitude}, ${longitude}`;
+    }
+  }
+  if (typeof location === 'string') {
+    const coordinates = parseCoordinateString(location);
+    if (coordinates) {
+      const street = await reverseGeocode(coordinates.latitude, coordinates.longitude);
+      return street || location;
+    }
+    return location;
+  }
+  if (!location || typeof location !== 'object') location = {};
+  const latitude = firstPresent(vehicle.latitude, vehicle.lat, location.latitude, location.lat);
+  const longitude = firstPresent(vehicle.longitude, vehicle.lng, vehicle.lon, location.longitude, location.lng, location.lon);
+  const locationName = firstPresent(vehicle.location_name, vehicle.position_description, vehicle.location_description, vehicle.area, location.location_name, location.position_description, location.location_description, location.area, location.name, location.label, location.description, location.address);
+  if (locationName) return String(locationName);
+  if (latitude !== undefined && longitude !== undefined) {
+    const street = await reverseGeocode(Number(latitude), Number(longitude));
+    return street || `${latitude}, ${longitude}`;
+  }
+  return 'Location unavailable';
+}
+
+export function getTravelOrderNumber(vehicle) {
+  return firstKey(vehicle, ['to_number', 'toNumber', 'travel_order_number', 'travelOrderNumber']);
+}
+
+export function getDriver(vehicle) {
+  return firstKey(vehicle, ['driver', 'driver_name', 'driverName', 'assigned_driver', 'assignedDriver']);
+}
+
+// ── Vehicle Status Builder ────────────────────────────────────
+
+export async function buildVehicleStatus(vehicle) {
+  const speed = getVehicleSpeed(vehicle);
+  const fuel = getVehicleFuel(vehicle);
+  const idleMinutes = getVehicleIdleMinutes(vehicle);
+  const ignition = getIgnition(vehicle);
+  return {
+    id: getVehicleId(vehicle) || getVehicleName(vehicle),
+    name: getVehicleDisplayName(vehicle),
+    model: getVehicleModel(vehicle),
+    coordinates: getVehicleCoordinates(vehicle),
+    ignition,
+    location: await getVehicleLocation(vehicle),
+    time: formatEventTime(getVehicleTime(vehicle)),
+    speed,
+    speeding: speed >= SPEED_LIMIT_KMH,
+    speed_limit: SPEED_LIMIT_KMH,
+    fuel,
+    fuel_liters: fuel,
+    fuel_percent: getVehicleFuelPercent(vehicle),
+    low_fuel: isLowFuel(fuel),
+    low_fuel_liters: LOW_FUEL_LITERS,
+    idle_minutes: idleMinutes,
+    idling_too_long: ignition && speed <= 0 && idleMinutes !== null && idleMinutes >= IDLE_LIMIT_MINUTES,
+    idle_limit_minutes: IDLE_LIMIT_MINUTES,
+    to_number: getTravelOrderNumber(vehicle),
+    driver: getDriver(vehicle),
+  };
+}
+
+// ── Main Orchestrator ─────────────────────────────────────────
+
+/**
+ * Main fleet sync & alert orchestration function.
+ *
+ * Fetches fleet data from Cartrack, processes each vehicle's
+ * telemetry state, generates and dispatches alerts, and returns
+ * a structured summary of the cycle.
+ *
+ * @returns {Promise<{ status: string, vehicles: number, alerts: { queued: number, sent: number, skipped: number, failed: number, persisted: number }, data: Array<object> }>}
+ */
+export async function syncFleetAndAlert() {
+  const data = await getFleetDataCached();
+  const vehicles = extractVehicles(data);
+  const vehicleStatuses = [];
+  const alertSummary = { queued: 0, sent: 0, skipped: 0, failed: 0, persisted: 0 };
+
+  for (const vehicle of vehicles) {
+    const name = getVehicleDisplayName(vehicle);
+    const vid = getVehicleId(vehicle) || getVehicleName(vehicle);
+    const ignition = getIgnition(vehicle);
+    const speed = getVehicleSpeed(vehicle);
+    const fuel = getVehicleFuel(vehicle);
+    const fuelPercent = getVehicleFuelPercent(vehicle);
+    const location = await getVehicleLocation(vehicle);
+    const eventTime = getVehicleTime(vehicle);
+    const formattedEventTime = formatEventTime(eventTime);
+    const speeding = speed >= SPEED_LIMIT_KMH;
+    const lowFuel = isLowFuel(fuel);
+    const rawPrev = await getJson(`vehicle:${vid}`, null);
+    const prev = rawPrev && typeof rawPrev === 'string' ? JSON.parse(rawPrev) : rawPrev || {};
+    const hasPreviousState = rawPrev !== null && rawPrev !== undefined;
+    const prevIgnition = toBool(prev.ignition, false);
+    const prevSpeeding = toBool(prev.speeding, false);
+    const prevLowFuel = toBool(prev.low_fuel, false);
+    const prevMoving = toBool(prev.moving, false);
+    const prevIdlingTooLong = toBool(prev.idling_too_long, false);
+    const moving = speed > 0;
+    const idle = getIdleStatus(ignition, moving, prev, getVehicleIdleMinutes(vehicle));
+    const toNumber = getTravelOrderNumber(vehicle);
+    const driver = getDriver(vehicle);
+
+    const alerts = [];
+    function pushAlert(type, message) {
+      alerts.push({ type, message, vehicle_id: vid, location, speed, fuel });
+    }
+
+    if (hasPreviousState) {
+      if (ignition !== prevIgnition) pushAlert('ignition', formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver));
+      if (ignition && speeding && !prevSpeeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
+      if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
+      if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
+      if (ignition && moving && !prevMoving && prevIdlingTooLong) pushAlert('motion', formatMotionAlert(name, location, eventTime, toNumber, driver));
+      if (ignition && location !== prev.location) pushAlert('location_update', formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber, driver));
+    } else if (ignition) {
+      if (speeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
+      if (lowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
+      if (idle.idlingTooLong) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
+    }
+
+    const alertResult = await sendVehicleAlerts(alerts);
+    alertSummary.queued += alertResult.queued;
+    alertSummary.sent += alertResult.sent;
+    alertSummary.skipped += alertResult.skipped;
+    alertSummary.failed += alertResult.failed;
+    alertSummary.persisted += alertResult.persisted || 0;
+
+    const state = {
+      ignition,
+      moving,
+      fuel,
+      fuel_percent: fuelPercent,
+      low_fuel: lowFuel,
+      speed,
+      speeding,
+      location,
+      time: formattedEventTime,
+      idle_started_at: idle.idleStartedAt,
+      idle_minutes: idle.idleMinutes,
+      idling_too_long: idle.idlingTooLong,
+      idling_too_long_alert_count: idle.idleAlertCount,
+      idling_too_long_alert_threshold_count: idle.idleAlertCount,
+    };
+    await setJson(`vehicle:${vid}`, state);
+
+    vehicleStatuses.push({
+      id: vid,
+      name,
+      model: getVehicleModel(vehicle),
+      coordinates: getVehicleCoordinates(vehicle),
+      location,
+      time: formattedEventTime,
+      speed,
+      speeding,
+      speed_limit: SPEED_LIMIT_KMH,
+      fuel,
+      fuel_liters: fuel,
+      fuel_percent: fuelPercent,
+      low_fuel: lowFuel,
+      low_fuel_liters: LOW_FUEL_LITERS,
+      idle_minutes: idle.idleMinutes,
+      idling_too_long: idle.idlingTooLong,
+      idle_limit_minutes: IDLE_LIMIT_MINUTES,
+      idle_alert_count: idle.idleAlertCount,
+    });
+  }
+
+  return { status: 'ok', vehicles: vehicles.length, alerts: alertSummary, data: vehicleStatuses };
+}
