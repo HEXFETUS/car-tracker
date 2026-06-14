@@ -52,3 +52,34 @@ export async function createGpsLog(
   if (!body.success) throw new Error(body.error ?? 'Failed to create GPS log');
   return body.data;
 }
+
+/** Result shape returned by the sync endpoint. */
+export interface SyncResult {
+  success: boolean;
+  elapsed_seconds?: number;
+  total_active_units?: number;
+  alerts_dispatched?: number;
+  alerts_skipped?: number;
+  alerts_failed?: number;
+  alerts_persisted?: number;
+  gps_logs_saved?: number;
+  gps_logs_failed?: number;
+  timestamp?: string;
+  error?: string;
+}
+
+/**
+ * Trigger a fleet sync cycle that fetches live telemetry from Cartrack
+ * and persists GPS trip logs to the database.
+ */
+export async function syncGpsLogs(): Promise<SyncResult> {
+  const cronSecret = import.meta.env.VITE_CRON_SECRET ?? '';
+  const url = `${API_BASE}/api/cron/sync-tracker`;
+  const headers: Record<string, string> = {};
+  if (cronSecret) headers['X-Cron-Secret'] = cronSecret;
+
+  const res = await fetch(url, { headers });
+  const body: SyncResult = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Sync failed');
+  return body;
+}

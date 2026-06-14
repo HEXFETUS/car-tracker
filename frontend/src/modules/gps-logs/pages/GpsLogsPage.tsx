@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Loader2, Navigation, AlertTriangle } from 'lucide-react';
+import { Loader2, Navigation, AlertTriangle, RefreshCw, Calendar, X } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
-import { AddGpsLogModal } from '../components/AddGpsLogModal';
-import { fetchGpsLogs } from '../api/gps-logs-api';
-import type { GpsLogsResult } from '../api/gps-logs-api';
+import { fetchGpsLogs, syncGpsLogs } from '../api/gps-logs-api';
+import type { GpsLogsResult, SyncResult } from '../api/gps-logs-api';
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -40,15 +39,17 @@ export function GpsLogsPage() {
   const [result, setResult] = useState<GpsLogsResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [page, setPage] = useState(1);
+  const [dateFilter, setDateFilter] = useState('');
   const pageSize = 25;
 
   const loadLogs = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchGpsLogs({ page, pageSize });
+      const data = await fetchGpsLogs({ page, pageSize, tripDate: dateFilter || undefined });
       setResult(data);
     } catch {
       setError('Failed to load GPS logs. Please try again.');
@@ -56,25 +57,104 @@ export function GpsLogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, toast]);
+  }, [page, pageSize, dateFilter, toast]);
 
   useEffect(() => {
     loadLogs();
   }, [loadLogs]);
 
+  const handleSync = async () => {
+    try {
+      setSyncing(true);
+      setSyncResult(null);
+      const res = await syncGpsLogs();
+      setSyncResult(res);
+      toast(
+        `Sync complete — ${res.gps_logs_saved ?? 0} GPS logs saved`,
+        'success',
+      );
+      // Reload logs after sync
+      await loadLogs();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sync failed';
+      toast(msg, 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleDateChange = (value: string) => {
+    setDateFilter(value);
+    setPage(1);
+  };
+
+  const clearDateFilter = () => {
+    setDateFilter('');
+    setPage(1);
+  };
+
   const totalPages = result ? Math.ceil(result.total / pageSize) : 1;
 
   return (
     <div className="space-y-8">
-      <div className="flex justify-end">
+      {/* Action Bar: Date Filter + Sync */}
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {/* Date Filter */}
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => handleDateChange(e.target.value)}
+              className="rounded-lg border-0 bg-white pl-10 pr-3 py-2.5 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow shadow-sm"
+            />
+          </div>
+          {dateFilter && (
+            <button
+              onClick={clearDateFilter}
+              className="rounded-lg bg-zinc-100 p-2 text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-700"
+              title="Clear date filter"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Sync Button */}
         <button
-          onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+          onClick={handleSync}
+          disabled={syncing}
+          className={cn(
+            'inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.97]',
+            syncing
+              ? 'bg-brand-teal/60 cursor-not-allowed'
+              : 'bg-brand-teal hover:bg-brand-teal/80',
+          )}
         >
-          <Plus className="size-4" />
-          Import / Add GPS Log
+          {syncing ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Syncing…
+            </>
+          ) : (
+            <>
+              <RefreshCw className="size-4" />
+              Sync GPS Logs
+            </>
+          )}
         </button>
       </div>
+
+      {/* Sync Result Summary */}
+      {syncResult && syncResult.success !== undefined && (
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
+          <span className="font-medium">Last sync:</span>{' '}
+          {syncResult.gps_logs_saved ?? 0} logs saved
+          {syncResult.gps_logs_failed ? `, ${syncResult.gps_logs_failed} failed` : ''}
+          {syncResult.elapsed_seconds ? ` (${syncResult.elapsed_seconds}s)` : ''}
+        </div>
+      )}
 
       {/* Loading State */}
       {loading && (
@@ -104,7 +184,9 @@ export function GpsLogsPage() {
           <Navigation className="size-10 text-zinc-300 mb-3" />
           <p className="text-base font-medium text-zinc-600">No GPS logs found</p>
           <p className="mt-1 text-sm text-zinc-400">
-            Click "Import / Add GPS Log" to record your first trip.
+            {dateFilter
+              ? `No logs for ${dateFilter}. Try a different date or sync new data.`
+              : 'Click "Sync GPS Logs" to fetch the latest tracking data.'}
           </p>
         </div>
       )}
@@ -290,16 +372,6 @@ export function GpsLogsPage() {
           </div>
         </div>
       )}
-
-      {/* Add GPS Log Modal */}
-      <AddGpsLogModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSuccess={() => {
-          setIsModalOpen(false);
-          loadLogs();
-        }}
-      />
     </div>
   );
 }

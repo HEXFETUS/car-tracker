@@ -17,6 +17,7 @@
 
 import { alreadySentRecently, getJson, setJson } from './state.js';
 import { insertAlertsToSupabase, isSupabaseConfigured } from './supabase.js';
+import { buildTripLogRecord } from './tripLogTransformer.js';
 
 // ── Configuration from Environment ────────────────────────────
 
@@ -632,6 +633,7 @@ export async function syncFleetAndAlert() {
   const data = await getFleetDataCached();
   const vehicles = extractVehicles(data);
   const vehicleStatuses = [];
+  const tripLogRecords = [];
   const alertSummary = { queued: 0, sent: 0, skipped: 0, failed: 0, persisted: 0 };
 
   for (const vehicle of vehicles) {
@@ -722,7 +724,19 @@ export async function syncFleetAndAlert() {
       idle_limit_minutes: IDLE_LIMIT_MINUTES,
       idle_alert_count: idle.idleAlertCount,
     });
+
+    // Build trip log record for this vehicle
+    const vehicleStatusForLog = {
+      speed,
+      speeding,
+      low_fuel: lowFuel,
+      location,
+      driver,
+      to_number: toNumber,
+    };
+    const tripLogRecord = buildTripLogRecord(vehicle, vehicleStatusForLog, location);
+    tripLogRecords.push({ ...tripLogRecord, vehicleId: vid });
   }
 
-  return { status: 'ok', vehicles: vehicles.length, alerts: alertSummary, data: vehicleStatuses };
+  return { status: 'ok', vehicles: vehicles.length, alerts: alertSummary, data: vehicleStatuses, tripLogs: tripLogRecords };
 }

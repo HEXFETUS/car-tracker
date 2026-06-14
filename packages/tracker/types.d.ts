@@ -35,12 +35,32 @@ export interface VehicleStatus {
   idle_alert_count: number;
 }
 
+/** Structure of a trip log record produced by the tracker transformer. */
+export interface TripLogRecord {
+  plateNumber: string;
+  tripDate: string;
+  originGpsStartPoint: string;
+  destinationGpsEndPoint: string;
+  actualRouteRoadTaken: string;
+  departureTimeGps: string | null;
+  arrivalTimeGps: string | null;
+  gpsDistanceKm: number;
+  engineHours: number;
+  maxSpeedKph: number;
+  tripStatus: string;
+  anomalyFlag: boolean;
+  driverName: string | null;
+  toNumber: string | null;
+  vehicleId?: string;
+}
+
 /** Result returned by syncFleetAndAlert(). */
 export interface SyncResult {
   status: string;
   vehicles: number;
   alerts: AlertSummary;
   data: VehicleStatus[];
+  tripLogs: TripLogRecord[];
 }
 
 /**
@@ -50,3 +70,12 @@ export interface SyncResult {
  * and persists them to Supabase.
  */
 export function syncFleetAndAlert(): Promise<SyncResult>;
+
+// ── Trip Log Transformer ──────────────────────────────────────
+
+export function getEngineHours(vehicle: any): number;
+export function getGpsDistanceKm(vehicle: any): number;
+export function getStreetName(vehicle: any): string;
+export function getTripStatus(vehicle: any, speed: number, ignition: boolean): string;
+export function getPreviousLocation(vehicle: any): string;
+export function buildTripLogRecord(vehicle: any, vehicleStatus: any, currentLocation: string): Omit<TripLogRecord, 'vehicleId'>;
