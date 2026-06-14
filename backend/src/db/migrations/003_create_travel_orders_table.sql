@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS travel_orders (
 );
 
 -- Unique constraint on the human-readable travel order number
-CREATE UNIQUE INDEX idx_travel_orders_to_number ON travel_orders (to_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_travel_orders_to_number ON travel_orders (to_number);
 
 -- Trigger function to auto-update updated_at on row change
 CREATE OR REPLACE FUNCTION update_travel_orders_updated_at()
@@ -43,7 +43,7 @@ CREATE TRIGGER set_travel_orders_updated_at
   EXECUTE FUNCTION update_travel_orders_updated_at();
 
 -- Indexes for common queries
-CREATE INDEX idx_travel_orders_vehicle_id   ON travel_orders (vehicle_id);
-CREATE INDEX idx_travel_orders_driver_id    ON travel_orders (driver_id);
-CREATE INDEX idx_travel_orders_status       ON travel_orders (status);
-CREATE INDEX idx_travel_orders_scheduled_departure ON travel_orders (scheduled_departure_at);
+CREATE INDEX IF NOT EXISTS idx_travel_orders_vehicle_id   ON travel_orders (vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_travel_orders_driver_id    ON travel_orders (driver_id);
+CREATE INDEX IF NOT EXISTS idx_travel_orders_status       ON travel_orders (status);
+CREATE INDEX IF NOT EXISTS idx_travel_orders_scheduled_departure ON travel_orders (scheduled_departure_at);

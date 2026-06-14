@@ -34,6 +34,13 @@ export async function fetchTravelOrders(): Promise<TravelOrderData[]> {
   return body.data;
 }
 
+export async function fetchTravelOrderById(id: string): Promise<TravelOrderData> {
+  const res = await fetch(`${API_BASE}/api/travel-orders/${id}`);
+  const body: ApiResponse<TravelOrderData> = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Failed to fetch travel order');
+  return body.data;
+}
+
 export async function createTravelOrder(
   payload: {
     vehicleId?: string;
@@ -58,4 +65,38 @@ export async function createTravelOrder(
   const body: ApiResponse<TravelOrderData> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to create travel order');
   return body.data;
+}
+
+export async function updateTravelOrder(
+  id: string,
+  payload: Partial<{
+    originLocation: string;
+    destinationLocation: string;
+    scheduledDepartureAt: string;
+    scheduledArrivalAt: string;
+    purpose: string;
+    notes: string;
+    department: string;
+    travelerName: string;
+    requestVehicle: boolean;
+    requestDriver: boolean;
+    status: string;
+  }>,
+): Promise<TravelOrderData> {
+  const res = await fetch(`${API_BASE}/api/travel-orders/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body: ApiResponse<TravelOrderData> = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Failed to update travel order');
+  return body.data;
+}
+
+export async function deleteTravelOrder(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/travel-orders/${id}`, {
+    method: 'DELETE',
+  });
+  const body: ApiResponse<null> = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Failed to delete travel order');
 }

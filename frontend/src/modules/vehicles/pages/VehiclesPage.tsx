@@ -55,16 +55,7 @@ export function VehiclesPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl">
-            Vehicles
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            {vehicles.length} vehicle{vehicles.length !== 1 ? 's' : ''} in your fleet.
-          </p>
-        </div>
+      <div className="flex justify-end">
         <button
           onClick={() => setIsModalOpen(true)}
           className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"

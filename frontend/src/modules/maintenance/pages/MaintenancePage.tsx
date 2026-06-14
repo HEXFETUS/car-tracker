@@ -7,18 +7,6 @@ export function MaintenancePage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl">
-          Maintenance Log
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          {MOCK_MAINTENANCE.length} service records &middot; Total spent{' '}
-          <span className="font-medium text-zinc-900">
-            ${totalCost.toFixed(2)}
-          </span>
-        </p>
-      </div>
-
       {/* Desktop table */}
       <div className="hidden overflow-hidden rounded-xl bg-white shadow-brand md:block">
         <table className="w-full text-sm">

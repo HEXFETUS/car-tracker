@@ -33,7 +33,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="flex flex-row min-h-screen bg-brand-cream text-zinc-900">
+    <div className="flex flex-row min-h-screen bg-brand-pastel text-zinc-900">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -101,21 +101,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
       {/* Main content wrapper — offset by sidebar width on desktop, independent scroll */}
       <div className="flex flex-1 flex-col h-screen overflow-y-auto lg:ml-64">
         {/* Top header */}
-        <header className="flex h-16 shrink-0 items-center justify-between bg-white shadow-brand px-4 lg:px-8">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="flex items-center gap-2 text-zinc-600 lg:hidden"
-          >
-            <Menu className="size-5" />
-          </button>
-
-          <div className="hidden lg:block">
-            <h2 className="text-sm font-medium text-zinc-500">
-              {NAV_ITEMS.find((i) => i.to === location.pathname)?.label ?? 'Dashboard'}
-            </h2>
-          </div>
-
+        <header className="flex h-16 shrink-0 items-center justify-end bg-white shadow-brand px-4 lg:px-8">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="flex items-center gap-2 text-zinc-600 lg:hidden"
+            >
+              <Menu className="size-5" />
+            </button>
             <button className="relative rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700">
               <Bell className="size-5" />
               <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-red-500 ring-2 ring-white" />

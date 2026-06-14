@@ -98,6 +98,17 @@ export interface GpsTripLog {
   updatedAt: string;
 }
 
+// ── User (App User for User Management) ────────────────────────
+
+export interface AppUser {
+  id: string;
+  name: string;
+  username: string;
+  userType: 'ADMIN' | 'DISPATCHER' | 'DRIVER' | 'VIEWER';
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ── Generic API ────────────────────────────────────────────────
 
 export interface ApiResponse<T> {
