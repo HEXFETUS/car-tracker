@@ -1,30 +1,56 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
-import type { User } from '@car-tracker/shared';
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import type { AppUser, ApiResponse } from '@car-tracker/shared';
 
-const MOCK_USER: User = {
-  id: '1',
-  name: 'Alex Driver',
-  email: 'alex.driver@fleet.com',
-  username: 'alex_driver',
-  role: 'Fleet Manager',
-  createdAt: '2024-01-15T08:00:00Z',
-};
+const STORAGE_KEY = 'car-tracker-user';
+
+function loadUser(): AppUser | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw) as AppUser;
+  } catch {
+    // corrupted data — ignore
+  }
+  return null;
+}
+
+function saveUser(user: AppUser | null) {
+  if (user) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+  } else {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+}
 
 interface AuthContextValue {
-  user: User | null;
+  user: AppUser | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(() => loadUser());
 
-  const login = useCallback(async (_email: string, _password: string) => {
-    await new Promise((r) => setTimeout(r, 600));
-    setUser(MOCK_USER);
+  useEffect(() => {
+    saveUser(user);
+  }, [user]);
+
+  const login = useCallback(async (username: string, password: string) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    const json: ApiResponse<AppUser> = await response.json();
+
+    if (!json.success || !json.data) {
+      throw new Error(json.error || 'Invalid credentials');
+    }
+
+    setUser(json.data);
   }, []);
 
   const logout = useCallback(() => {

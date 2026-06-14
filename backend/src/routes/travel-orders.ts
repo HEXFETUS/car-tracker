@@ -146,18 +146,49 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /api/travel-orders/:id — Update a travel order (e.g. status)
+// DELETE /api/travel-orders/:id
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      'DELETE FROM travel_orders WHERE id = $1 RETURNING id',
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
+      return;
+    }
+    res.json({ success: true, data: null, message: 'Travel order deleted successfully' });
+  } catch (error) {
+    console.error('DELETE /api/travel-orders/:id error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// PATCH /api/travel-orders/:id — Update a travel order (e.g. status, fields)
 router.patch('/:id', async (req: Request, res: Response) => {
-  const allowedFields = ['status', 'notes'];
+  // Map camelCase API field names to snake_case DB column names
+  const fieldMap: Record<string, string> = {
+    status: 'status',
+    notes: 'notes',
+    originLocation: 'origin_location',
+    destinationLocation: 'destination_target',
+    scheduledDepartureAt: 'scheduled_departure',
+    scheduledArrivalAt: 'scheduled_arrival',
+    purpose: 'purpose_of_travel',
+    department: 'department',
+    travelerName: 'traveler_name',
+    requestVehicle: 'request_vehicle',
+    requestDriver: 'request_driver',
+  };
+  const allowedFields = Object.keys(fieldMap);
   const updates: string[] = [];
   const values: unknown[] = [];
   let idx = 1;
 
   for (const field of allowedFields) {
     if (req.body[field] !== undefined) {
-      // Convert camelCase from request body to snake_case column name
-      const col = field.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
-      updates.push(`${col} = $${idx++}`);
+      updates.push(`${fieldMap[field]} = $${idx++}`);
       values.push(req.body[field]);
     }
   }

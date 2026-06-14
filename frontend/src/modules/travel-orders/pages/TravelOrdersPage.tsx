@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Loader2 } from 'lucide-react';
+import { Plus, Loader2, Eye } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { NewTravelOrderModal } from '../components/NewTravelOrderModal';
+import { TravelOrderDetailsModal } from '../components/TravelOrderDetailsModal';
 import { fetchTravelOrders, createTravelOrder, type TravelOrderData } from '../api/travel-orders-api';
 import type { TravelOrder } from '../types';
 
@@ -10,6 +11,8 @@ export function TravelOrdersPage() {
   const [orders, setOrders] = useState<TravelOrderData[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<TravelOrderData | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
 
   const loadOrders = useCallback(async () => {
     try {
@@ -27,7 +30,6 @@ export function TravelOrdersPage() {
     loadOrders();
   }, [loadOrders]);
 
-  // The modal uses the legacy TravelOrder type; map it to our API payload.
   async function handleCreate(order: TravelOrder) {
     const confirmed = await confirm({
       title: 'Save Travel Order?',
@@ -57,18 +59,14 @@ export function TravelOrdersPage() {
     }
   }
 
+  function handleViewDetails(order: TravelOrderData) {
+    setSelectedOrder(order);
+    setIsDetailsOpen(true);
+  }
+
   function formatToNumber(toNumber: number) {
     const year = new Date().getFullYear();
     return `TO-${year}-${String(toNumber).padStart(4, '0')}`;
-  }
-
-  function formatDate(dateStr: string | null) {
-    if (!dateStr) return null;
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
   }
 
   function formatDateTime(dateStr: string | null) {
@@ -84,13 +82,13 @@ export function TravelOrdersPage() {
 
   const statusBadge = (status: string) => {
     const colors: Record<string, string> = {
-      PENDING: 'bg-yellow-100 text-yellow-800',
-      APPROVED: 'bg-blue-100 text-blue-800',
-      ACTIVE: 'bg-green-100 text-green-800',
-      COMPLETED: 'bg-zinc-100 text-zinc-600',
-      CANCELLED: 'bg-red-100 text-red-800',
+      PENDING: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+      APPROVED: 'bg-blue-100 text-blue-800 border-blue-200',
+      ACTIVE: 'bg-green-100 text-green-800 border-green-200',
+      COMPLETED: 'bg-zinc-100 text-zinc-600 border-zinc-200',
+      CANCELLED: 'bg-red-100 text-red-800 border-red-200',
     };
-    return `rounded-full px-3 py-0.5 text-xs font-medium ${colors[status] || 'bg-zinc-100 text-zinc-600'}`;
+    return `rounded-full px-3 py-0.5 text-xs font-medium border ${colors[status] || 'bg-zinc-100 text-zinc-600 border-zinc-200'}`;
   };
 
   return (
@@ -132,13 +130,13 @@ export function TravelOrdersPage() {
           {orders.map((order) => (
             <div
               key={order.id}
-              className="group flex flex-col rounded-xl bg-white shadow-brand transition-all hover:shadow-brand-lg"
+              className="group flex flex-col rounded-xl bg-white shadow-brand transition-all hover:shadow-brand-lg hover:-translate-y-0.5"
             >
               {/* Header: TO Number + Purpose */}
               <div className="flex items-start justify-between rounded-t-xl bg-brand-cream px-5 py-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-brand-teal">
+                    <p className="text-sm font-bold text-brand-teal truncate">
                       {formatToNumber(order.toNumber)}
                     </p>
                     <span className={statusBadge(order.status)}>{order.status}</span>
@@ -153,51 +151,34 @@ export function TravelOrdersPage() {
 
               {/* Body: Details */}
               <div className="flex flex-1 flex-col gap-2.5 px-5 py-4">
-                {order.travelerName && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-400">Traveler</span>
-                    <span className="font-medium text-zinc-900">{order.travelerName}</span>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-400">Route</span>
-                  <span className="font-medium text-zinc-900">
-                    {order.originLocation || '—'} → {order.destinationLocation}
-                  </span>
-                </div>
-
+                <InfoRow label="Traveler" value={order.travelerName} />
+                <InfoRow
+                  label="Route"
+                  value={`${order.originLocation || '—'} → ${order.destinationLocation}`}
+                />
                 {order.scheduledDepartureAt && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-400">Departure</span>
-                    <span className="font-medium text-zinc-900">
-                      {formatDateTime(order.scheduledDepartureAt)}
-                    </span>
-                  </div>
+                  <InfoRow label="Departure" value={formatDateTime(order.scheduledDepartureAt)} />
                 )}
-
                 {order.scheduledArrivalAt && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-400">Return</span>
-                    <span className="font-medium text-zinc-900">
-                      {formatDateTime(order.scheduledArrivalAt)}
-                    </span>
-                  </div>
+                  <InfoRow label="Return" value={formatDateTime(order.scheduledArrivalAt)} />
                 )}
-
                 {order.plateNumber && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-400">Vehicle</span>
-                    <span className="font-medium text-zinc-900">{order.plateNumber}</span>
-                  </div>
+                  <InfoRow label="Vehicle" value={order.plateNumber} />
                 )}
-
                 {order.driverName && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-400">Driver</span>
-                    <span className="font-medium text-zinc-900">{order.driverName}</span>
-                  </div>
+                  <InfoRow label="Driver" value={order.driverName} />
                 )}
+              </div>
+
+              {/* Footer: View Details */}
+              <div className="flex items-center justify-end border-t border-zinc-100 px-5 py-3">
+                <button
+                  onClick={() => handleViewDetails(order)}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"
+                >
+                  <Eye className="size-3.5" />
+                  View Details
+                </button>
               </div>
             </div>
           ))}
@@ -211,6 +192,26 @@ export function TravelOrdersPage() {
         onSubmit={handleCreate}
         existingCount={orders.length}
       />
+
+      {/* Travel Order Details Modal */}
+      <TravelOrderDetailsModal
+        isOpen={isDetailsOpen}
+        onClose={() => { setIsDetailsOpen(false); setSelectedOrder(null); }}
+        order={selectedOrder}
+        onSuccess={loadOrders}
+      />
+    </div>
+  );
+}
+
+/** Small helper to render a key-value row in the card body */
+function InfoRow({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div className="flex items-center justify-between text-sm">
+      <span className="text-zinc-400">{label}</span>
+      <span className="font-medium text-zinc-900 truncate ml-2 max-w-[60%]" title={value || ''}>
+        {value || '—'}
+      </span>
     </div>
   );
 }

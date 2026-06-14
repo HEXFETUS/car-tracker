@@ -300,11 +300,11 @@ export function UsersPage({ initialUsers }: UsersPageProps) {
         prev.map((u) =>
           u.id === editingUserId
             ? {
-                ...u,
-                name: formName.trim(),
-                email: formEmail.trim(),
-                role: formRole as UserAccount['role'],
-              }
+              ...u,
+              name: formName.trim(),
+              email: formEmail.trim(),
+              role: formRole as UserAccount['role'],
+            }
             : u,
         ),
       );
@@ -376,15 +376,7 @@ export function UsersPage({ initialUsers }: UsersPageProps) {
   return (
     <div className="space-y-8">
       {/* ── Page header ─────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-brand-teal sm:text-3xl">
-            Users Management
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Manage team members, roles, and access permissions.
-          </p>
-        </div>
+      <div className="flex items-center justify-end">
         <button
           onClick={openCreateModal}
           className="inline-flex items-center gap-2 rounded-xl bg-brand-teal px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-teal/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal focus-visible:ring-offset-2"
@@ -439,11 +431,11 @@ export function UsersPage({ initialUsers }: UsersPageProps) {
                       className={cn(
                         'inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium',
                         user.role === 'Admin' &&
-                          'bg-brand-teal/10 text-brand-teal',
+                        'bg-brand-teal/10 text-brand-teal',
                         user.role === 'Mechanic' &&
-                          'bg-brand-sage/10 text-brand-sage',
+                        'bg-brand-sage/10 text-brand-sage',
                         user.role === 'Driver' &&
-                          'bg-brand-moss/30 text-zinc-700',
+                        'bg-brand-moss/30 text-zinc-700',
                       )}
                     >
                       {user.role}

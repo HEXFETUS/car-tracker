@@ -7,6 +7,8 @@ import driversRouter from './routes/drivers.js';
 import travelOrdersRouter from './routes/travel-orders.js';
 import gpsLogsRouter from './routes/gps-logs.js';
 import cronRouter from './routes/cron.js';
+import usersRouter from './routes/users.js';
+import authRouter from './routes/auth.js';
 import { PORT } from './config/env.js';
 
 const app = express();
@@ -24,6 +26,8 @@ app.use('/api/drivers', driversRouter);
 app.use('/api/travel-orders', travelOrdersRouter);
 app.use('/api/gps-logs', gpsLogsRouter);
 app.use('/api/cron', cronRouter);
+app.use('/api/users', usersRouter);
+app.use('/api/auth', authRouter);
 
 app.listen(PORT, () => {
   console.log(`🚗 Car Tracker API running on http://localhost:${PORT}`);

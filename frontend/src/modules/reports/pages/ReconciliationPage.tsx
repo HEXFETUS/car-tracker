@@ -36,16 +36,6 @@ export function ReconciliationPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl">
-          Reconciliation
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Travel Order vs GPS Actual — Variance & Compliance Review
-        </p>
-      </div>
-
       {/* Instruction header */}
       <div className="flex items-start gap-3 rounded-xl bg-brand-moss/30 p-4 shadow-brand">
         <AlertTriangle className="mt-0.5 size-5 shrink-0 text-brand-teal" />

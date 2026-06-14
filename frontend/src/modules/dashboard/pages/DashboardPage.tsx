@@ -80,15 +80,6 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl">
-          Dashboard
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Real-time overview of your fleet operations.
-        </p>
-      </div>
-
       {/* KPI Cards */}
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {KPI_CARDS.map((kpi) => (
