@@ -1,9 +1,9 @@
-import { Router, Request, Response } from 'express';
+import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
 import bcrypt from 'bcrypt';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
 
-const router: Router = Router();
+const router: ExpressRouter = Router();
 
 const SALT_ROUNDS = 12;
 
