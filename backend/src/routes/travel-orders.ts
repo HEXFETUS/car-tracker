@@ -138,6 +138,31 @@ router.get('/for-approval', async (_req: Request, res: Response) => {
   }
 });
 
+// GET /api/travel-orders/cancelled — Fetch CANCELLED orders
+router.get('/cancelled', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'CANCELLED'
+      ORDER BY to_.created_at DESC
+    `);
+    const data = result.rows.map(mapRow);
+    res.json({ success: true, data, message: 'Cancelled travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/cancelled error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
 // GET /api/travel-orders/for-request — Fetch FOR_REQUEST orders
 router.get('/for-request', async (_req: Request, res: Response) => {
   try {

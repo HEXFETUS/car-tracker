@@ -88,10 +88,10 @@ export function RequestsPage() {
     }
   }, [activeTab, loadForRequestOrders, loadScheduledOrders]);
 
-  // For Request tab - opens TravelOrderDetailsModal
+  // For Request tab - opens AssignModal
   function handleViewDetails(order: PendingTravelOrder) {
     setSelectedOrder(order);
-    setIsDetailsOpen(true);
+    setIsAssignOpen(true);
   }
 
   // For Schedule tab side table - opens ScheduleModal

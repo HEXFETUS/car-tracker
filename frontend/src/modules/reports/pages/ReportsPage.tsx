@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { cn } from '@/shared/lib/utils';
 import { ReconciliationPage } from '@/modules/reports/pages/ReconciliationPage';
 import { MonthlyReportPage } from '@/modules/reports/pages/MonthlyReportPage';
 import { YearlyReportPage } from '@/modules/reports/pages/YearlyReportPage';
@@ -18,26 +17,28 @@ export function ReportsPage() {
 
   return (
     <div className="space-y-8">
-      {/* Tab navigation */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl bg-white p-1.5 shadow-brand">
-        {TABS.map((tab) => {
-          const isActive = activeTab === tab.key;
-          return (
+      {/* Tab navigation — Travel Orders underline style */}
+      <div className="flex items-center justify-between border-b border-zinc-200">
+        <nav className="-mb-px flex gap-6" aria-label="Reports tabs">
+          {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={cn(
-                'flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all',
-                isActive
-                  ? 'bg-brand-teal text-white shadow-sm'
-                  : 'text-zinc-500 hover:bg-brand-cream hover:text-brand-teal'
-              )}
+              className={`
+                whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
+                ${
+                  activeTab === tab.key
+                    ? 'border-brand-teal text-brand-teal'
+                    : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
+                }
+              `}
+              aria-current={activeTab === tab.key ? 'page' : undefined}
             >
-              <tab.icon className="size-4" />
+              <tab.icon className="inline size-4 mr-1.5 -mt-0.5" />
               {tab.label}
             </button>
-          );
-        })}
+          ))}
+        </nav>
       </div>
 
       {/* Page content */}

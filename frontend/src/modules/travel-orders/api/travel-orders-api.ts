@@ -59,6 +59,14 @@ export async function fetchForApprovalOrders(): Promise<TravelOrderData[]> {
   return body.data;
 }
 
+/** Fetch CANCELLED orders (Cancelled tab). */
+export async function fetchCancelledOrders(): Promise<TravelOrderData[]> {
+  const res = await fetch(`${API_BASE}/api/travel-orders/cancelled`);
+  const body: ApiResponse<TravelOrderData[]> = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Failed to fetch cancelled travel orders');
+  return body.data;
+}
+
 /** Assign a vehicle and driver to a travel order (transitions status to FOR_APPROVAL). */
 export async function assignTravelOrder(
   id: string,

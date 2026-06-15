@@ -19,7 +19,11 @@ function isExpired(dateStr: string): boolean {
   return new Date(dateStr) < new Date();
 }
 
-export function DriversPage() {
+interface DriversPageProps {
+  hideAddButton?: boolean;
+}
+
+export function DriversPage({ hideAddButton }: DriversPageProps) {
   const { toast, confirm } = useNotification();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,15 +72,17 @@ export function DriversPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex justify-end">
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-        >
-          <Plus className="size-4" />
-          + Add Driver
-        </button>
-      </div>
+      {!hideAddButton && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+          >
+            <Plus className="size-4" />
+            + Add Driver
+          </button>
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (

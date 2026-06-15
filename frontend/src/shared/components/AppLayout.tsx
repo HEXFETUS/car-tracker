@@ -11,7 +11,6 @@ import {
   Bell,
   ChevronDown,
   Plane,
-  Users,
   MapPin,
   ClipboardCheck,
 } from 'lucide-react';
@@ -23,8 +22,7 @@ const NAV_ITEMS = [
   { to: '/travel-orders', label: 'Travel Orders', icon: Plane },
   { to: '/travel-requests', label: 'Travel Requests', icon: ClipboardCheck },
   { to: '/gps-logs', label: 'GPS Logs', icon: MapPin },
-  { to: '/vehicles', label: 'Vehicles', icon: Car },
-  { to: '/drivers', label: 'Drivers', icon: Users },
+  { to: '/list', label: 'List', icon: Car },
   { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
@@ -103,17 +101,26 @@ export function AppLayout({ children }: { children: ReactNode }) {
       {/* Main content wrapper — offset by sidebar width on desktop, independent scroll */}
       <div className="flex flex-1 flex-col h-screen overflow-y-auto lg:ml-64">
         {/* Top header */}
-        <header className="flex h-16 shrink-0 items-center justify-end bg-white shadow-brand px-4 lg:px-8">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="flex items-center gap-2 text-zinc-600 lg:hidden"
-            >
-              <Menu className="size-5" />
-            </button>
-            <button className="relative rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700">
+        <header className="flex h-14 shrink-0 items-center justify-between bg-white shadow-brand px-3 lg:h-16 lg:px-8">
+          {/* Left: Hamburger (mobile only) */}
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="flex items-center justify-center rounded-lg p-2 text-zinc-600 hover:bg-zinc-100 lg:hidden min-h-[44px] min-w-[44px]"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="size-5" />
+          </button>
+
+          {/* Mobile branding (centered, visible only on mobile) */}
+          <span className="text-base font-bold tracking-tight text-brand-teal lg:hidden">
+            CarTracker
+          </span>
+
+          {/* Right: Actions */}
+          <div className="flex items-center gap-1.5 lg:gap-3">
+            <button className="relative rounded-full p-2.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 min-h-[44px] min-w-[44px] flex items-center justify-center">
               <Bell className="size-5" />
-              <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-red-500 ring-2 ring-white" />
+              <span className="absolute right-2 top-2 size-2 rounded-full bg-red-500 ring-2 ring-white" />
             </button>
 
             <div className="hidden items-center gap-2 sm:flex">
@@ -129,7 +136,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
             <button
               onClick={logout}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-500 hover:bg-red-50 hover:text-red-600"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-sm text-zinc-500 hover:bg-red-50 hover:text-red-600 min-h-[44px]"
             >
               <LogOut className="size-4" />
               <span className="hidden sm:inline">Sign out</span>
@@ -138,7 +145,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 p-6 lg:p-10">{children}</main>
+        <main className="flex-1 p-4 lg:p-10">{children}</main>
       </div>
     </div>
   );

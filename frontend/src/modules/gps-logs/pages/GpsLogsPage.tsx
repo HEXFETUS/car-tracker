@@ -329,198 +329,339 @@ export function GpsLogsPage() {
         </div>
       )}
 
-      {/* ── Data Table ─────────────────────────────────────── */}
+      {/* ── Data Table (Desktop) ───────────────────────────── */}
       {!loading && !error && result && result.logs.length > 0 && (
-        <div className="rounded-xl bg-white shadow-brand overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm whitespace-nowrap">
-              <thead>
-                <tr className="border-b border-zinc-100 bg-brand-cream/50">
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    GPS Record No.
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Trip Date
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Vehicle Plate No.
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Driver Name
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Origin (GPS Start)
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Destination (GPS End)
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Route / Road Taken
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Departure Time
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Arrival Time
-                  </th>
-                  <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Distance (km)
-                  </th>
-                  <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Engine Hours
-                  </th>
-                  <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Max Speed
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Trip Status
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Linked TO No.
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    TO Status
-                  </th>
-                  <th className="px-4 py-3.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Anomaly
-                  </th>
-                  <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Notes
-                  </th>
-                  <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.logs.map((log, idx) => (
-                  <tr
-                    key={log.id}
-                    className={cn(
-                      'border-b border-zinc-50 transition-colors hover:bg-brand-cream/30',
-                      idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50/30',
-                      log.anomalyFlag && 'bg-red-50/40 hover:bg-red-50/60'
-                    )}
-                  >
-                    <td className="px-4 py-3 font-mono text-xs font-medium text-zinc-900">
-                      {log.gpsRecordNo}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-700">
-                      {formatDate(log.tripDate)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">
-                        {log.vehiclePlateNo}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-700">
-                      {log.driverName}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-600 max-w-[160px] truncate" title={log.originGpsStartPoint}>
-                      {log.originGpsStartPoint}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-600 max-w-[160px] truncate" title={log.destinationGpsEndPoint}>
-                      {log.destinationGpsEndPoint}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-600 max-w-[180px] truncate" title={log.actualRouteRoadTaken}>
-                      {log.actualRouteRoadTaken}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-600 text-xs">
-                      {formatDateTime(log.departureTimeGps)}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-600 text-xs">
-                      {formatDateTime(log.arrivalTimeGps)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">
-                      {formatNumber(log.gpsDistanceKm, 1)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">
-                      {formatNumber(log.engineHours, 1)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">
-                      {formatNumber(log.maxSpeedKph, 0)}
-                    </td>
-                    <td className="px-4 py-3">
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:block rounded-xl bg-white shadow-brand overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="border-b border-zinc-100 bg-brand-cream/50">
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      GPS Record No.
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Trip Date
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Vehicle Plate No.
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Driver Name
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Origin (GPS Start)
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Destination (GPS End)
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Route / Road Taken
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Departure Time
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Arrival Time
+                    </th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Distance (km)
+                    </th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Engine Hours
+                    </th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Max Speed
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Trip Status
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Linked TO No.
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      TO Status
+                    </th>
+                    <th className="px-4 py-3.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Anomaly
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Notes
+                    </th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.logs.map((log, idx) => (
+                    <tr
+                      key={log.id}
+                      className={cn(
+                        'border-b border-zinc-50 transition-colors hover:bg-brand-cream/30',
+                        idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50/30',
+                        log.anomalyFlag && 'bg-red-50/40 hover:bg-red-50/60'
+                      )}
+                    >
+                      <td className="px-4 py-3 font-mono text-xs font-medium text-zinc-900">
+                        {log.gpsRecordNo}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        {formatDate(log.tripDate)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">
+                          {log.vehiclePlateNo}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-zinc-700">
+                        {log.driverName}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 max-w-[160px] truncate" title={log.originGpsStartPoint}>
+                        {log.originGpsStartPoint}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 max-w-[160px] truncate" title={log.destinationGpsEndPoint}>
+                        {log.destinationGpsEndPoint}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 max-w-[180px] truncate" title={log.actualRouteRoadTaken}>
+                        {log.actualRouteRoadTaken}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 text-xs">
+                        {formatDateTime(log.departureTimeGps)}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 text-xs">
+                        {formatDateTime(log.arrivalTimeGps)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">
+                        {formatNumber(log.gpsDistanceKm, 1)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">
+                        {formatNumber(log.engineHours, 1)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">
+                        {formatNumber(log.maxSpeedKph, 0)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={cn(
+                            'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium capitalize',
+                            STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600'
+                          )}
+                        >
+                          {log.tripStatusGps.replace('-', ' ')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {log.toNumber ? (
+                          <span className="font-mono text-xs text-brand-teal font-medium">
+                            {log.toNumber}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {log.toStatusAuto ? (
+                          <span className="text-xs text-zinc-500">{log.toStatusAuto}</span>
+                        ) : (
+                          <span className="text-zinc-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {log.anomalyFlag && !log.toNumber ? (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700">
+                            ⚠ TO NOT APPROVED
+                          </span>
+                        ) : (
+                          <span className="text-zinc-300 text-xs">No</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-500 max-w-[180px] truncate text-xs" title={log.notesRemarks ?? ''}>
+                        {log.notesRemarks || <span className="text-zinc-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => handleEdit(log)}
+                          className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"
+                        >
+                          <Pencil className="size-3.5" />
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination footer */}
+            <div className="flex items-center justify-between border-t border-zinc-100 px-5 py-3">
+              <p className="text-xs text-zinc-400">
+                Showing {Math.min((page - 1) * pageSize + 1, result.total)}–{Math.min(page * pageSize, result.total)} of{' '}
+                {result.total}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-40 disabled:pointer-events-none"
+                >
+                  Previous
+                </button>
+                <span className="text-xs text-zinc-400">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-40 disabled:pointer-events-none"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Mobile cards */}
+          <div className="space-y-3 md:hidden">
+            {result.logs.map((log) => {
+              const hasAnomaly = log.anomalyFlag && !log.toNumber;
+              return (
+                <div
+                  key={log.id}
+                  className={cn(
+                    'rounded-xl bg-white shadow-brand overflow-hidden',
+                    hasAnomaly && 'ring-1 ring-red-200'
+                  )}
+                >
+                  {/* Card header */}
+                  <div className="flex items-center justify-between bg-brand-cream/60 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-mono font-bold text-brand-teal truncate">
+                        {log.gpsRecordNo}
+                      </p>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        {formatDate(log.tripDate)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
                       <span
                         className={cn(
-                          'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium capitalize',
+                          'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize',
                           STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600'
                         )}
                       >
                         {log.tripStatusGps.replace('-', ' ')}
                       </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {log.toNumber ? (
-                        <span className="font-mono text-xs text-brand-teal font-medium">
-                          {log.toNumber}
-                        </span>
-                      ) : (
-                        <span className="text-zinc-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {log.toStatusAuto ? (
-                        <span className="text-xs text-zinc-500">{log.toStatusAuto}</span>
-                      ) : (
-                        <span className="text-zinc-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {log.anomalyFlag ? (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
-                          <AlertTriangle className="size-3" />
-                          Yes
-                        </span>
-                      ) : (
-                        <span className="text-zinc-300 text-xs">No</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-500 max-w-[180px] truncate text-xs" title={log.notesRemarks ?? ''}>
-                      {log.notesRemarks || <span className="text-zinc-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right">
                       <button
                         onClick={() => handleEdit(log)}
-                        className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"
+                        className="inline-flex items-center justify-center rounded-lg p-2 text-brand-teal hover:bg-brand-teal/5 min-h-[44px] min-w-[44px]"
                       >
-                        <Pencil className="size-3.5" />
-                        Edit
+                        <Pencil className="size-4" />
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                  </div>
 
-          {/* Pagination footer */}
-          <div className="flex items-center justify-between border-t border-zinc-100 px-5 py-3">
-            <p className="text-xs text-zinc-400">
-              Showing {Math.min((page - 1) * pageSize + 1, result.total)}–{Math.min(page * pageSize, result.total)} of{' '}
-              {result.total}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-40 disabled:pointer-events-none"
-              >
-                Previous
-              </button>
-              <span className="text-xs text-zinc-400">
-                Page {page} of {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-                className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-40 disabled:pointer-events-none"
-              >
-                Next
-              </button>
+                  {/* Card body */}
+                  <div className="px-4 py-3 space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">
+                        {log.vehiclePlateNo}
+                      </span>
+                      <span className="text-sm text-zinc-700 truncate">{log.driverName}</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Origin</p>
+                        <p className="text-xs text-zinc-700 truncate" title={log.originGpsStartPoint}>{log.originGpsStartPoint}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Destination</p>
+                        <p className="text-xs text-zinc-700 truncate" title={log.destinationGpsEndPoint}>{log.destinationGpsEndPoint}</p>
+                      </div>
+                      {log.actualRouteRoadTaken && (
+                        <div className="col-span-2">
+                          <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Route</p>
+                          <p className="text-xs text-zinc-600 truncate">{log.actualRouteRoadTaken}</p>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Departure</p>
+                        <p className="text-xs text-zinc-700">{formatDateTime(log.departureTimeGps)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Arrival</p>
+                        <p className="text-xs text-zinc-700">{formatDateTime(log.arrivalTimeGps)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Distance</p>
+                        <p className="text-xs font-mono font-medium text-zinc-900">{formatNumber(log.gpsDistanceKm, 1)} km</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Engine</p>
+                        <p className="text-xs font-mono text-zinc-700">{formatNumber(log.engineHours, 1)} hrs</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Max Speed</p>
+                        <p className="text-xs font-mono text-zinc-700">{formatNumber(log.maxSpeedKph, 0)} kph</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">TO No.</p>
+                        {log.toNumber ? (
+                          <span className="font-mono text-xs text-brand-teal font-medium">{log.toNumber}</span>
+                        ) : (
+                          <span className="text-xs text-zinc-300">—</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Anomaly badge */}
+                    {hasAnomaly && (
+                      <div className="flex items-center gap-1 rounded-md bg-orange-50 px-3 py-1.5">
+                        <span className="text-xs font-semibold text-orange-700">⚠ TO NOT APPROVED</span>
+                      </div>
+                    )}
+
+                    {/* Notes */}
+                    {log.notesRemarks && (
+                      <p className="text-xs text-zinc-500 bg-zinc-50 rounded-lg px-3 py-2 leading-relaxed">
+                        {log.notesRemarks}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Mobile pagination */}
+            <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-brand">
+              <p className="text-xs text-zinc-400">
+                {Math.min((page - 1) * pageSize + 1, result.total)}–{Math.min(page * pageSize, result.total)} of {result.total}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="rounded-lg px-3.5 py-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-40 disabled:pointer-events-none min-h-[44px]"
+                >
+                  Previous
+                </button>
+                <span className="text-xs text-zinc-400">
+                  {page}/{totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="rounded-lg px-3.5 py-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-40 disabled:pointer-events-none min-h-[44px]"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

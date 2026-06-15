@@ -55,6 +55,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
   const [selectedDriverId, setSelectedDriverId] = useState('');
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
   const [drivers, setDrivers] = useState<DriverOption[]>([]);
+  // @ts-expect-error: setLoadingOptions is used inside loadOptions callback
   const [loadingOptions, setLoadingOptions] = useState(false);
 
   // Reset form when order changes
@@ -128,6 +129,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
   }
 
   /** Called when the user clicks "Save Assignment" in the edit form. */
+  // @ts-expect-error: reserved for future assignment UI in edit mode
   async function handleAssignmentSubmit() {
     if (!order) return;
 
@@ -184,9 +186,29 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     }
   }
 
+  /** Convert a datetime-local value to an ISO string with local timezone offset. */
+  function toLocalISO(datetimeLocal: string): string | undefined {
+    if (!datetimeLocal) return undefined;
+    const date = new Date(datetimeLocal);
+    const offset = -date.getTimezoneOffset();
+    const sign = offset >= 0 ? '+' : '-';
+    const pad = (n: number) => String(Math.abs(n)).padStart(2, '0');
+    const hours = pad(Math.floor(Math.abs(offset) / 60));
+    const minutes = pad(Math.abs(offset) % 60);
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00${sign}${hours}:${minutes}`;
+  }
+
   /** Regular field save (non-assignment edits) */
   async function handleSave() {
     if (!order) return;
+
+    const confirmed = await confirm({
+      title: 'Save Changes?',
+      message: `Are you sure you want to save the changes to ${order.toNumber}?`,
+      type: 'info',
+    });
+    if (!confirmed) return;
+
     setSaving(true);
     try {
       await updateTravelOrder(order.id, {
@@ -194,14 +216,14 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
         travelerName: travelerName.trim(),
         originLocation: originLocation.trim(),
         destinationLocation: destinationLocation.trim(),
-        scheduledDepartureAt: scheduledDepartureAt || undefined,
-        scheduledArrivalAt: scheduledArrivalAt || undefined,
+        scheduledDepartureAt: toLocalISO(scheduledDepartureAt),
+        scheduledArrivalAt: toLocalISO(scheduledArrivalAt),
         purpose: purpose.trim(),
         notes: notes.trim(),
       });
       toast('Travel order updated!', 'success');
-      setIsEditing(false);
       onSuccess();
+      handleClose();
     } catch (err: any) {
       toast(err.message || 'Failed to update travel order', 'error');
     } finally {
@@ -286,16 +308,15 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
   };
 
   const canAssign = order?.status === 'PENDING';
-  const hasAssignmentSelections = selectedVehicleId !== '' && selectedDriverId !== '';
 
   if (!isOpen || !order) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm transition-opacity"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
       onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
-      <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+      <div className="relative w-full max-w-2xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
           <div className="flex items-center gap-3">
@@ -465,76 +486,40 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
             )}
           </div>
 
-          {/* ── Vehicle & Driver Assignment ── */}
+          {/* ── Vehicle & Driver Assignment (read-only in edit mode) ── */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {/* Vehicle */}
             <div>
               <label className="block text-sm font-medium text-zinc-500 mb-1">Vehicle</label>
-              {isEditing && canAssign ? (
-                <select
-                  value={selectedVehicleId}
-                  onChange={(e) => setSelectedVehicleId(e.target.value)}
-                  disabled={loadingOptions}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal disabled:opacity-50"
-                >
-                  <option value="">
-                    {loadingOptions ? 'Loading…' : '— Select Vehicle —'}
-                  </option>
-                  {vehicles.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.plateNumber} — {v.make} {v.model} ({v.year})
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="text-sm font-medium text-zinc-900">
-                  {order.plateNumber ? (
-                    <>
-                      {order.plateNumber}
-                      {order.requestVehicle && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
-                    </>
-                  ) : order.requestVehicle ? (
-                    <span className="text-zinc-400">Requested (not yet assigned)</span>
-                  ) : (
-                    '—'
-                  )}
-                </p>
-              )}
+              <p className="text-sm font-medium text-zinc-900">
+                {order.plateNumber ? (
+                  <>
+                    {order.plateNumber}
+                    {order.requestVehicle && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
+                  </>
+                ) : order.requestVehicle ? (
+                  <span className="text-zinc-400">Requested (not yet assigned)</span>
+                ) : (
+                  '—'
+                )}
+              </p>
             </div>
 
             {/* Driver */}
             <div>
               <label className="block text-sm font-medium text-zinc-500 mb-1">Driver</label>
-              {isEditing && canAssign ? (
-                <select
-                  value={selectedDriverId}
-                  onChange={(e) => setSelectedDriverId(e.target.value)}
-                  disabled={loadingOptions}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal disabled:opacity-50"
-                >
-                  <option value="">
-                    {loadingOptions ? 'Loading…' : '— Select Driver —'}
-                  </option>
-                  {drivers.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.fullName}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="text-sm font-medium text-zinc-900">
-                  {order.driverName ? (
-                    <>
-                      {order.driverName}
-                      {order.requestDriver && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
-                    </>
-                  ) : order.requestDriver ? (
-                    <span className="text-zinc-400">Requested (not yet assigned)</span>
-                  ) : (
-                    '—'
-                  )}
-                </p>
-              )}
+              <p className="text-sm font-medium text-zinc-900">
+                {order.driverName ? (
+                  <>
+                    {order.driverName}
+                    {order.requestDriver && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
+                  </>
+                ) : order.requestDriver ? (
+                  <span className="text-zinc-400">Requested (not yet assigned)</span>
+                ) : (
+                  '—'
+                )}
+              </p>
             </div>
           </div>
         </div>
@@ -552,28 +537,15 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                 >
                   Cancel
                 </button>
-                {canAssign && (
-                  <button
-                    type="button"
-                    onClick={handleAssignmentSubmit}
-                    disabled={saving || !hasAssignmentSelections}
-                    className="rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
-                  >
-                    {saving && <Loader2 className="size-4 animate-spin" />}
-                    {saving ? 'Assigning…' : 'Save Assignment'}
-                  </button>
-                )}
-                {canAssign && (
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
-                  >
-                    {saving && <Loader2 className="size-4 animate-spin" />}
-                    {saving ? 'Saving…' : 'Save Fields'}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+                >
+                  {saving && <Loader2 className="size-4 animate-spin" />}
+                  {saving ? 'Saving…' : 'Save Changes'}
+                </button>
               </>
             ) : order.status === 'PENDING' ? (
               <>

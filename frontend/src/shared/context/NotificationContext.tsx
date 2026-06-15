@@ -83,6 +83,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     (message: string, variant: ToastOptions['variant'] = 'success') => {
       const id = `toast-${++toastCounter}`;
       setToasts((prev) => [...prev, { id, message, variant }]);
+      // Auto-dismiss toast after 5 seconds
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 5000);
     },
     [],
   );

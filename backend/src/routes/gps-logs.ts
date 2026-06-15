@@ -8,6 +8,9 @@ import {
   findActiveTravelOrder,
   findDriverByName,
   findApprovedTravelOrderForDate,
+  findAllTravelOrdersForDate,
+  matchTravelOrderToGpsTrip,
+  type TravelOrderWithTimes,
 } from '../services/gpsLogService.js';
 import {
   resolveCartrackUnitId,
@@ -357,10 +360,10 @@ router.get('/sync-history', async (req: Request, res: Response) => {
       return;
     }
 
-    // ── Step 2: Strict Sync Guard ────────────────────────────
-    const approvedOrder = await findApprovedTravelOrderForDate(vehicleId, dateStr);
+    // ── Step 2: Find ALL approved/active/completed travel orders for this vehicle on this date ──
+    const travelOrderCandidates = await findAllTravelOrdersForDate(vehicleId, dateStr);
 
-    if (!approvedOrder) {
+    if (!travelOrderCandidates || travelOrderCandidates.length === 0) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`Sync history aborted for vehicle ${plateNumber} on ${dateStr}: no approved travel order found`);
       res.json({
@@ -374,7 +377,7 @@ router.get('/sync-history', async (req: Request, res: Response) => {
     }
 
     console.log(
-      `Approved travel order ${approvedOrder.id} (${approvedOrder.status}) found for ${plateNumber} on ${dateStr}. Proceeding with sync.`,
+      `${travelOrderCandidates.length} travel order(s) found for ${plateNumber} on ${dateStr}. Proceeding with sync.`,
     );
 
     // ── Step 3: Resolve Cartrack unit ID ─────────────────────
@@ -399,8 +402,10 @@ router.get('/sync-history', async (req: Request, res: Response) => {
     const trips = transformHistoryToTrips(historyPoints, plateNumber, dateStr);
 
     // ── Step 6: Strict driver validation ──────────────────────
-    const travelOrderId = approvedOrder.id;
-    const resolvedDriverId = approvedOrder.driver_id || null;
+    // Use the first travel order's driver for validation; each trip
+    // will be matched to the best-fit TO later.
+    const primaryTO = travelOrderCandidates[0];
+    const resolvedDriverId = primaryTO.driver_id || null;
     if (!resolvedDriverId) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log('Sync-history aborted — no driver assigned to travel order');
@@ -414,19 +419,35 @@ router.get('/sync-history', async (req: Request, res: Response) => {
       return;
     }
 
-    // ── Step 7: Save the GPS trip log ─────────────────────────
+    // ── Step 7: Save the GPS trip log with smart TO matching ──
     let gpsLogsSaved = 0;
     let gpsLogsFailed = 0;
+    // Track the last matched TO for response reporting
+    let lastMatchedTOId: string | null = null;
+    let lastMatchedTOStatus: string = primaryTO.status;
 
     for (const [index, tripData] of trips.entries()) {
       const gpsRecordNo = await generateGpsRecordNo();
+
+      // Match each GPS trip to the best travel order based on departure/arrival times
+      const matchedTO = matchTravelOrderToGpsTrip(
+        tripData.departureTimeGps || null,
+        tripData.arrivalTimeGps || null,
+        travelOrderCandidates,
+      );
+
+      const matchedTOId = matchedTO?.id ?? null;
+      const matchedTOStatus = matchedTO?.status ?? primaryTO.status;
+      const matchedTODriverId = matchedTO?.driver_id ?? resolvedDriverId;
+      lastMatchedTOId = matchedTOId;
+      lastMatchedTOStatus = matchedTOStatus;
 
       try {
         await saveGpsTripLog({
           gpsRecordNo,
           tripDate: dateStr,
           vehicleId,
-          driverId: resolvedDriverId,
+          driverId: matchedTODriverId,
           originGpsStartPoint: tripData.originGpsStartPoint,
           destinationGpsEndPoint: tripData.destinationGpsEndPoint,
           actualRouteRoadTaken: tripData.actualRouteRoadTaken || '',
@@ -436,8 +457,8 @@ router.get('/sync-history', async (req: Request, res: Response) => {
           engineHours: tripData.engineHours,
           maxSpeedKph: tripData.maxSpeedKph,
           tripStatusGps: tripData.tripStatus,
-          travelOrderId,
-          toStatusAuto: approvedOrder.status,
+          travelOrderId: matchedTOId,
+          toStatusAuto: matchedTOStatus,
           anomalyFlag: tripData.maxSpeedKph > 120,
           notesRemarks: null, // editable via edit button
         });
@@ -454,13 +475,13 @@ router.get('/sync-history', async (req: Request, res: Response) => {
       success: true,
       synced: true,
       elapsed_seconds: parseFloat(elapsed),
-      travel_order_id: travelOrderId,
-      travel_order_status: approvedOrder.status,
+      travel_order_id: lastMatchedTOId,
+      travel_order_status: lastMatchedTOStatus,
       total_records_found: historyPoints.length,
       trips_found: trips.length,
       gps_logs_saved: gpsLogsSaved,
       gps_logs_failed: gpsLogsFailed,
-      message: `Historical sync completed for vehicle on ${dateStr} under approved travel order.`,
+      message: `Historical sync completed for vehicle on ${dateStr} with ${travelOrderCandidates.length} travel order(s).`,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
