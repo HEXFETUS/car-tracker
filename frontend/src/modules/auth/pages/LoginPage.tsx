@@ -19,8 +19,8 @@ export function LoginPage() {
     setLoading(true);
     try {
       await login(username, password);
-    } catch {
-      setError('Invalid credentials. Try again.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed. Try again.');
     } finally {
       setLoading(false);
     }

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import type { AppUser, ApiResponse } from '@car-tracker/shared';
+import { API_BASE } from '@/shared/api';
 
 const STORAGE_KEY = 'car-tracker-user';
 
@@ -38,13 +39,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const login = useCallback(async (username: string, password: string) => {
-    const response = await fetch('/api/auth/login', {
+    const response = await fetch(`${API_BASE}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username: username.trim(), password }),
     });
 
-    const json: ApiResponse<AppUser> = await response.json();
+    let json: ApiResponse<AppUser>;
+    try {
+      json = await response.json();
+    } catch {
+      throw new Error(`Login request failed (${response.status})`);
+    }
 
     if (!json.success || !json.data) {
       throw new Error(json.error || 'Invalid credentials');

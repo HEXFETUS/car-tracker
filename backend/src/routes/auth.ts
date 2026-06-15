@@ -32,7 +32,8 @@ function sanitise(row: UserRow): AppUser {
 // POST /api/auth/login — Authenticate with username + password
 router.post('/login', async (req: Request, res: Response) => {
   console.log('[auth-login] route hit');
-  const { username, password } = req.body;
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
   if (!username || !password) {
     res.status(400).json({
