@@ -4,11 +4,15 @@
   "outputDirectory": "dist",
   "framework": null,
   "functions": {
-    "api/[...path]/index.ts": {
+    "api/index.ts": {
       "maxDuration": 60
     }
   },
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
+    },
     {
       "source": "/((?!api/.*).*)",
       "destination": "/index.html"
