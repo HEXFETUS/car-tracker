@@ -17,15 +17,15 @@ export function ReportsPage() {
 
   return (
     <div className="space-y-8">
-      {/* Tab navigation — Travel Orders underline style */}
-      <div className="flex items-center justify-between border-b border-zinc-200">
-        <nav className="-mb-px flex gap-6" aria-label="Reports tabs">
+      {/* Tab navigation — scrollable on mobile */}
+      <div className="border-b border-zinc-200">
+        <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="Reports tabs">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={`
-                whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
+                shrink-0 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
                 ${
                   activeTab === tab.key
                     ? 'border-brand-teal text-brand-teal'

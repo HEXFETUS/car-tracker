@@ -101,23 +101,26 @@ export function AppLayout({ children }: { children: ReactNode }) {
       {/* Main content wrapper — offset by sidebar width on desktop, independent scroll */}
       <div className="flex flex-1 flex-col h-screen overflow-y-auto lg:ml-64">
         {/* Top header */}
-        <header className="flex h-14 shrink-0 items-center justify-between bg-white shadow-brand px-3 lg:h-16 lg:px-8">
-          {/* Left: Hamburger (mobile only) */}
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="flex items-center justify-center rounded-lg p-2 text-zinc-600 hover:bg-zinc-100 lg:hidden min-h-[44px] min-w-[44px]"
-            aria-label="Open navigation menu"
-          >
-            <Menu className="size-5" />
-          </button>
+        <header className="flex h-14 shrink-0 items-center bg-white shadow-brand px-3 lg:h-16 lg:px-8">
+          {/* Left: Hamburger (mobile only) + Branding */}
+          <div className="flex items-center gap-2 lg:hidden">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="flex items-center justify-center rounded-lg p-2 text-zinc-600 hover:bg-zinc-100 min-h-[44px] min-w-[44px]"
+              aria-label="Open navigation menu"
+            >
+              <Menu className="size-5" />
+            </button>
+            <span className="text-base font-bold tracking-tight text-brand-teal">
+              CarTracker
+            </span>
+          </div>
 
-          {/* Mobile branding (centered, visible only on mobile) */}
-          <span className="text-base font-bold tracking-tight text-brand-teal lg:hidden">
-            CarTracker
-          </span>
+          {/* Spacer for desktop (pushes actions to the right) */}
+          <div className="hidden lg:block flex-1" />
 
           {/* Right: Actions */}
-          <div className="flex items-center gap-1.5 lg:gap-3">
+          <div className="flex items-center gap-1.5 lg:gap-3 ml-auto">
             <button className="relative rounded-full p-2.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 min-h-[44px] min-w-[44px] flex items-center justify-center">
               <Bell className="size-5" />
               <span className="absolute right-2 top-2 size-2 rounded-full bg-red-500 ring-2 ring-white" />

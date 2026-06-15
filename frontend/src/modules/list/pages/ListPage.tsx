@@ -77,15 +77,15 @@ export function ListPage() {
 
   return (
     <div className="space-y-8">
-      {/* Tab Bar + Action button on the same row — Travel Orders style */}
-      <div className="flex items-center justify-between border-b border-zinc-200">
-        <nav className="-mb-px flex gap-6" aria-label="List tabs">
+      {/* Tab Bar */}
+      <div className="border-b border-zinc-200">
+        <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="List tabs">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={`
-                whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
+                shrink-0 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
                 ${
                   activeTab === tab.key
                     ? 'border-brand-teal text-brand-teal'
@@ -99,22 +99,25 @@ export function ListPage() {
             </button>
           ))}
         </nav>
+      </div>
 
+      {/* Action buttons — right-aligned */}
+      <div className="flex justify-end">
         {activeTab === 'vehicles' && (
           <button
             onClick={() => setIsVehicleModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
           >
-            <Plus className="size-4" />
+            <Plus className="size-3.5" />
             Add New Vehicle
           </button>
         )}
         {activeTab === 'drivers' && (
           <button
             onClick={() => setIsDriverModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
           >
-            <Plus className="size-4" />
+            <Plus className="size-3.5" />
             Add Driver
           </button>
         )}

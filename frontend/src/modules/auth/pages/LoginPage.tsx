@@ -64,11 +64,11 @@ export function LoginPage() {
       </div>
 
       {/* Right — Login Form */}
-      <div className="flex w-full items-center justify-center bg-white p-8 lg:w-1/2">
+      <div className="flex w-full items-center justify-center bg-white px-5 py-6 lg:w-1/2 lg:p-8">
         <div className="w-full max-w-sm">
-          <div className="mb-8 lg:hidden">
-            <div className="mb-4 inline-flex items-center gap-2 text-zinc-900">
-              <img src="/LogoOnly.png" alt="HexCar Tracker" className="size-7 object-contain" />
+          <div className="mb-6 lg:hidden">
+            <div className="inline-flex items-center gap-2 text-zinc-900">
+              <img src="/LogoOnly.png" alt="HexCar Tracker" className="size-8 object-contain" />
               <span className="text-xl font-bold">CarTracker</span>
             </div>
           </div>
@@ -76,7 +76,7 @@ export function LoginPage() {
           <h2 className="mb-1 text-2xl font-semibold tracking-tight text-zinc-900">
             Welcome back
           </h2>
-          <p className="mb-8 text-sm text-zinc-500">
+          <p className="mb-6 text-sm text-zinc-500">
             Sign in to manage your fleet.
           </p>
 
@@ -91,7 +91,7 @@ export function LoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter your username"
-                className="w-full rounded-lg border border-brand-sage bg-white px-4 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 outline-none transition-colors focus:border-brand-teal focus:ring-2 focus:ring-brand-moss"
+                className="w-full rounded-lg border border-brand-sage bg-white px-4 py-3 text-sm text-zinc-900 placeholder-zinc-400 outline-none transition-colors focus:border-brand-teal focus:ring-2 focus:ring-brand-moss"
               />
             </div>
 
@@ -105,7 +105,7 @@ export function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"
-                className="w-full rounded-lg border border-brand-sage bg-white px-4 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 outline-none transition-colors focus:border-brand-teal focus:ring-2 focus:ring-brand-moss"
+                className="w-full rounded-lg border border-brand-sage bg-white px-4 py-3 text-sm text-zinc-900 placeholder-zinc-400 outline-none transition-colors focus:border-brand-teal focus:ring-2 focus:ring-brand-moss"
               />
             </div>
 
@@ -114,7 +114,7 @@ export function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-brand-teal px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-50"
+              className="w-full rounded-lg bg-brand-teal px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-50 min-h-[48px]"
             >
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
