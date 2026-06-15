@@ -4,3 +4,7 @@ dist
 frontend/dist
 backend/dist
 *.tsbuildinfo
+node_modules/
+backend/dist/
+frontend/dist/
+dist/
