@@ -14,20 +14,24 @@ const app: Application = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/api/health', (_req, res) => {
+app.get(['/api/health', '/health'], (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.use('/api/vehicles', vehiclesRouter);
-app.use('/api/drivers', driversRouter);
-app.use('/api/travel-orders', travelOrdersRouter);
-app.use('/api/gps-logs', gpsLogsRouter);
-app.use('/api/cron', cronRouter);
-app.use('/api/users', usersRouter);
-app.use('/api/auth', authRouter);
+app.use(['/api/vehicles', '/vehicles'], vehiclesRouter);
+app.use(['/api/drivers', '/drivers'], driversRouter);
+app.use(['/api/travel-orders', '/travel-orders'], travelOrdersRouter);
+app.use(['/api/gps-logs', '/gps-logs'], gpsLogsRouter);
+app.use(['/api/cron', '/cron'], cronRouter);
+app.use(['/api/users', '/users'], usersRouter);
+app.use(['/api/auth', '/auth'], authRouter);
 
-app.all('/api/debug/routes', (_req, res) => {
+app.all(['/api/debug/routes', '/debug/routes'], (_req, res) => {
   res.json({ ok: true, message: 'debug route reached' });
+});
+
+app.use((_req, res) => {
+  res.status(404).json({ success: false, data: null, error: 'API route not found' });
 });
 
 export default app;
