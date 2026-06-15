@@ -131,8 +131,8 @@ export function TravelOrdersPage() {
 
   return (
     <div className="space-y-8">
-      {/* Tab Bar */}
-      <div className="border-b border-zinc-200">
+      {/* Tab Bar + New Travel Order button — mobile: separate, desktop: inline */}
+      <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between border-b border-zinc-200">
         <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="Travel order tabs">
           {TABS.map((tab) => (
             <button
@@ -155,15 +155,24 @@ export function TravelOrdersPage() {
             </button>
           ))}
         </nav>
-      </div>
 
-      {/* New Travel Order button — right-aligned */}
-      <div className="flex justify-end">
+        {/* Mobile: small right-aligned button */}
+        <div className="flex justify-end sm:hidden">
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+          >
+            <Plus className="size-3.5" />
+            New Travel Order
+          </button>
+        </div>
+
+        {/* Desktop: original button */}
         <button
           onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+          className="hidden sm:inline-flex items-center justify-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
         >
-          <Plus className="size-3.5" />
+          <Plus className="size-4" />
           New Travel Order
         </button>
       </div>
