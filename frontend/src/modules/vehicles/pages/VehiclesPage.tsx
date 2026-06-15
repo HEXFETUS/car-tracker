@@ -5,7 +5,11 @@ import { AddVehicleModal } from '../components/AddVehicleModal';
 import { fetchVehicles, createVehicle } from '../api/vehicles-api';
 import type { Vehicle } from '@car-tracker/shared';
 
-export function VehiclesPage() {
+interface VehiclesPageProps {
+  hideAddButton?: boolean;
+}
+
+export function VehiclesPage({ hideAddButton }: VehiclesPageProps) {
   const { toast, confirm } = useNotification();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,15 +59,17 @@ export function VehiclesPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex justify-end">
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-        >
-          <Plus className="size-4" />
-          + Add New Vehicle
-        </button>
-      </div>
+      {!hideAddButton && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+          >
+            <Plus className="size-4" />
+            + Add New Vehicle
+          </button>
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (

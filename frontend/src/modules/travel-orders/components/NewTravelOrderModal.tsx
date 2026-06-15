@@ -27,6 +27,16 @@ function generateToNumber(count: number): string {
   return `TO-${year}-${String(next).padStart(4, '0')}`;
 }
 
+function getCurrentDatetimeLocal(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 export function NewTravelOrderModal({
   isOpen,
   onClose,
@@ -61,8 +71,8 @@ export function NewTravelOrderModal({
     if (isOpen) {
       setDepartment('');
       setTravelerName('');
-      setDepartureDateTime('');
-      setReturnDateTime('');
+      setDepartureDateTime(getCurrentDatetimeLocal());
+      setReturnDateTime(getCurrentDatetimeLocal());
       setBoundFrom('VLC Tower 1');
       setBoundTo('');
       setPurpose('');
@@ -163,10 +173,10 @@ export function NewTravelOrderModal({
   return (
     <div
       ref={modalRef}
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm transition-opacity"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
       onClick={handleBackdropClick}
     >
-      <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+      <div className="relative w-full max-w-2xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5">
           <div>

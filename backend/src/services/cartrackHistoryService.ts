@@ -653,6 +653,150 @@ function transformTripSummaryToTrip(point: CartrackHistoryPoint): TransformedTri
   };
 }
 
+/**
+ * Split raw breadcrumb history points into individual trips based on
+ * ignition on/off transitions and movement state changes.
+ *
+ * A new trip begins when:
+ *   - Ignition transitions from off → on
+ *   - Vehicle starts moving (speed > 0) after being parked
+ *   - The gap between consecutive points exceeds 30 minutes
+ *
+ * A trip ends when:
+ *   - Ignition transitions from on → off (and stays off)
+ *   - Vehicle stops moving for an extended period
+ *
+ * This ensures that each GPS log entry corresponds to a single
+ * "ignition-on → moving → parked/ignition-off" cycle, making it
+ * possible to match each trip to the correct travel order when
+ * multiple orders exist for the same vehicle on the same day.
+ */
+export function splitTripsByIgnition(
+  points: CartrackHistoryPoint[],
+): CartrackHistoryPoint[][] {
+  if (!points || points.length === 0) return [];
+
+  // Helper to extract ignition status — handles boolean, number, and string values
+  function isIgnitionOn(point: CartrackHistoryPoint): boolean {
+    const raw = point.ignition;
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw > 0;
+    if (typeof raw === 'string') {
+      const lower = raw.toLowerCase();
+      return lower === 'true' || lower === '1' || lower === 'on' || lower === 'yes';
+    }
+    return false;
+  }
+
+  // Helper to extract speed in kph
+  function getSpeed(point: CartrackHistoryPoint): number {
+    return toNumber(firstPresent(point.speed, point.speed_kph), 0);
+  }
+
+  // Helper to get timestamp in ms
+  function getTimestampMs(point: CartrackHistoryPoint): number | null {
+    const ts = String(firstPresent(
+      point.event_time, point.event_ts, point.timestamp, point.start_time, point.start_timestamp,
+    ) || '');
+    if (!ts) return null;
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  }
+
+  const trips: CartrackHistoryPoint[][] = [];
+  let currentTrip: CartrackHistoryPoint[] = [];
+
+  // Start with the first point — always begin a trip with the first data point
+  // if it has ignition on or is moving
+  let prevIgnitionOn = false;
+  let prevSpeed = 0;
+  let prevTimestampMs: number | null = null;
+
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i];
+    const ignitionOn = isIgnitionOn(point);
+    const speed = getSpeed(point);
+    const tsMs = getTimestampMs(point);
+    const isMoving = speed > 5; // moving if speed > 5 kph
+    const isStarting = speed > 0 || ignitionOn; // vehicle is "active"
+
+    // First point: start a trip if vehicle is active
+    if (i === 0) {
+      if (isStarting) {
+        currentTrip.push(point);
+        prevIgnitionOn = ignitionOn;
+        prevSpeed = speed;
+        prevTimestampMs = tsMs;
+      }
+      continue;
+    }
+
+    // Determine if a gap exists (> 30 min means likely a new trip)
+    const gapMs = (tsMs !== null && prevTimestampMs !== null) ? tsMs - prevTimestampMs : 0;
+    const hasGap = gapMs > 30 * 60 * 1000; // 30 minutes
+
+    // Determine if this is a restart after being off
+    const ignitionTurnedOn = !prevIgnitionOn && ignitionOn;
+    const startedMoving = !isMoving && speed > 0;
+    const transitionToActive = ignitionTurnedOn || startedMoving;
+
+    // If we have an active trip and vehicle turned off or there's a big gap, finalize it
+    if (currentTrip.length > 0) {
+      const ignitionTurnedOff = prevIgnitionOn && !ignitionOn;
+      const stoppedMoving = prevSpeed > 0 && speed === 0 && !ignitionOn;
+      const tripEnding = ignitionTurnedOff || stoppedMoving || hasGap;
+
+      if (tripEnding) {
+        // Check if the next points also show off — to avoid false positives
+        let stillOff = true;
+        for (let j = i; j < Math.min(i + 3, points.length); j++) {
+          if (isIgnitionOn(points[j]) || getSpeed(points[j]) > 5) {
+            stillOff = false;
+            break;
+          }
+        }
+
+        if (stillOff || hasGap) {
+          // End the current trip
+          trips.push(currentTrip);
+          currentTrip = [];
+
+          // Only start a new trip if the next point shows activity
+          if (isStarting && (hasGap || transitionToActive)) {
+            currentTrip.push(point);
+            prevIgnitionOn = ignitionOn;
+            prevSpeed = speed;
+            prevTimestampMs = tsMs;
+            continue;
+          }
+        } else {
+          // False positive — vehicle is still active, continue the trip
+          currentTrip.push(point);
+        }
+      } else {
+        // Continue the current trip
+        currentTrip.push(point);
+      }
+    } else {
+      // No active trip — start one if vehicle becomes active
+      if (isStarting) {
+        currentTrip.push(point);
+      }
+    }
+
+    prevIgnitionOn = ignitionOn;
+    prevSpeed = speed;
+    prevTimestampMs = tsMs;
+  }
+
+  // Push the last trip if any
+  if (currentTrip.length > 0) {
+    trips.push(currentTrip);
+  }
+
+  return trips;
+}
+
 export function transformHistoryToTrips(
   points: CartrackHistoryPoint[],
   plateNumber: string,
@@ -662,10 +806,79 @@ export function transformHistoryToTrips(
     return [transformHistoryToTrip(points, plateNumber, dateStr)];
   }
 
+  // First check for trip summaries (structured trips from Cartrack)
   const tripSummaries = points.filter(looksLikeTripSummary);
   if (tripSummaries.length > 0) {
     return tripSummaries.map(transformTripSummaryToTrip);
   }
 
-  return [transformHistoryToTrip(points, plateNumber, dateStr)];
+  // For raw breadcrumb data, split by ignition on/off transitions
+  const splitTrips = splitTripsByIgnition(points);
+
+  if (splitTrips.length === 0) {
+    return [transformHistoryToTrip(points, plateNumber, dateStr)];
+  }
+
+  // Transform each split point group into a trip record
+  return splitTrips.map((tripPoints) => {
+    // Find the first location as origin and last as destination
+    let firstLocation = '';
+    let lastLocation = '';
+    let firstTime: string | null = null;
+    let lastTime: string | null = null;
+    let maxSpeed = 0;
+    let maxOdometer = 0;
+    let minOdometer = Infinity;
+    const roadSegments = new Set<string>();
+
+    for (const point of tripPoints) {
+      const speed = toNumber(firstPresent(point.speed, point.speed_kph));
+      if (speed > maxSpeed) maxSpeed = speed;
+
+      const odo = toNumber(firstPresent(point.odometer, point.distance_km), -1);
+      if (odo >= 0) {
+        if (odo > maxOdometer) maxOdometer = odo;
+        if (odo < minOdometer) minOdometer = odo;
+      }
+
+      const evtTime = String(firstPresent(
+        point.event_time, point.event_ts, point.timestamp, ''
+      ) || '');
+      if (evtTime) {
+        if (!firstTime) firstTime = evtTime;
+        lastTime = evtTime;
+      }
+
+      const location = String(firstPresent(
+        point.location, point.location_name, point.address, ''
+      ) || '');
+      if (location) {
+        if (!firstLocation) firstLocation = location;
+        lastLocation = location;
+      }
+
+      const street = String(point.street || point.address || '').trim();
+      if (street) roadSegments.add(street);
+    }
+
+    const gpsDistanceKm = minOdometer < Infinity && maxOdometer > minOdometer
+      ? (maxOdometer - minOdometer) / 1000
+      : 0;
+
+    const routeTaken = Array.from(roadSegments).join(', ');
+    const hasMotion = maxSpeed > 0 || gpsDistanceKm > 0;
+    const tripStatus = hasMotion ? 'en-route' : 'arrived';
+
+    return {
+      departureTimeGps: firstTime,
+      arrivalTimeGps: lastTime,
+      gpsDistanceKm: clampNumeric(gpsDistanceKm, 99999999.99),
+      engineHours: 0,
+      maxSpeedKph: clampNumeric(maxSpeed, 9999.99),
+      originGpsStartPoint: firstLocation,
+      destinationGpsEndPoint: lastLocation,
+      actualRouteRoadTaken: routeTaken,
+      tripStatus,
+    };
+  });
 }

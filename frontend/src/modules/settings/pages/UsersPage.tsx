@@ -478,95 +478,151 @@ export function UsersPage() {
         </div>
       )}
 
-      {/* ── Users table ─────────────────────────────────────── */}
+      {/* ── Users table (Desktop) ───────────────────────────── */}
       {!loading && !error && (
-        <div className="overflow-hidden rounded-2xl bg-white shadow-brand">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="bg-brand-cream">
-                  <th className="px-6 py-3.5 font-semibold text-brand-teal">Name</th>
-                  <th className="px-6 py-3.5 font-semibold text-brand-teal">Username</th>
-                  <th className="px-6 py-3.5 font-semibold text-brand-teal">Department</th>
-                  <th className="px-6 py-3.5 font-semibold text-brand-teal">User Type</th>
-                  <th className="px-6 py-3.5 font-semibold text-brand-teal">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* ── Empty state ────────────────────────────── */}
-                {users.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={5}
-                      className="px-6 py-16 text-center text-zinc-400"
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:overflow-hidden md:block rounded-2xl bg-white shadow-brand">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="bg-brand-cream">
+                    <th className="px-6 py-3.5 font-semibold text-brand-teal">Name</th>
+                    <th className="px-6 py-3.5 font-semibold text-brand-teal">Username</th>
+                    <th className="px-6 py-3.5 font-semibold text-brand-teal">Department</th>
+                    <th className="px-6 py-3.5 font-semibold text-brand-teal">User Type</th>
+                    <th className="px-6 py-3.5 font-semibold text-brand-teal">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* ── Empty state ────────────────────────────── */}
+                  {users.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-6 py-16 text-center text-zinc-400"
+                      >
+                        No users found. Click <strong>Add New User</strong> to create one.
+                      </td>
+                    </tr>
+                  )}
+
+                  {/* ── Rows ───────────────────────────────────── */}
+                  {users.map((user, index) => (
+                    <tr
+                      key={user.id}
+                      className={cn(
+                        'transition-colors',
+                        index % 2 === 0 ? 'bg-white' : 'bg-brand-cream/50',
+                        'hover:bg-brand-moss/30',
+                      )}
                     >
-                      No users found. Click <strong>Add New User</strong> to create one.
-                    </td>
-                  </tr>
-                )}
+                      <td className="px-6 py-4 font-medium text-zinc-900">
+                        {user.name}
+                      </td>
+                      <td className="px-6 py-4 text-zinc-600">{user.username}</td>
+                      <td className="px-6 py-4 text-zinc-600">{user.department}</td>
+                      <td className="px-6 py-4">
+                        <UserTypeBadge type={user.userType} />
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1">
+                          {/* Edit */}
+                          <button
+                            onClick={() => openEditModal(user)}
+                            className="rounded-lg p-1.5 text-brand-teal transition-colors hover:bg-brand-moss/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal"
+                            aria-label={`Edit ${user.name}`}
+                            title="Edit user"
+                          >
+                            <Pencil className="size-4" />
+                          </button>
 
-                {/* ── Rows ───────────────────────────────────── */}
-                {users.map((user, index) => (
-                  <tr
-                    key={user.id}
-                    className={cn(
-                      'transition-colors',
-                      index % 2 === 0 ? 'bg-white' : 'bg-brand-cream/50',
-                      'hover:bg-brand-moss/30',
-                    )}
-                  >
-                    <td className="px-6 py-4 font-medium text-zinc-900">
-                      {user.name}
-                    </td>
-                    <td className="px-6 py-4 text-zinc-600">{user.username}</td>
-                    <td className="px-6 py-4 text-zinc-600">{user.department}</td>
-                    <td className="px-6 py-4">
-                      <UserTypeBadge type={user.userType} />
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1">
-                        {/* Edit */}
-                        <button
-                          onClick={() => openEditModal(user)}
-                          className="rounded-lg p-1.5 text-brand-teal transition-colors hover:bg-brand-moss/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal"
-                          aria-label={`Edit ${user.name}`}
-                          title="Edit user"
-                        >
-                          <Pencil className="size-4" />
-                        </button>
+                          {/* Change Password */}
+                          <button
+                            onClick={() => openPasswordModal(user.id)}
+                            className="rounded-lg p-1.5 text-brand-sage transition-colors hover:bg-brand-moss/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-sage"
+                            aria-label={`Change password for ${user.name}`}
+                            title="Change password"
+                          >
+                            <KeyRound className="size-4" />
+                          </button>
 
-                        {/* Change Password */}
-                        <button
-                          onClick={() => openPasswordModal(user.id)}
-                          className="rounded-lg p-1.5 text-brand-sage transition-colors hover:bg-brand-moss/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-sage"
-                          aria-label={`Change password for ${user.name}`}
-                          title="Change password"
-                        >
-                          <KeyRound className="size-4" />
-                        </button>
-
-                        {/* Delete */}
-                        <button
-                          onClick={() => handleDeleteUser(user)}
-                          className="rounded-lg p-1.5 text-red-500 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
-                          aria-label={`Delete ${user.name}`}
-                          title="Delete user"
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          {/* Delete */}
+                          <button
+                            onClick={() => handleDeleteUser(user)}
+                            className="rounded-lg p-1.5 text-red-500 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                            aria-label={`Delete ${user.name}`}
+                            title="Delete user"
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+
+          {/* Mobile cards */}
+          <div className="space-y-3 md:hidden">
+            {users.length === 0 && (
+              <div className="flex flex-col items-center justify-center rounded-2xl bg-white px-6 py-16 text-center shadow-brand">
+                <p className="text-base font-medium text-zinc-600">No users found</p>
+                <p className="mt-1 text-sm text-zinc-400">
+                  Tap <strong>Add New User</strong> to create one.
+                </p>
+              </div>
+            )}
+            {users.map((user) => (
+              <div key={user.id} className="rounded-2xl bg-white shadow-brand overflow-hidden">
+                <div className="px-5 py-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-zinc-900 truncate">{user.name}</p>
+                      <p className="text-xs text-zinc-400 mt-0.5">@{user.username}</p>
+                    </div>
+                    <UserTypeBadge type={user.userType} />
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-zinc-400">Department</span>
+                    <span className="font-medium text-zinc-700">{user.department}</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-1 border-t border-zinc-100 px-5 py-3">
+                  <button
+                    onClick={() => openEditModal(user)}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2.5 text-sm font-medium text-brand-teal hover:bg-brand-moss/30 min-h-[44px]"
+                  >
+                    <Pencil className="size-4" />
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => openPasswordModal(user.id)}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2.5 text-sm font-medium text-brand-sage hover:bg-brand-moss/30 min-h-[44px]"
+                  >
+                    <KeyRound className="size-4" />
+                    Password
+                  </button>
+                  <button
+                    onClick={() => handleDeleteUser(user)}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50 min-h-[44px]"
+                  >
+                    <Trash2 className="size-4" />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
+      
 
       {/* ── Create User Modal ────────────────────────────────── */}
       {createModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] flex items-start sm:items-center justify-center overflow-y-auto">
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => {
@@ -575,8 +631,8 @@ export function UsersPage() {
             }}
           />
 
-          <div className="relative z-10 w-full max-w-lg animate-[scaleIn_200ms_ease-out]">
-            <div className="rounded-2xl bg-white p-6 shadow-brand-xl">
+          <div className="relative z-10 w-full max-w-lg min-h-screen sm:min-h-0">
+            <div className="rounded-none sm:rounded-2xl bg-white p-6 shadow-brand-xl min-h-screen sm:min-h-0">
               {/* Header */}
               <div className="mb-5 flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-brand-teal">
@@ -729,7 +785,7 @@ export function UsersPage() {
 
       {/* ── Edit User Modal ─────────────────────────────────────── */}
       {editModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] flex items-start sm:items-center justify-center overflow-y-auto">
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => {
@@ -738,8 +794,8 @@ export function UsersPage() {
             }}
           />
 
-          <div className="relative z-10 w-full max-w-lg animate-[scaleIn_200ms_ease-out]">
-            <div className="rounded-2xl bg-white p-6 shadow-brand-xl">
+          <div className="relative z-10 w-full max-w-lg min-h-screen sm:min-h-0">
+            <div className="rounded-none sm:rounded-2xl bg-white p-6 shadow-brand-xl min-h-screen sm:min-h-0">
               {/* Header */}
               <div className="mb-5 flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-brand-teal">
@@ -870,7 +926,7 @@ export function UsersPage() {
 
       {/* ── Change Password Modal ──────────────────────────────── */}
       {passwordModalOpen && passwordModalUser && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[9999] flex items-start sm:items-center justify-center overflow-y-auto">
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => {
@@ -879,8 +935,8 @@ export function UsersPage() {
             }}
           />
 
-          <div className="relative z-10 w-full max-w-md animate-[scaleIn_200ms_ease-out]">
-            <div className="rounded-2xl bg-white p-6 shadow-brand-xl">
+          <div className="relative z-10 w-full max-w-md min-h-screen sm:min-h-0">
+            <div className="rounded-none sm:rounded-2xl bg-white p-6 shadow-brand-xl min-h-screen sm:min-h-0">
               {/* Header */}
               <div className="mb-5 flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-brand-teal">

@@ -8,11 +8,10 @@ import { ToastContainer } from '@/shared/components/ToastContainer';
 import { AppLayout } from '@/shared/components/AppLayout';
 import { LoginPage } from '@/modules/auth/pages/LoginPage';
 import { DashboardPage } from '@/modules/dashboard/pages/DashboardPage';
-import { VehiclesPage } from '@/modules/vehicles/pages/VehiclesPage';
+import { ListPage } from '@/modules/list/pages/ListPage';
 import { ReportsPage } from '@/modules/reports/pages/ReportsPage';
 import { TravelOrdersPage } from '@/modules/travel-orders/pages/TravelOrdersPage';
 import { GpsLogsPage } from '@/modules/gps-logs/pages/GpsLogsPage';
-import { DriversPage } from '@/modules/drivers/pages/DriversPage';
 import { SettingsPage } from '@/modules/settings/pages/SettingsPage';
 import { RequestsPage } from '@/modules/requests/pages/RequestsPage';
 
@@ -40,11 +39,11 @@ function AppRoutes() {
         }
       />
       <Route
-        path="/vehicles"
+        path="/list"
         element={
           <ProtectedRoute>
             <AppLayout>
-              <VehiclesPage />
+              <ListPage />
             </AppLayout>
           </ProtectedRoute>
         }
@@ -85,16 +84,6 @@ function AppRoutes() {
           <ProtectedRoute>
             <AppLayout>
               <RequestsPage />
-            </AppLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/drivers"
-        element={
-          <ProtectedRoute>
-            <AppLayout>
-              <DriversPage />
             </AppLayout>
           </ProtectedRoute>
         }

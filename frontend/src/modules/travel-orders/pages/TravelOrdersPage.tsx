@@ -7,17 +7,31 @@ import {
   fetchPendingOrders,
   fetchForApprovalOrders,
   fetchApprovedOrders,
+  fetchCancelledOrders,
   createTravelOrder,
   type TravelOrderData,
 } from '../api/travel-orders-api';
 import type { TravelOrder } from '../types';
 
-type TabKey = 'pending' | 'for-approval' | 'approved';
+/** Convert a datetime-local value (YYYY-MM-DDTHH:MM, local) to an ISO string with local timezone offset. */
+function toLocalISO(datetimeLocal: string): string {
+  if (!datetimeLocal) return datetimeLocal;
+  const date = new Date(datetimeLocal);
+  const offset = -date.getTimezoneOffset();
+  const sign = offset >= 0 ? '+' : '-';
+  const pad = (n: number) => String(Math.abs(n)).padStart(2, '0');
+  const hours = pad(Math.floor(Math.abs(offset) / 60));
+  const minutes = pad(Math.abs(offset) % 60);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00${sign}${hours}:${minutes}`;
+}
+
+type TabKey = 'pending' | 'for-approval' | 'approved' | 'cancelled';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'pending', label: 'Needs Assigning' },
   { key: 'for-approval', label: 'For Approval' },
   { key: 'approved', label: 'Approved' },
+  { key: 'cancelled', label: 'Cancelled' },
 ];
 
 export function TravelOrdersPage() {
@@ -37,7 +51,9 @@ export function TravelOrdersPage() {
           ? await fetchPendingOrders()
           : activeTab === 'for-approval'
             ? await fetchForApprovalOrders()
-            : await fetchApprovedOrders();
+            : activeTab === 'approved'
+              ? await fetchApprovedOrders()
+              : await fetchCancelledOrders();
       setOrders(data);
     } catch (err) {
       toast('Failed to load travel orders', 'error');
@@ -63,8 +79,8 @@ export function TravelOrdersPage() {
         toNumber: order.toNumber,
         originLocation: order.boundFrom,
         destinationLocation: order.boundTo,
-        scheduledDepartureAt: order.departureDateTime,
-        scheduledArrivalAt: order.returnDateTime,
+        scheduledDepartureAt: toLocalISO(order.departureDateTime),
+        scheduledArrivalAt: toLocalISO(order.returnDateTime),
         purpose: order.purpose,
         notes: order.remarks,
         department: order.department,
@@ -115,19 +131,8 @@ export function TravelOrdersPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header: New Travel Order button aligned to the right */}
-      <div className="flex justify-end">
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-        >
-          <Plus className="size-4" />
-          New Travel Order
-        </button>
-      </div>
-
-      {/* Tab Bar */}
-      <div className="border-b border-zinc-200">
+      {/* Tab Bar + New Travel Order button on the same row */}
+      <div className="flex items-center justify-between border-b border-zinc-200">
         <nav className="-mb-px flex gap-6" aria-label="Travel order tabs">
           {TABS.map((tab) => (
             <button
@@ -150,6 +155,14 @@ export function TravelOrdersPage() {
             </button>
           ))}
         </nav>
+
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+        >
+          <Plus className="size-4" />
+          New Travel Order
+        </button>
       </div>
 
       {/* Content */}
@@ -161,7 +174,9 @@ export function TravelOrdersPage() {
               ? 'Loading unassigned orders…'
               : activeTab === 'for-approval'
                 ? 'Loading for-approval orders…'
-                : 'Loading approved orders…'}
+                : activeTab === 'approved'
+                  ? 'Loading approved orders…'
+                  : 'Loading cancelled orders…'}
           </p>
         </div>
       ) : orders.length === 0 ? (
@@ -171,14 +186,18 @@ export function TravelOrdersPage() {
               ? 'No unassigned travel orders'
               : activeTab === 'for-approval'
                 ? 'No orders pending approval'
-                : 'No approved travel orders'}
+                : activeTab === 'approved'
+                  ? 'No approved travel orders'
+                  : 'No cancelled travel orders'}
           </p>
           <p className="mt-1 text-sm text-zinc-400">
             {activeTab === 'pending'
               ? 'Create a new travel order and assign a vehicle & driver to get started.'
               : activeTab === 'for-approval'
                 ? 'Assigned orders will appear here once vehicle & driver are set.'
-                : 'Approved orders will appear here once they are approved.'}
+                : activeTab === 'approved'
+                  ? 'Approved orders will appear here once they are approved.'
+                  : 'Cancelled orders will appear here once they are rejected or cancelled.'}
           </p>
         </div>
       ) : (
