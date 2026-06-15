@@ -1,5 +1,5 @@
-import { Router } from 'express';
-declare const router: Router;
+import { type Router as ExpressRouter } from 'express';
+declare const router: ExpressRouter;
 export interface SanitisedUser {
     id: string;
     name: string;
