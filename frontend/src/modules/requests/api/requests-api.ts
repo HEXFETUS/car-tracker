@@ -1,6 +1,5 @@
 import type { ApiResponse } from '@car-tracker/shared';
-
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3500';
+import { API_BASE } from '@/shared/api';
 
 /** Shape of a pending travel order from the /api/travel-orders/pending endpoint. */
 export interface PendingTravelOrder {
