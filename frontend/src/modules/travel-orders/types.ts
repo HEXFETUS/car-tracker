@@ -12,5 +12,5 @@ export interface TravelOrder {
   requestDriver: boolean;
   remarks?: string;
   imageAttachment: string | null;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'for_approval' | 'approved' | 'rejected';
 }

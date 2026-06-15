@@ -1,9 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Navigation, AlertTriangle, RefreshCw, Calendar, X } from 'lucide-react';
+import { Loader2, Navigation, AlertTriangle, Calendar, X, Car, History, Pencil } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
+import { useAuth } from '@/modules/auth/context/auth-context';
 import { cn } from '@/shared/lib/utils';
-import { fetchGpsLogs, syncGpsLogs } from '../api/gps-logs-api';
-import type { GpsLogsResult, SyncResult } from '../api/gps-logs-api';
+import {
+  fetchGpsLogs,
+  syncGpsLogsHistory,
+  fetchTrackedVehicles,
+} from '../api/gps-logs-api';
+import type { GpsLogsResult, SyncHistoryResult, VehicleOption, EnrichedGpsTripLog } from '../api/gps-logs-api';
+import { EditGpsLogModal } from '../components/EditGpsLogModal';
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -36,20 +42,50 @@ const STATUS_COLORS: Record<string, string> = {
 
 export function GpsLogsPage() {
   const { toast } = useNotification();
+  const { user } = useAuth();
   const [result, setResult] = useState<GpsLogsResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [syncHistoryResult, setSyncHistoryResult] = useState<SyncHistoryResult | null>(null);
   const [page, setPage] = useState(1);
   const [dateFilter, setDateFilter] = useState('');
+  const [vehicleFilter, setVehicleFilter] = useState('');
+  const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
+  const [vehiclesLoading, setVehiclesLoading] = useState(true);
+  const [editLog, setEditLog] = useState<EnrichedGpsTripLog | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
   const pageSize = 25;
+
+  // ── Load tracked vehicles on mount ──────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    setVehiclesLoading(true);
+    fetchTrackedVehicles()
+      .then((list) => {
+        if (!cancelled) setVehicles(list);
+      })
+      .catch(() => {
+        if (!cancelled) toast('Failed to load vehicles', 'error');
+      })
+      .finally(() => {
+        if (!cancelled) setVehiclesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [toast]);
 
   const loadLogs = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchGpsLogs({ page, pageSize, tripDate: dateFilter || undefined });
+      const data = await fetchGpsLogs({
+        page,
+        pageSize,
+        tripDate: dateFilter || undefined,
+        vehicleId: vehicleFilter || undefined,
+      });
       setResult(data);
     } catch {
       setError('Failed to load GPS logs. Please try again.');
@@ -57,26 +93,40 @@ export function GpsLogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, dateFilter, toast]);
+  }, [page, pageSize, dateFilter, vehicleFilter, toast]);
 
   useEffect(() => {
     loadLogs();
   }, [loadLogs]);
 
-  const handleSync = async () => {
+  const handleSyncHistory = async () => {
+    if (!vehicleFilter) {
+      toast('Please select a vehicle first', 'info');
+      return;
+    }
+    if (!dateFilter) {
+      toast('Please select a date first', 'info');
+      return;
+    }
+
     try {
       setSyncing(true);
-      setSyncResult(null);
-      const res = await syncGpsLogs();
-      setSyncResult(res);
-      toast(
-        `Sync complete — ${res.gps_logs_saved ?? 0} GPS logs saved`,
-        'success',
-      );
-      // Reload logs after sync
+      setSyncHistoryResult(null);
+      const res = await syncGpsLogsHistory(vehicleFilter, dateFilter);
+      setSyncHistoryResult(res);
+
+      if (res.synced) {
+        toast(
+          `History sync completed — ${res.gps_logs_saved ?? 0} logs saved under ${res.travel_order_status ?? 'N/A'} travel order`,
+          'success',
+        );
+      } else {
+        toast(res.message ?? 'No approved travel order found for this date', 'info');
+      }
+
       await loadLogs();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Sync failed';
+      const msg = err instanceof Error ? err.message : 'History sync failed';
       toast(msg, 'error');
     } finally {
       setSyncing(false);
@@ -93,70 +143,158 @@ export function GpsLogsPage() {
     setPage(1);
   };
 
+  const handleVehicleChange = (value: string) => {
+    setVehicleFilter(value);
+    setPage(1);
+  };
+
+  const clearVehicleFilter = () => {
+    setVehicleFilter('');
+    setPage(1);
+  };
+
+  const today = new Date().toISOString().split('T')[0];
+
   const totalPages = result ? Math.ceil(result.total / pageSize) : 1;
+
+  function handleEdit(log: EnrichedGpsTripLog) {
+    setEditLog(log);
+    setEditModalOpen(true);
+  }
+
+  function handleEditSuccess() {
+    setEditModalOpen(false);
+    setEditLog(null);
+    loadLogs();
+  }
 
   return (
     <div className="space-y-8">
-      {/* Action Bar: Date Filter + Sync */}
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        {/* Date Filter */}
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
-            <input
-              type="date"
-              value={dateFilter}
-              onChange={(e) => handleDateChange(e.target.value)}
-              className="rounded-lg border-0 bg-white pl-10 pr-3 py-2.5 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow shadow-sm"
-            />
+      <EditGpsLogModal
+        isOpen={editModalOpen}
+        onClose={() => { setEditModalOpen(false); setEditLog(null); }}
+        onSuccess={handleEditSuccess}
+        log={editLog}
+        isSuperadmin={user?.userType === 'SUPERADMIN'}
+      />
+      {/* ── Toolbar: Filters + Button aligned right ─── */}
+      <div className="flex flex-wrap items-end justify-end gap-3">
+        {/* Vehicle Selector */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+            Vehicle
+          </label>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Car className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-brand-teal pointer-events-none" />
+              <select
+                value={vehicleFilter}
+                onChange={(e) => handleVehicleChange(e.target.value)}
+                className="rounded-lg border-0 bg-white pl-10 pr-8 py-2.5 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm appearance-none cursor-pointer"
+              >
+                <option value="">All Vehicles</option>
+                {vehiclesLoading && (
+                  <option value="" disabled>Loading…</option>
+                )}
+                {!vehiclesLoading &&
+                  vehicles.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.plateNumber}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            {vehicleFilter && (
+              <button
+                onClick={clearVehicleFilter}
+                className="rounded-lg bg-zinc-100 p-2 text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-700"
+                title="Clear vehicle filter"
+              >
+                <X className="size-4" />
+              </button>
+            )}
           </div>
-          {dateFilter && (
-            <button
-              onClick={clearDateFilter}
-              className="rounded-lg bg-zinc-100 p-2 text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-700"
-              title="Clear date filter"
-            >
-              <X className="size-4" />
-            </button>
-          )}
         </div>
 
-        {/* Sync Button */}
+        {/* Date Filter */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+            Trip Date
+          </label>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-brand-teal pointer-events-none" />
+              <input
+                type="date"
+                value={dateFilter}
+                max={today}
+                onChange={(e) => handleDateChange(e.target.value)}
+                className="rounded-lg border-0 bg-white pl-10 pr-3 py-2.5 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm"
+              />
+            </div>
+            {dateFilter && (
+              <button
+                onClick={clearDateFilter}
+                className="rounded-lg bg-zinc-100 p-2 text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-700"
+                title="Clear date filter"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Sync History Button */}
         <button
-          onClick={handleSync}
-          disabled={syncing}
+          onClick={handleSyncHistory}
+          disabled={syncing || !vehicleFilter || !dateFilter}
           className={cn(
             'inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.97]',
-            syncing
-              ? 'bg-brand-teal/60 cursor-not-allowed'
+            syncing || !vehicleFilter || !dateFilter
+              ? 'bg-brand-teal/50 cursor-not-allowed'
               : 'bg-brand-teal hover:bg-brand-teal/80',
           )}
         >
           {syncing ? (
             <>
               <Loader2 className="size-4 animate-spin" />
-              Syncing…
+              Syncing History…
             </>
           ) : (
             <>
-              <RefreshCw className="size-4" />
-              Sync GPS Logs
+              <History className="size-4" />
+              Sync Tracking History
             </>
           )}
         </button>
       </div>
 
-      {/* Sync Result Summary */}
-      {syncResult && syncResult.success !== undefined && (
-        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
+      {/* ── Sync History Result Banner ───────────────────────── */}
+      {syncHistoryResult && (
+        <div
+          className={cn(
+            'rounded-lg border px-4 py-3 text-sm',
+            syncHistoryResult.synced
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-amber-50 border-amber-200 text-amber-800',
+          )}
+        >
           <span className="font-medium">Last sync:</span>{' '}
-          {syncResult.gps_logs_saved ?? 0} logs saved
-          {syncResult.gps_logs_failed ? `, ${syncResult.gps_logs_failed} failed` : ''}
-          {syncResult.elapsed_seconds ? ` (${syncResult.elapsed_seconds}s)` : ''}
+          {syncHistoryResult.message ?? 'Completed'}
+          {syncHistoryResult.gps_logs_saved != null && (
+            <> — {syncHistoryResult.gps_logs_saved} logs saved</>
+          )}
+          {syncHistoryResult.gps_logs_failed ? `, ${syncHistoryResult.gps_logs_failed} failed` : ''}
+          {syncHistoryResult.elapsed_seconds ? ` (${syncHistoryResult.elapsed_seconds}s)` : ''}
+          {syncHistoryResult.travel_order_status && (
+            <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-brand-teal/10 text-brand-teal">
+              {syncHistoryResult.travel_order_status}
+            </span>
+          )}
         </div>
       )}
 
-      {/* Loading State */}
+      {/* ── Loading State ────────────────────────────────────── */}
       {loading && (
         <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
           <Loader2 className="size-8 text-brand-teal animate-spin mb-3" />
@@ -164,34 +302,34 @@ export function GpsLogsPage() {
         </div>
       )}
 
-      {/* Error State */}
+      {/* ── Error State ──────────────────────────────────────── */}
       {!loading && error && (
         <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
           <AlertTriangle className="size-10 text-red-400 mb-3" />
           <p className="text-base font-medium text-red-600">{error}</p>
           <button
             onClick={loadLogs}
-            className="mt-4 rounded-lg bg-brand-teal px-5 py-2 text-sm font-medium text-white hover:bg-brand-teal/80"
+            className="mt-4 rounded-lg bg-brand-teal px-5 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors"
           >
             Retry
           </button>
         </div>
       )}
 
-      {/* Empty State */}
+      {/* ── Empty State ──────────────────────────────────────── */}
       {!loading && !error && result && result.logs.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
           <Navigation className="size-10 text-zinc-300 mb-3" />
           <p className="text-base font-medium text-zinc-600">No GPS logs found</p>
           <p className="mt-1 text-sm text-zinc-400">
-            {dateFilter
-              ? `No logs for ${dateFilter}. Try a different date or sync new data.`
-              : 'Click "Sync GPS Logs" to fetch the latest tracking data.'}
+            {dateFilter || vehicleFilter
+              ? `No logs for the selected filters. Try a different date or vehicle.`
+              : 'Select a vehicle and date, then click "Sync Tracking History".'}
           </p>
         </div>
       )}
 
-      {/* Data Table */}
+      {/* ── Data Table ─────────────────────────────────────── */}
       {!loading && !error && result && result.logs.length > 0 && (
         <div className="rounded-xl bg-white shadow-brand overflow-hidden">
           <div className="overflow-x-auto">
@@ -211,43 +349,46 @@ export function GpsLogsPage() {
                     Driver Name
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Origin (GPS Start Point)
+                    Origin (GPS Start)
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Destination (GPS End Point)
+                    Destination (GPS End)
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Actual Route / Road Taken
+                    Route / Road Taken
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Departure Time (GPS)
+                    Departure Time
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Arrival Time (GPS)
+                    Arrival Time
                   </th>
                   <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    GPS Distance (km)
+                    Distance (km)
                   </th>
                   <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
                     Engine Hours
                   </th>
                   <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Max Speed (kph)
+                    Max Speed
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Trip Status (GPS)
+                    Trip Status
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
                     Linked TO No.
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    TO Status (auto)
+                    TO Status
                   </th>
                   <th className="px-4 py-3.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Anomaly Flag
+                    Anomaly
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Notes / Remarks
+                    Notes
+                  </th>
+                  <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                    Actions
                   </th>
                 </tr>
               </thead>
@@ -337,6 +478,15 @@ export function GpsLogsPage() {
                     </td>
                     <td className="px-4 py-3 text-zinc-500 max-w-[180px] truncate text-xs" title={log.notesRemarks ?? ''}>
                       {log.notesRemarks || <span className="text-zinc-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => handleEdit(log)}
+                        className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"
+                      >
+                        <Pencil className="size-3.5" />
+                        Edit
+                      </button>
                     </td>
                   </tr>
                 ))}

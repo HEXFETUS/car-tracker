@@ -13,6 +13,7 @@ interface UserRow {
   username: string;
   password: string;
   user_type: string;
+  department: string;
   created_at: string;
   updated_at: string;
 }
@@ -23,6 +24,7 @@ export interface SanitisedUser {
   name: string;
   username: string;
   userType: string;
+  department: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +35,7 @@ function sanitise(row: UserRow): SanitisedUser {
     name: row.name,
     username: row.username,
     userType: row.user_type,
+    department: row.department,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -55,7 +58,7 @@ router.get('/', async (_req: Request, res: Response) => {
 
 // POST /api/users — Create a new user (password is hashed)
 router.post('/', async (req: Request, res: Response) => {
-  const { name, username, password, userType } = req.body;
+  const { name, username, password, userType, department } = req.body;
 
   if (!name || !username || !password || !userType) {
     res.status(400).json({
@@ -66,7 +69,7 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const validTypes = ['ADMIN', 'DISPATCHER', 'DRIVER', 'VIEWER'];
+  const validTypes = ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'];
   if (!validTypes.includes(userType)) {
     res.status(400).json({
       success: false,
@@ -97,10 +100,10 @@ router.post('/', async (req: Request, res: Response) => {
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
     const result = await pool.query<UserRow>(
-      `INSERT INTO users (name, username, password, user_type)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (name, username, password, user_type, department)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [name, username, hashedPassword, userType],
+      [name, username, hashedPassword, userType, department ?? ''],
     );
 
     res.status(201).json({
@@ -114,16 +117,16 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// PUT /api/users/:id — Update user name, username, or userType
+// PUT /api/users/:id — Update user name, username, userType, or department
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { name, username, userType } = req.body;
+  const { name, username, userType, department } = req.body;
 
-  if (!name && !username && !userType) {
+  if (!name && !username && !userType && department === undefined) {
     res.status(400).json({
       success: false,
       data: null,
-      error: 'At least one field (name, username, userType) must be provided',
+      error: 'At least one field (name, username, userType, department) must be provided',
     });
     return;
   }
@@ -162,7 +165,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     }
 
     // If userType is provided, validate it
-    const validTypes = ['ADMIN', 'DISPATCHER', 'DRIVER', 'VIEWER'];
+    const validTypes = ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'];
     if (userType && !validTypes.includes(userType)) {
       res.status(400).json({
         success: false,
@@ -188,6 +191,10 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (userType) {
       fields.push(`user_type = $${paramIndex++}`);
       values.push(userType);
+    }
+    if (department !== undefined) {
+      fields.push(`department = $${paramIndex++}`);
+      values.push(department);
     }
 
     fields.push(`updated_at = NOW()`);

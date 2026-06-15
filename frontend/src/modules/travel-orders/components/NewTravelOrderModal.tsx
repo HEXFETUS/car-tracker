@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Upload } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
+import { useAuth } from '@/modules/auth/context/auth-context';
 import type { TravelOrder } from '../types';
 
 interface NewTravelOrderModalProps {
@@ -32,11 +33,12 @@ export function NewTravelOrderModal({
   onSubmit,
   existingCount,
 }: NewTravelOrderModalProps) {
+  const { user } = useAuth();
   const [department, setDepartment] = useState('');
   const [travelerName, setTravelerName] = useState('');
   const [departureDateTime, setDepartureDateTime] = useState('');
   const [returnDateTime, setReturnDateTime] = useState('');
-  const [boundFrom, setBoundFrom] = useState('');
+  const [boundFrom, setBoundFrom] = useState('VLC Tower 1');
   const [boundTo, setBoundTo] = useState('');
   const [purpose, setPurpose] = useState('');
   const [requestVehicle, setRequestVehicle] = useState(false);
@@ -51,7 +53,8 @@ export function NewTravelOrderModal({
   const modalRef = useRef<HTMLDivElement>(null);
 
   const toNumber = generateToNumber(existingCount);
-  const dateIssued = new Date().toISOString().slice(0, 10);
+  const [dateIssued, setDateIssued] = useState(new Date().toISOString().slice(0, 10));
+  const canEditDateIssued = user?.userType === 'SUPERADMIN';
 
   // Reset form on open
   useEffect(() => {
@@ -60,7 +63,7 @@ export function NewTravelOrderModal({
       setTravelerName('');
       setDepartureDateTime('');
       setReturnDateTime('');
-      setBoundFrom('');
+      setBoundFrom('VLC Tower 1');
       setBoundTo('');
       setPurpose('');
       setRequestVehicle(false);
@@ -69,6 +72,7 @@ export function NewTravelOrderModal({
       setImageData(null);
       setImageName('');
       setErrors({});
+      setDateIssued(new Date().toISOString().slice(0, 10));
     }
   }, [isOpen]);
 
@@ -196,7 +200,7 @@ export function NewTravelOrderModal({
                 className="w-full rounded-lg bg-zinc-50 px-3.5 py-2.5 text-sm text-zinc-500 cursor-not-allowed"
               />
             </div>
-            {/* Date Issued (Read-only) */}
+            {/* Date Issued (Editable for SUPERADMIN only) */}
             <div>
               <label className="block text-sm font-medium text-zinc-700 mb-1">
                 Date Issued <span className="text-red-500">*</span>
@@ -204,8 +208,14 @@ export function NewTravelOrderModal({
               <input
                 type="date"
                 value={dateIssued}
-                disabled
-                className="w-full rounded-lg bg-zinc-50 px-3.5 py-2.5 text-sm text-zinc-500 cursor-not-allowed"
+                onChange={(e) => setDateIssued(e.target.value)}
+                disabled={!canEditDateIssued}
+                className={cn(
+                  'w-full rounded-lg px-3.5 py-2.5 text-sm',
+                  canEditDateIssued
+                    ? 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow'
+                    : 'bg-zinc-50 text-zinc-500 cursor-not-allowed'
+                )}
               />
             </div>
           </div>

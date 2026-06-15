@@ -10,7 +10,7 @@ export async function fetchUsers(): Promise<AppUser[]> {
 }
 
 export async function createUser(
-  payload: { name: string; username: string; password: string; userType: string },
+  payload: { name: string; username: string; password: string; userType: string; department?: string },
 ): Promise<AppUser> {
   const res = await fetch(`${API_BASE}/api/users`, {
     method: 'POST',
@@ -24,7 +24,7 @@ export async function createUser(
 
 export async function updateUser(
   id: string,
-  payload: { name?: string; username?: string; userType?: string },
+  payload: { name?: string; username?: string; userType?: string; department?: string },
 ): Promise<AppUser> {
   const res = await fetch(`${API_BASE}/api/users/${id}`, {
     method: 'PUT',

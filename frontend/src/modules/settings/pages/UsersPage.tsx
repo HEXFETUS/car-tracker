@@ -29,9 +29,10 @@ type UserType = AppUser['userType'];
 // ── User Type Badge ────────────────────────────────────────────
 
 const USER_TYPE_STYLES: Record<UserType, { bg: string; text: string }> = {
+  SUPERADMIN: { bg: 'bg-rose-100', text: 'text-rose-700' },
   ADMIN: { bg: 'bg-brand-teal/10', text: 'text-brand-teal' },
   DISPATCHER: { bg: 'bg-amber-100', text: 'text-amber-700' },
-  DRIVER: { bg: 'bg-brand-moss/30', text: 'text-zinc-700' },
+  HR: { bg: 'bg-brand-moss/30', text: 'text-zinc-700' },
   VIEWER: { bg: 'bg-zinc-100', text: 'text-zinc-500' },
 };
 
@@ -166,6 +167,7 @@ interface ValidationErrors {
   username?: string;
   password?: string;
   userType?: string;
+  department?: string;
 }
 
 function validateUserForm(data: {
@@ -173,6 +175,7 @@ function validateUserForm(data: {
   username: string;
   password: string;
   userType: string;
+  department: string;
 }): ValidationErrors {
   const errors: ValidationErrors = {};
 
@@ -194,15 +197,20 @@ function validateUserForm(data: {
     errors.userType = 'Please select a user type.';
   }
 
+  if (!data.department.trim()) {
+    errors.department = 'Department is required.';
+  }
+
   return errors;
 }
 
 // ── User Type Options ─────────────────────────────────────────
 
 const USER_TYPE_OPTIONS: DropdownOption[] = [
+  { value: 'SUPERADMIN', label: 'Super Admin' },
   { value: 'ADMIN', label: 'Admin' },
   { value: 'DISPATCHER', label: 'Dispatcher' },
-  { value: 'DRIVER', label: 'Driver' },
+  { value: 'HR', label: 'HR' },
   { value: 'VIEWER', label: 'Viewer' },
 ];
 
@@ -223,6 +231,7 @@ export function UsersPage() {
   const [formUsername, setFormUsername] = useState('');
   const [formPassword, setFormPassword] = useState('');
   const [formUserType, setFormUserType] = useState('');
+  const [formDepartment, setFormDepartment] = useState('');
   const [formErrors, setFormErrors] = useState<ValidationErrors>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -232,7 +241,8 @@ export function UsersPage() {
   const [editFormName, setEditFormName] = useState('');
   const [editFormUsername, setEditFormUsername] = useState('');
   const [editFormUserType, setEditFormUserType] = useState('');
-  const [editFormErrors, setEditFormErrors] = useState<Pick<ValidationErrors, 'name' | 'username' | 'userType'>>({});
+  const [editFormDepartment, setEditFormDepartment] = useState('');
+  const [editFormErrors, setEditFormErrors] = useState<Pick<ValidationErrors, 'name' | 'username' | 'userType' | 'department'>>({});
   const [editSubmitting, setEditSubmitting] = useState(false);
 
   // Password modal
@@ -268,6 +278,7 @@ export function UsersPage() {
     setFormUsername('');
     setFormPassword('');
     setFormUserType('');
+    setFormDepartment('');
     setFormErrors({});
   }, []);
 
@@ -289,6 +300,7 @@ export function UsersPage() {
     setEditFormName(user.name);
     setEditFormUsername(user.username);
     setEditFormUserType(user.userType);
+    setEditFormDepartment(user.department);
     setEditFormErrors({});
     setEditModalOpen(true);
   }, []);
@@ -298,6 +310,7 @@ export function UsersPage() {
     setEditFormName('');
     setEditFormUsername('');
     setEditFormUserType('');
+    setEditFormDepartment('');
     setEditFormErrors({});
   }, []);
 
@@ -309,6 +322,7 @@ export function UsersPage() {
       username: formUsername,
       password: formPassword,
       userType: formUserType,
+      department: formDepartment,
     });
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
@@ -320,6 +334,7 @@ export function UsersPage() {
         username: formUsername.trim(),
         password: formPassword,
         userType: formUserType,
+        department: formDepartment.trim(),
       });
       toast('User created successfully.', 'success');
       setCreateModalOpen(false);
@@ -330,13 +345,14 @@ export function UsersPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [formName, formUsername, formPassword, formUserType, toast, resetCreateForm, loadUsers]);
+  }, [formName, formUsername, formPassword, formUserType, formDepartment, toast, resetCreateForm, loadUsers]);
 
   const handleUpdateUser = useCallback(async () => {
     const errors: typeof editFormErrors = {};
     if (!editFormName.trim()) errors.name = 'Name is required.';
     if (!editFormUsername.trim()) errors.username = 'Username is required.';
     if (!editFormUserType) errors.userType = 'Please select a user type.';
+    if (!editFormDepartment.trim()) errors.department = 'Department is required.';
     setEditFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
     if (!editUserId) return;
@@ -347,6 +363,7 @@ export function UsersPage() {
         name: editFormName.trim(),
         username: editFormUsername.trim(),
         userType: editFormUserType,
+        department: editFormDepartment.trim(),
       });
       toast('User updated successfully.', 'success');
       setEditModalOpen(false);
@@ -357,7 +374,7 @@ export function UsersPage() {
     } finally {
       setEditSubmitting(false);
     }
-  }, [editUserId, editFormName, editFormUsername, editFormUserType, toast, resetEditForm, loadUsers]);
+  }, [editUserId, editFormName, editFormUsername, editFormUserType, editFormDepartment, toast, resetEditForm, loadUsers]);
 
   const handleDeleteUser = useCallback(
     async (user: AppUser) => {
@@ -470,6 +487,7 @@ export function UsersPage() {
                 <tr className="bg-brand-cream">
                   <th className="px-6 py-3.5 font-semibold text-brand-teal">Name</th>
                   <th className="px-6 py-3.5 font-semibold text-brand-teal">Username</th>
+                  <th className="px-6 py-3.5 font-semibold text-brand-teal">Department</th>
                   <th className="px-6 py-3.5 font-semibold text-brand-teal">User Type</th>
                   <th className="px-6 py-3.5 font-semibold text-brand-teal">Actions</th>
                 </tr>
@@ -479,7 +497,7 @@ export function UsersPage() {
                 {users.length === 0 && (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={5}
                       className="px-6 py-16 text-center text-zinc-400"
                     >
                       No users found. Click <strong>Add New User</strong> to create one.
@@ -501,6 +519,7 @@ export function UsersPage() {
                       {user.name}
                     </td>
                     <td className="px-6 py-4 text-zinc-600">{user.username}</td>
+                    <td className="px-6 py-4 text-zinc-600">{user.department}</td>
                     <td className="px-6 py-4">
                       <UserTypeBadge type={user.userType} />
                     </td>
@@ -659,6 +678,28 @@ export function UsersPage() {
                     <p className="mt-1 text-xs text-red-500">{formErrors.userType}</p>
                   )}
                 </div>
+
+                {/* Department */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-zinc-700">
+                    Department <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formDepartment}
+                    onChange={(e) => setFormDepartment(e.target.value)}
+                    placeholder="e.g. IT, HR, Finance"
+                    className={cn(
+                      'w-full rounded-xl border-0 ring-1 px-3.5 py-2.5 text-sm transition-colors placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal',
+                      formErrors.department
+                        ? 'ring-red-400 bg-red-50'
+                        : 'ring-brand-sage bg-white hover:ring-brand-teal',
+                    )}
+                  />
+                  {formErrors.department && (
+                    <p className="mt-1 text-xs text-red-500">{formErrors.department}</p>
+                  )}
+                </div>
               </div>
 
               {/* Footer buttons */}
@@ -776,6 +817,28 @@ export function UsersPage() {
                   />
                   {editFormErrors.userType && (
                     <p className="mt-1 text-xs text-red-500">{editFormErrors.userType}</p>
+                  )}
+                </div>
+
+                {/* Department */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-zinc-700">
+                    Department <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editFormDepartment}
+                    onChange={(e) => setEditFormDepartment(e.target.value)}
+                    placeholder="e.g. IT, HR, Finance"
+                    className={cn(
+                      'w-full rounded-xl border-0 ring-1 px-3.5 py-2.5 text-sm transition-colors placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal',
+                      editFormErrors.department
+                        ? 'ring-red-400 bg-red-50'
+                        : 'ring-brand-sage bg-white hover:ring-brand-teal',
+                    )}
+                  />
+                  {editFormErrors.department && (
+                    <p className="mt-1 text-xs text-red-500">{editFormErrors.department}</p>
                   )}
                 </div>
               </div>

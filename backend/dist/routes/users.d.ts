@@ -5,6 +5,7 @@ export interface SanitisedUser {
     name: string;
     username: string;
     userType: string;
+    department: string;
     createdAt: string;
     updatedAt: string;
 }

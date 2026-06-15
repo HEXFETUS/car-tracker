@@ -11,6 +11,7 @@ interface UserRow {
   username: string;
   password: string;
   user_type: string;
+  department: string;
   created_at: string;
   updated_at: string;
 }
@@ -21,6 +22,7 @@ function sanitise(row: UserRow): AppUser {
     name: row.name,
     username: row.username,
     userType: row.user_type as AppUser['userType'],
+    department: row.department,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

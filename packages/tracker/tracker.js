@@ -16,7 +16,7 @@
 //   BOT_TOKEN, CHAT_ID (Telegram)
 
 import { alreadySentRecently, getJson, setJson } from './state.js';
-import { insertAlertsToSupabase, isSupabaseConfigured } from './supabase.js';
+import { insertAlertsToSupabase, isSupabaseConfigured, findVehicleIdByPlate } from './supabase.js';
 import { buildTripLogRecord } from './tripLogTransformer.js';
 
 // ── Configuration from Environment ────────────────────────────
@@ -32,24 +32,14 @@ export const FLEET_CACHE_SECONDS = Number(process.env.FLEET_CACHE_SECONDS || 30)
 export const FLEET_STALE_CACHE_SECONDS = Number(process.env.FLEET_STALE_CACHE_SECONDS || 3600);
 
 // ── Vehicle Key Heuristics ────────────────────────────────────
+//
+// Vehicle identification is resolved STRICTLY via database plate
+// number lookups. The keys below are used only to extract the raw
+// plate number string from the incoming Cartrack payload.
 
 const VEHICLE_ID_KEYS = ['vehicle_id', 'vehicleId', 'id', 'unit_id', 'unitId', 'asset_id', 'assetId', 'device_id', 'deviceId', 'registration'];
-const VEHICLE_NAME_KEYS = ['vehicle_name', 'vehicleName', 'registration', 'reg', 'plate', 'plate_number', 'license_plate', 'name', 'label'];
-const VEHICLE_MODEL_KEYS = ['model', 'vehicle_model', 'vehicleModel', 'make_model', 'makeModel', 'asset_model', 'assetModel'];
-const VEHICLE_DETAIL_KEYS = ['registration', 'reg', 'plate', 'plate_number', 'license_plate', 'vehicle_id', 'vehicleId', 'unit_id', 'unitId', 'asset_id', 'assetId', 'device_id', 'deviceId'];
+const PLATE_NUMBER_KEYS = ['registration', 'plate_number', 'plate', 'reg', 'license_plate', 'vehicle_name', 'vehicleName', 'name', 'label'];
 const VEHICLE_LIST_KEYS = ['data', 'vehicles', 'vehicle', 'items', 'results', 'fleet', 'assets', 'units'];
-
-const VEHICLE_MODEL_BY_PLATE = {
-  KAR6444: 'Toyota Hilux',
-  KAR6412: 'Toyota Innova',
-  KAR6558: 'Toyota Hilux',
-};
-
-const VEHICLE_EMOJI = {
-  KAR6444: '🛻',
-  KAR6412: '🚐',
-  KAR6558: '🚙',
-};
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -381,18 +371,31 @@ export function getVehicleId(vehicle) {
 }
 
 export function getVehicleName(vehicle) {
-  return firstKey(vehicle, VEHICLE_NAME_KEYS) || getVehicleId(vehicle) || 'Vehicle';
+  return firstKey(vehicle, PLATE_NUMBER_KEYS) || getVehicleId(vehicle) || 'Vehicle';
 }
 
-export function getVehicleModel(vehicle) {
-  const name = String(getVehicleName(vehicle)).trim().toUpperCase();
-  return VEHICLE_MODEL_BY_PLATE[name] || firstKey(vehicle, VEHICLE_MODEL_KEYS);
+export function getVehicleModel(_vehicle) {
+  // Vehicle model is read exclusively from the database.
+  return null;
 }
 
+/**
+ * Return the display name for a vehicle.
+ * Uses the plate_number string stored/resolved from the database,
+ * with the Travel Order number appended if an active link exists.
+ */
 export function getVehicleDisplayName(vehicle) {
-  const name = String(getVehicleName(vehicle)).trim();
+  const plate = extractPlateNumber(vehicle);
   const toNumber = getTravelOrderNumber(vehicle);
-  return toNumber ? `${name} (TO-${toNumber})` : name;
+  return toNumber ? `${plate} (TO-${toNumber})` : plate;
+}
+
+/**
+ * Extract the raw plate number string from a Cartrack vehicle payload.
+ * This is the key used for strict database lookup.
+ */
+export function extractPlateNumber(vehicle) {
+  return String(firstKey(vehicle, PLATE_NUMBER_KEYS) || getVehicleId(vehicle) || '').trim().toUpperCase();
 }
 
 export function getVehicleSpeed(vehicle) {
@@ -454,7 +457,7 @@ export function getIdleStatus(ignition, moving, prev = {}, apiIdleMinutes = null
 
 export function looksLikeVehicle(record) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
-  const hasIdentity = firstKey(record, [...VEHICLE_ID_KEYS, ...VEHICLE_NAME_KEYS]) !== null;
+  const hasIdentity = firstKey(record, [...VEHICLE_ID_KEYS, ...PLATE_NUMBER_KEYS]) !== null;
   if (!hasIdentity) return false;
   return !VEHICLE_LIST_KEYS.some((key) => Array.isArray(record[key]));
 }
@@ -629,7 +632,14 @@ export async function buildVehicleStatus(vehicle) {
  *
  * @returns {Promise<{ status: string, vehicles: number, alerts: { queued: number, sent: number, skipped: number, failed: number, persisted: number }, data: Array<object> }>}
  */
-export async function syncFleetAndAlert() {
+/**
+ * @param {Object} [options]
+ * @param {(plateNumber: string) => Promise<string|null>} [options.resolveVehicleId]
+ *   Optional callback to resolve a plate number to a database vehicle UUID.
+ *   When provided, this is used instead of the built-in Supabase lookup.
+ */
+export async function syncFleetAndAlert(options = {}) {
+  const { resolveVehicleId: resolveFn } = options;
   const data = await getFleetDataCached();
   const vehicles = extractVehicles(data);
   const vehicleStatuses = [];
@@ -637,8 +647,27 @@ export async function syncFleetAndAlert() {
   const alertSummary = { queued: 0, sent: 0, skipped: 0, failed: 0, persisted: 0 };
 
   for (const vehicle of vehicles) {
+    // ── Strict plate number resolution ────────────────────────
+    // Extract the raw plate number from the Cartrack payload
+    // and validate it against our database BEFORE processing.
+    const plateNumber = extractPlateNumber(vehicle);
+    if (!plateNumber) {
+      console.log('Skipping vehicle with no plate number in payload');
+      continue;
+    }
+
+    const resolvedVehicleId = resolveFn
+      ? await resolveFn(plateNumber)
+      : await findVehicleIdByPlate(plateNumber);
+    if (!resolvedVehicleId) {
+      // Plate number does not exist in our vehicles table — skip entirely.
+      // Do not attempt to guess or auto-create metadata.
+      console.log(`Skipping unknown plate "${plateNumber}" — not found in database`);
+      continue;
+    }
+
     const name = getVehicleDisplayName(vehicle);
-    const vid = getVehicleId(vehicle) || getVehicleName(vehicle);
+    const vid = resolvedVehicleId;
     const ignition = getIgnition(vehicle);
     const speed = getVehicleSpeed(vehicle);
     const fuel = getVehicleFuel(vehicle);

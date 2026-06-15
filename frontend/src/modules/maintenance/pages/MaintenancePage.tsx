@@ -3,8 +3,6 @@ import { Wrench } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
 export function MaintenancePage() {
-  const totalCost = MOCK_MAINTENANCE.reduce((sum, r) => sum + r.cost, 0);
-
   return (
     <div className="space-y-8">
       {/* Desktop table */}

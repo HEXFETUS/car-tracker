@@ -7,7 +7,7 @@ const router: Router = Router();
 /** Maps actual DB columns to API response shape. */
 interface TravelOrderRow {
   id: string;
-  to_number: number;
+  to_number: string;
   vehicle_id: string | null;
   driver_id: string | null;
   purpose_of_travel: string;
@@ -24,15 +24,18 @@ interface TravelOrderRow {
   request_vehicle?: boolean;
   request_driver?: boolean;
   notes?: string | null;
+  // Migration 013: who approved/rejected
+  approved_by?: string | null;
   // Joined columns
   plate_number?: string;
   driver_name?: string;
+  approver_name?: string | null;
 }
 
 /** API response shape sent to the frontend. */
 interface TravelOrderResponse {
   id: string;
-  toNumber: number;
+  toNumber: string;
   vehicleId: string | null;
   driverId: string | null;
   originLocation: string;
@@ -50,9 +53,242 @@ interface TravelOrderResponse {
   requestDriver: boolean;
   plateNumber: string | null;
   driverName: string | null;
+  approvedBy: string | null;
+  approvedByName: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+// GET /api/travel-orders/pending — Fetch PENDING orders where vehicle_id AND driver_id are NULL
+router.get('/pending', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'PENDING'
+        AND to_.vehicle_id IS NULL
+        AND to_.driver_id IS NULL
+      ORDER BY to_.created_at DESC
+    `);
+    const data = result.rows.map(mapRow);
+    res.json({ success: true, data, message: 'Pending travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/pending error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// GET /api/travel-orders/approved — Fetch APPROVED orders
+router.get('/approved', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'APPROVED'
+      ORDER BY to_.created_at DESC
+    `);
+    const data = result.rows.map(mapRow);
+    res.json({ success: true, data, message: 'Approved travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/approved error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// GET /api/travel-orders/for-approval — Fetch FOR_APPROVAL orders where vehicle_id AND driver_id are populated
+router.get('/for-approval', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'FOR_APPROVAL'
+        AND to_.vehicle_id IS NOT NULL
+        AND to_.driver_id IS NOT NULL
+      ORDER BY to_.created_at DESC
+    `);
+    const data = result.rows.map(mapRow);
+    res.json({ success: true, data, message: 'For-approval travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/for-approval error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// GET /api/travel-orders/for-request — Fetch FOR_REQUEST orders
+router.get('/for-request', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'FOR_REQUEST'
+      ORDER BY to_.created_at DESC
+    `);
+    const data = result.rows.map(mapRow);
+    res.json({ success: true, data, message: 'For-request travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/for-request error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// GET /api/travel-orders/scheduled — Fetch all scheduled (FOR_APPROVAL, APPROVED, ACTIVE) orders grouped by date
+router.get('/scheduled', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status IN ('FOR_APPROVAL','APPROVED','ACTIVE')
+        AND to_.scheduled_departure IS NOT NULL
+      ORDER BY to_.scheduled_departure ASC
+    `);
+    const data = result.rows.map(mapRow);
+    res.json({ success: true, data, message: 'Scheduled travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/scheduled error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// PATCH /api/travel-orders/:id/assign — Assign a vehicle and driver to a travel order
+router.patch('/:id/assign', async (req: Request, res: Response) => {
+  const { vehicle_id, driver_id } = req.body;
+
+  if (!vehicle_id || !driver_id) {
+    res.status(400).json({
+      success: false,
+      data: null,
+      error: 'Both vehicle_id and driver_id are required',
+    });
+    return;
+  }
+
+  try {
+    const pool = getPool();
+
+    // Validate that the vehicle exists and has one of the allowed tracking plates
+    const VALID_PLATES = ['KAR6444', 'KAR6412', 'KAR6558'];
+    const vehicleResult = await pool.query(
+      'SELECT id, plate_number FROM vehicles WHERE id = $1',
+      [vehicle_id],
+    );
+
+    if (vehicleResult.rows.length === 0) {
+      res.status(404).json({
+        success: false,
+        data: null,
+        error: 'Vehicle not found',
+      });
+      return;
+    }
+
+    const vehicle = vehicleResult.rows[0];
+    if (!VALID_PLATES.includes(vehicle.plate_number)) {
+      res.status(400).json({
+        success: false,
+        data: null,
+        error: `Vehicle plate "${vehicle.plate_number}" is not a valid tracking plate. Allowed plates: ${VALID_PLATES.join(', ')}`,
+      });
+      return;
+    }
+
+    // Validate that the driver exists
+    const driverResult = await pool.query(
+      'SELECT id FROM drivers WHERE id = $1',
+      [driver_id],
+    );
+
+    if (driverResult.rows.length === 0) {
+      res.status(404).json({
+        success: false,
+        data: null,
+        error: 'Driver not found',
+      });
+      return;
+    }
+
+    // Update the travel order with the assigned vehicle and driver,
+    // and automatically transition status to FOR_APPROVAL
+    const updateResult = await pool.query<TravelOrderRow>(
+      `UPDATE travel_orders
+       SET vehicle_id = $1, driver_id = $2, status = 'FOR_APPROVAL', updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [vehicle_id, driver_id, req.params.id],
+    );
+
+    if (updateResult.rows.length === 0) {
+      res.status(404).json({
+        success: false,
+        data: null,
+        error: 'Travel order not found',
+      });
+      return;
+    }
+
+    // Fetch the updated row with joined vehicle & driver info
+    const fullResult = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.id = $1
+    `, [req.params.id]);
+
+    res.json({
+      success: true,
+      data: mapRow(fullResult.rows[0]),
+      message: 'Travel order assigned successfully',
+    });
+  } catch (error) {
+    console.error('PATCH /api/travel-orders/:id/assign error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
 
 // GET /api/travel-orders — List all with left-joined vehicle & driver
 router.get('/', async (_req: Request, res: Response) => {
@@ -62,10 +298,12 @@ router.get('/', async (_req: Request, res: Response) => {
       SELECT
         to_.*,
         v.plate_number,
-        d.full_name AS driver_name
+        d.full_name AS driver_name,
+        u.name AS approver_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
       ORDER BY to_.created_at DESC
     `);
     const data = result.rows.map(mapRow);
@@ -84,10 +322,12 @@ router.get('/:id', async (req: Request, res: Response) => {
       SELECT
         to_.*,
         v.plate_number,
-        d.full_name AS driver_name
+        d.full_name AS driver_name,
+        u.name AS approver_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
       WHERE to_.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) {
@@ -107,6 +347,7 @@ router.post('/', async (req: Request, res: Response) => {
     vehicleId, driverId, originLocation, destinationLocation,
     scheduledDepartureAt, scheduledArrivalAt, purpose, notes,
     department, travelerName, requestVehicle, requestDriver,
+    toNumber,
   } = req.body;
 
   if (!destinationLocation) {
@@ -118,16 +359,26 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
+  if (!toNumber) {
+    res.status(400).json({
+      success: false,
+      data: null,
+      error: 'TO Number is required',
+    });
+    return;
+  }
+
   try {
     const pool = getPool();
     const result = await pool.query<TravelOrderRow>(`
       INSERT INTO travel_orders
-        (vehicle_id, driver_id, origin_location, destination_target,
+        (to_number, vehicle_id, driver_id, origin_location, destination_target,
          scheduled_departure, scheduled_arrival, purpose_of_travel, notes,
          department, traveler_name, request_vehicle, request_driver)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *
     `, [
+      toNumber,
       vehicleId || null, driverId || null, originLocation || '', destinationLocation,
       scheduledDepartureAt, scheduledArrivalAt || null,
       purpose || '', notes || '',
@@ -170,6 +421,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
   // Map camelCase API field names to snake_case DB column names
   const fieldMap: Record<string, string> = {
     status: 'status',
+    approvedBy: 'approved_by',
     notes: 'notes',
     originLocation: 'origin_location',
     destinationLocation: 'destination_target',
@@ -238,6 +490,8 @@ function mapRow(row: TravelOrderRow): TravelOrderResponse {
     requestDriver: row.request_driver ?? false,
     plateNumber: row.plate_number ?? null,
     driverName: row.driver_name ?? null,
+    approvedBy: row.approved_by ?? null,
+    approvedByName: row.approver_name ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

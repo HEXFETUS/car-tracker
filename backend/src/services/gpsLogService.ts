@@ -27,6 +27,13 @@ export interface GpsLogInsertData {
   notesRemarks: string | null;
 }
 
+export interface ApprovedTravelOrderResult {
+  id: string;
+  vehicle_id: string;
+  driver_id: string;
+  status: string;
+}
+
 // ── Relational Lookups ─────────────────────────────────────────
 
 /**
@@ -58,6 +65,32 @@ export async function findActiveTravelOrder(
       ORDER BY created_at DESC
       LIMIT 1`,
     [vehicleId],
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Find a travel order that is APPROVED, ACTIVE, or COMPLETED for a
+ * specific vehicle on a specific date. The date check uses the
+ * scheduled_departure and scheduled_arrival range.
+ *
+ * Returns the matched travel order record or null if no valid
+ * travel order exists for that vehicle on that date.
+ */
+export async function findApprovedTravelOrderForDate(
+  vehicleId: string,
+  dateStr: string,
+): Promise<ApprovedTravelOrderResult | null> {
+  const pool = getPool();
+  const result = await pool.query<ApprovedTravelOrderResult>(
+    `SELECT id, vehicle_id, driver_id, status
+       FROM travel_orders
+      WHERE vehicle_id = $1
+        AND status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+        AND $2::date BETWEEN scheduled_departure::date AND COALESCE(scheduled_arrival::date, $2::date)
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [vehicleId, dateStr],
   );
   return result.rows[0] ?? null;
 }

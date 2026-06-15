@@ -42,6 +42,16 @@ export interface ActivityEntry {
   timestamp: string;
 }
 
+// ── Travel Order Status ────────────────────────────────────────
+export type TravelOrderStatus =
+  | 'PENDING'
+  | 'FOR_REQUEST'
+  | 'FOR_APPROVAL'
+  | 'APPROVED'
+  | 'ACTIVE'
+  | 'COMPLETED'
+  | 'CANCELLED';
+
 // ── Vehicle ────────────────────────────────────────────────────
 
 export interface Vehicle {
@@ -104,7 +114,8 @@ export interface AppUser {
   id: string;
   name: string;
   username: string;
-  userType: 'ADMIN' | 'DISPATCHER' | 'DRIVER' | 'VIEWER';
+  userType: 'SUPERADMIN' | 'ADMIN' | 'DISPATCHER' | 'HR' | 'VIEWER';
+  department: string;
   createdAt: string;
   updatedAt: string;
 }

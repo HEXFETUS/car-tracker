@@ -14,6 +14,7 @@ import { TravelOrdersPage } from '@/modules/travel-orders/pages/TravelOrdersPage
 import { GpsLogsPage } from '@/modules/gps-logs/pages/GpsLogsPage';
 import { DriversPage } from '@/modules/drivers/pages/DriversPage';
 import { SettingsPage } from '@/modules/settings/pages/SettingsPage';
+import { RequestsPage } from '@/modules/requests/pages/RequestsPage';
 
 const queryClient = new QueryClient();
 
@@ -74,6 +75,16 @@ function AppRoutes() {
           <ProtectedRoute>
             <AppLayout>
               <TravelOrdersPage />
+            </AppLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/travel-requests"
+        element={
+          <ProtectedRoute>
+            <AppLayout>
+              <RequestsPage />
             </AppLayout>
           </ProtectedRoute>
         }
