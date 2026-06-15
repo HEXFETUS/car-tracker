@@ -1,6 +1,5 @@
 import type { GpsTripLog, ApiResponse } from '@car-tracker/shared';
-
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3500';
+import { API_BASE } from '@/shared/api';
 
 export interface GpsLogFilters {
   page?: number;
