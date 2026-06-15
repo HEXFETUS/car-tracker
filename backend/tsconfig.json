@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",                  // 🔄 Changed from ESNext
-    "moduleResolution": "NodeNext",        // 🔄 Changed from bundler
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
@@ -13,7 +13,8 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "types": ["node", "express"] // 👈 ADD THIS LINE
   },
   "include": ["src/**/*"],
   "references": []
