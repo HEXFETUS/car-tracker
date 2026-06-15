@@ -1,9 +1,9 @@
-import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
+import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import bcrypt from 'bcrypt';
 import type { AppUser } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
 
-const router: ExpressRouter = Router();
+const router: ExpressRouter = express.Router();
 
 interface UserRow {
   id: string;
