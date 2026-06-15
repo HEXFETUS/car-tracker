@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "sourceMap": true,
+    "typeRoots": [
+      "./backend/node_modules/@types",
+      "./node_modules/@types"
+    ],
+    "types": ["node", "express"],
+    "paths": {
+      "@car-tracker/shared": ["./shared/types.ts"],
+      "@car-tracker/tracker": ["./packages/tracker/types.d.ts"]
+    }
+  },
+  "include": [
+    "api/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "frontend"
+  ]
+}

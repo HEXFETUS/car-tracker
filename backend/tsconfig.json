@@ -14,7 +14,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "baseUrl": ".",
-    "types": ["node", "express"] // 👈 ADD THIS LINE
+    "types": ["node", "express"]
   },
   "include": ["src/**/*"],
   "references": []
