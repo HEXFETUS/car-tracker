@@ -13,6 +13,7 @@ import {
   Plane,
   Users,
   MapPin,
+  ClipboardCheck,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useState } from 'react';
@@ -20,6 +21,7 @@ import { useState } from 'react';
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/travel-orders', label: 'Travel Orders', icon: Plane },
+  { to: '/travel-requests', label: 'Travel Requests', icon: ClipboardCheck },
   { to: '/gps-logs', label: 'GPS Logs', icon: MapPin },
   { to: '/vehicles', label: 'Vehicles', icon: Car },
   { to: '/drivers', label: 'Drivers', icon: Users },
@@ -92,7 +94,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
             </div>
             <div className="flex-1 truncate">
               <p className="text-sm font-medium text-zinc-900">{user?.name}</p>
-              <p className="text-xs text-zinc-400">{user?.role}</p>
+              <p className="text-xs text-zinc-400">{user?.department}</p>
             </div>
           </div>
         </div>
@@ -120,7 +122,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
               </div>
               <div className="text-right text-sm leading-tight">
                 <p className="font-medium text-zinc-900">{user?.name}</p>
-                <p className="text-xs text-zinc-400">{user?.role}</p>
+                <p className="text-xs text-zinc-400">{user?.department}</p>
               </div>
               <ChevronDown className="size-4 text-zinc-300" />
             </div>

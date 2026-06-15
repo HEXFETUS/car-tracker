@@ -3,11 +3,26 @@ import { Plus, Loader2, Eye } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { NewTravelOrderModal } from '../components/NewTravelOrderModal';
 import { TravelOrderDetailsModal } from '../components/TravelOrderDetailsModal';
-import { fetchTravelOrders, createTravelOrder, type TravelOrderData } from '../api/travel-orders-api';
+import {
+  fetchPendingOrders,
+  fetchForApprovalOrders,
+  fetchApprovedOrders,
+  createTravelOrder,
+  type TravelOrderData,
+} from '../api/travel-orders-api';
 import type { TravelOrder } from '../types';
+
+type TabKey = 'pending' | 'for-approval' | 'approved';
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'pending', label: 'Needs Assigning' },
+  { key: 'for-approval', label: 'For Approval' },
+  { key: 'approved', label: 'Approved' },
+];
 
 export function TravelOrdersPage() {
   const { toast, confirm } = useNotification();
+  const [activeTab, setActiveTab] = useState<TabKey>('pending');
   const [orders, setOrders] = useState<TravelOrderData[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -17,14 +32,19 @@ export function TravelOrdersPage() {
   const loadOrders = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await fetchTravelOrders();
+      const data =
+        activeTab === 'pending'
+          ? await fetchPendingOrders()
+          : activeTab === 'for-approval'
+            ? await fetchForApprovalOrders()
+            : await fetchApprovedOrders();
       setOrders(data);
     } catch (err) {
       toast('Failed to load travel orders', 'error');
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [activeTab, toast]);
 
   useEffect(() => {
     loadOrders();
@@ -40,6 +60,7 @@ export function TravelOrdersPage() {
 
     try {
       await createTravelOrder({
+        toNumber: order.toNumber,
         originLocation: order.boundFrom,
         destinationLocation: order.boundTo,
         scheduledDepartureAt: order.departureDateTime,
@@ -64,9 +85,9 @@ export function TravelOrdersPage() {
     setIsDetailsOpen(true);
   }
 
-  function formatToNumber(toNumber: number) {
-    const year = new Date().getFullYear();
-    return `TO-${year}-${String(toNumber).padStart(4, '0')}`;
+  function formatToNumber(toNumber: string) {
+    // toNumber is now stored as a full string like "TO-2026-0001"
+    return toNumber;
   }
 
   function formatDateTime(dateStr: string | null) {
@@ -83,6 +104,7 @@ export function TravelOrdersPage() {
   const statusBadge = (status: string) => {
     const colors: Record<string, string> = {
       PENDING: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+      FOR_APPROVAL: 'bg-indigo-100 text-indigo-800 border-indigo-200',
       APPROVED: 'bg-blue-100 text-blue-800 border-blue-200',
       ACTIVE: 'bg-green-100 text-green-800 border-green-200',
       COMPLETED: 'bg-zinc-100 text-zinc-600 border-zinc-200',
@@ -93,16 +115,8 @@ export function TravelOrdersPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl">
-            Travel Orders
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            {orders.length} order{orders.length !== 1 ? 's' : ''} on record.
-          </p>
-        </div>
+      {/* Header: New Travel Order button aligned to the right */}
+      <div className="flex justify-end">
         <button
           onClick={() => setIsModalOpen(true)}
           className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
@@ -112,17 +126,59 @@ export function TravelOrdersPage() {
         </button>
       </div>
 
+      {/* Tab Bar */}
+      <div className="border-b border-zinc-200">
+        <nav className="-mb-px flex gap-6" aria-label="Travel order tabs">
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => {
+                setActiveTab(tab.key);
+                setOrders([]);
+              }}
+              className={`
+                whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
+                ${
+                  activeTab === tab.key
+                    ? 'border-brand-teal text-brand-teal'
+                    : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
+                }
+              `}
+              aria-current={activeTab === tab.key ? 'page' : undefined}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
       {/* Content */}
       {loading ? (
         <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
           <Loader2 className="size-8 text-brand-teal animate-spin mb-3" />
-          <p className="text-base font-medium text-zinc-600">Loading travel orders…</p>
+          <p className="text-base font-medium text-zinc-600">
+            {activeTab === 'pending'
+              ? 'Loading unassigned orders…'
+              : activeTab === 'for-approval'
+                ? 'Loading for-approval orders…'
+                : 'Loading approved orders…'}
+          </p>
         </div>
       ) : orders.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
-          <p className="text-base font-medium text-zinc-600">No travel orders yet</p>
+          <p className="text-base font-medium text-zinc-600">
+            {activeTab === 'pending'
+              ? 'No unassigned travel orders'
+              : activeTab === 'for-approval'
+                ? 'No orders pending approval'
+                : 'No approved travel orders'}
+          </p>
           <p className="mt-1 text-sm text-zinc-400">
-            Click "New Travel Order" to create one.
+            {activeTab === 'pending'
+              ? 'Create a new travel order and assign a vehicle & driver to get started.'
+              : activeTab === 'for-approval'
+                ? 'Assigned orders will appear here once vehicle & driver are set.'
+                : 'Approved orders will appear here once they are approved.'}
           </p>
         </div>
       ) : (
@@ -137,7 +193,7 @@ export function TravelOrdersPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-bold text-brand-teal truncate">
-                      {formatToNumber(order.toNumber)}
+                      {formatToNumber(order.toNumber as string)}
                     </p>
                     <span className={statusBadge(order.status)}>{order.status}</span>
                   </div>
@@ -171,7 +227,12 @@ export function TravelOrdersPage() {
               </div>
 
               {/* Footer: View Details */}
-              <div className="flex items-center justify-end border-t border-zinc-100 px-5 py-3">
+              <div className="flex items-center justify-between border-t border-zinc-100 px-5 py-3">
+                {order.approvedByName && (
+                  <span className="text-xs text-zinc-400">
+                    Approved by <span className="font-medium text-zinc-600">{order.approvedByName}</span>
+                  </span>
+                )}
                 <button
                   onClick={() => handleViewDetails(order)}
                   className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"

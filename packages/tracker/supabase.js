@@ -9,6 +9,7 @@
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
 const supabaseTable = process.env.SUPABASE_ALERTS_TABLE || 'telemetry_alerts';
+const vehiclesTable = process.env.SUPABASE_VEHICLES_TABLE || 'vehicles';
 
 /**
  * Check whether Supabase credentials are configured.
@@ -16,6 +17,67 @@ const supabaseTable = process.env.SUPABASE_ALERTS_TABLE || 'telemetry_alerts';
  */
 export function isSupabaseConfigured() {
   return Boolean(supabaseUrl && supabaseKey);
+}
+
+/**
+ * Look up a vehicle's UUID by its plate number (case-insensitive).
+ *
+ * Performs: SELECT id FROM vehicles WHERE UPPER(plate_number) = UPPER($1)
+ * via the Supabase REST API (rpc or direct query).
+ *
+ * @param {string} plateNumber - The raw plate number string to look up.
+ * @returns {Promise<string|null>} The vehicle UUID if found, or null.
+ */
+export async function findVehicleIdByPlate(plateNumber) {
+  if (!isSupabaseConfigured() || !plateNumber) return null;
+
+  const trimmed = String(plateNumber).trim();
+  if (!trimmed) return null;
+
+  try {
+    // Use Supabase RPC for case-insensitive plate lookup
+    // Falls back to REST filter if the RPC function doesn't exist
+    const rpcUrl = `${supabaseUrl}/rest/v1/rpc/find_vehicle_by_plate`;
+    const rpcResponse = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+      },
+      body: JSON.stringify({ p_plate_number: trimmed }),
+    });
+
+    if (rpcResponse.ok) {
+      const data = await rpcResponse.json();
+      if (Array.isArray(data) && data.length > 0 && data[0]?.id) {
+        return data[0].id;
+      }
+      return null;
+    }
+
+    // Fallback: query using Supabase PostgREST filter
+    const filterUrl = `${supabaseUrl}/rest/v1/${vehiclesTable}?plate_number=eq.${encodeURIComponent(trimmed)}&select=id&limit=1`;
+    const filterResponse = await fetch(filterUrl, {
+      method: 'GET',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+      },
+    });
+
+    if (!filterResponse.ok) return null;
+
+    const rows = await filterResponse.json();
+    if (Array.isArray(rows) && rows.length > 0 && rows[0]?.id) {
+      return rows[0].id;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Vehicle plate lookup error:', error.message);
+    return null;
+  }
 }
 
 /**

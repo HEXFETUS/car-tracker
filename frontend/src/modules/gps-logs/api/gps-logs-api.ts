@@ -53,6 +53,38 @@ export async function createGpsLog(
   return body.data;
 }
 
+export interface UpdateGpsLogPayload {
+  notesRemarks?: string | null;
+  actualRouteRoadTaken?: string;
+  arrivalTimeGps?: string | null;
+  gpsDistanceKm?: number;
+  engineHours?: number;
+  maxSpeedKph?: number;
+  tripStatusGps?: string;
+  anomalyFlag?: boolean;
+  toStatusAuto?: string | null;
+  travelOrderId?: string | null;
+}
+
+export async function updateGpsLog(id: string, payload: UpdateGpsLogPayload): Promise<GpsTripLog> {
+  const res = await fetch(`${API_BASE}/api/gps-logs/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body: ApiResponse<GpsTripLog> = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Failed to update GPS log');
+  return body.data;
+}
+
+export async function deleteGpsLog(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/gps-logs/${id}`, {
+    method: 'DELETE',
+  });
+  const body: { success: boolean; error?: string } = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Failed to delete GPS log');
+}
+
 /** Result shape returned by the sync endpoint. */
 export interface SyncResult {
   success: boolean;
@@ -68,18 +100,68 @@ export interface SyncResult {
   error?: string;
 }
 
+/** Result shape returned by the sync-history endpoint. */
+export interface SyncHistoryResult {
+  success: boolean;
+  synced: boolean;
+  elapsed_seconds?: number;
+  travel_order_id?: string;
+  travel_order_status?: string;
+  total_records_found?: number;
+  gps_logs_saved?: number;
+  gps_logs_failed?: number;
+  message?: string;
+  error?: string;
+  timestamp?: string;
+}
+
 /**
  * Trigger a fleet sync cycle that fetches live telemetry from Cartrack
- * and persists GPS trip logs to the database.
+ * for all 3 tracked vehicles and persists GPS trip logs to the database.
  */
 export async function syncGpsLogs(): Promise<SyncResult> {
-  const cronSecret = import.meta.env.VITE_CRON_SECRET ?? '';
-  const url = `${API_BASE}/api/cron/sync-tracker`;
-  const headers: Record<string, string> = {};
-  if (cronSecret) headers['X-Cron-Secret'] = cronSecret;
-
-  const res = await fetch(url, { headers });
+  const res = await fetch(`${API_BASE}/api/gps-logs/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
   const body: SyncResult = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Sync failed');
   return body;
+}
+
+/**
+ * Trigger a targeted historical sync for a specific vehicle and date.
+ * The backend checks for an approved travel order before fetching
+ * historical tracking telemetry from Cartrack.
+ */
+export async function syncGpsLogsHistory(
+  vehicleId: string,
+  date: string,
+): Promise<SyncHistoryResult> {
+  const params = new URLSearchParams({ vehicle_id: vehicleId, date });
+  const res = await fetch(`${API_BASE}/api/gps-logs/sync-history?${params.toString()}`);
+  const body: SyncHistoryResult = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Sync-history failed');
+  return body;
+}
+
+/** Simplified vehicle shape for the dropdown selector. */
+export interface VehicleOption {
+  id: string;
+  plateNumber: string;
+}
+
+const TRACKED_PLATES = ['KAR6444', 'KAR6412', 'KAR6558'];
+
+/**
+ * Fetch vehicles from the backend, filtered strictly by our
+ * tracked plate numbers: KAR6444, KAR6412, KAR6558.
+ */
+export async function fetchTrackedVehicles(): Promise<VehicleOption[]> {
+  const res = await fetch(`${API_BASE}/api/vehicles`);
+  const body: { success: boolean; data: VehicleOption[] } = await res.json();
+  if (!body.success || !body.data) return [];
+  return body.data.filter((v) =>
+    TRACKED_PLATES.includes(v.plateNumber.toUpperCase()),
+  );
 }

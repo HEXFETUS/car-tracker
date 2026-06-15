@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/modules/auth/context/auth-context';
-import { Car, ShieldCheck } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
 
 export function LoginPage() {
   const { login } = useAuth();

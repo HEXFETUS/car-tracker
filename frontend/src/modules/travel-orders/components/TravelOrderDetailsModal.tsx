@@ -1,7 +1,15 @@
 import { useState, useEffect } from 'react';
 import { X, Pencil, Trash2, Loader2 } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
-import { updateTravelOrder, deleteTravelOrder, type TravelOrderData } from '../api/travel-orders-api';
+import { useAuth } from '@/modules/auth/context/auth-context';
+import {
+  updateTravelOrder,
+  deleteTravelOrder,
+  assignTravelOrder,
+  fetchVehicles,
+  fetchDrivers,
+  type TravelOrderData,
+} from '../api/travel-orders-api';
 
 interface TravelOrderDetailsModalProps {
   isOpen: boolean;
@@ -10,8 +18,24 @@ interface TravelOrderDetailsModalProps {
   onSuccess: () => void;
 }
 
+interface VehicleOption {
+  id: string;
+  plateNumber: string;
+  make: string;
+  model: string;
+  year: number;
+}
+
+interface DriverOption {
+  id: string;
+  fullName: string;
+  phone: string;
+  licenseNumber: string;
+}
+
 export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: TravelOrderDetailsModalProps) {
   const { toast, confirm } = useNotification();
+  const { user } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -26,6 +50,13 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
   const [purpose, setPurpose] = useState('');
   const [notes, setNotes] = useState('');
 
+  // Assignment state (for PENDING orders)
+  const [selectedVehicleId, setSelectedVehicleId] = useState('');
+  const [selectedDriverId, setSelectedDriverId] = useState('');
+  const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
+  const [drivers, setDrivers] = useState<DriverOption[]>([]);
+  const [loadingOptions, setLoadingOptions] = useState(false);
+
   // Reset form when order changes
   useEffect(() => {
     if (order && isOpen) {
@@ -37,9 +68,29 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
       setScheduledArrivalAt(order.scheduledArrivalAt ? toLocalDatetime(order.scheduledArrivalAt) : '');
       setPurpose(order.purpose || '');
       setNotes(order.notes || '');
+      setSelectedVehicleId(order.vehicleId || '');
+      setSelectedDriverId(order.driverId || '');
       setIsEditing(false);
+
+      // Load vehicles & drivers if the order is PENDING (needs assignment)
+      if (order.status === 'PENDING') {
+        loadOptions();
+      }
     }
   }, [order, isOpen]);
+
+  async function loadOptions() {
+    setLoadingOptions(true);
+    try {
+      const [v, d] = await Promise.all([fetchVehicles(), fetchDrivers()]);
+      setVehicles(v);
+      setDrivers(d);
+    } catch {
+      // Silently fail — dropdowns will just be empty
+    } finally {
+      setLoadingOptions(false);
+    }
+  }
 
   // Close on Escape
   useEffect(() => {
@@ -76,6 +127,64 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     onClose();
   }
 
+  /** Called when the user clicks "Save Assignment" in the edit form. */
+  async function handleAssignmentSubmit() {
+    if (!order) return;
+
+    const vehicle = vehicles.find((v) => v.id === selectedVehicleId);
+    const driver = drivers.find((d) => d.id === selectedDriverId);
+
+    if (!vehicle || !driver) {
+      toast('Please select both a vehicle and a driver', 'error');
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: 'Confirm Assignment',
+      message: `Are you sure you want to assign Vehicle ${vehicle.plateNumber} and Driver ${driver.fullName} to this request? This will change the status to "For Approval".`,
+      type: 'info',
+    });
+    if (!confirmed) return;
+
+    setSaving(true);
+    try {
+      await assignTravelOrder(order.id, selectedVehicleId, selectedDriverId);
+      toast('Vehicle and driver assigned! Status moved to "For Approval".', 'success');
+      setIsEditing(false);
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      toast(err.message || 'Failed to assign vehicle and driver', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** Called when the user clicks "Submit For Request" button */
+  async function handleSubmitForRequest() {
+    if (!order) return;
+
+    const confirmed = await confirm({
+      title: 'Submit For Request?',
+      message: `Submit ${order.toNumber} as a travel request? The order will be visible in the Travel Requests module.`,
+      type: 'info',
+    });
+    if (!confirmed) return;
+
+    setSaving(true);
+    try {
+      await updateTravelOrder(order.id, { status: 'FOR_REQUEST' });
+      toast('Travel order submitted for request!', 'success');
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      toast(err.message || 'Failed to submit for request', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** Regular field save (non-assignment edits) */
   async function handleSave() {
     if (!order) return;
     setSaving(true);
@@ -104,7 +213,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     if (!order) return;
     const confirmed = await confirm({
       title: 'Delete Travel Order?',
-      message: `Are you sure you want to delete TO-${order.toNumber}? This action cannot be undone.`,
+      message: `Are you sure you want to delete ${order.toNumber}? This action cannot be undone.`,
       type: 'danger',
     });
     if (!confirmed) return;
@@ -125,13 +234,13 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     if (!order) return;
     const confirmed = await confirm({
       title: 'Approve Travel Order?',
-      message: `Approve TO-${formatToNumber(order.toNumber)} for ${order.travelerName}?`,
+      message: `Approve ${order.toNumber} for ${order.travelerName}?`,
       type: 'info',
     });
     if (!confirmed) return;
     setSaving(true);
     try {
-      await updateTravelOrder(order.id, { status: 'APPROVED' });
+      await updateTravelOrder(order.id, { status: 'APPROVED', approvedBy: user!.id });
       toast('Travel order approved!', 'success');
       onSuccess();
       onClose();
@@ -146,13 +255,13 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     if (!order) return;
     const confirmed = await confirm({
       title: 'Deny Travel Order?',
-      message: `Deny TO-${formatToNumber(order.toNumber)} for ${order.travelerName}?`,
+      message: `Deny ${order.toNumber} for ${order.travelerName}?`,
       type: 'warning',
     });
     if (!confirmed) return;
     setSaving(true);
     try {
-      await updateTravelOrder(order.id, { status: 'CANCELLED' });
+      await updateTravelOrder(order.id, { status: 'CANCELLED', approvedBy: user!.id });
       toast('Travel order denied', 'success');
       onSuccess();
       onClose();
@@ -163,14 +272,11 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     }
   }
 
-  function formatToNumber(toNumber: number) {
-    const year = new Date().getFullYear();
-    return `TO-${year}-${String(toNumber).padStart(4, '0')}`;
-  }
-
   const statusBadge = (status: string) => {
     const colors: Record<string, string> = {
       PENDING: 'bg-yellow-100 text-yellow-800',
+      FOR_REQUEST: 'bg-orange-100 text-orange-800',
+      FOR_APPROVAL: 'bg-indigo-100 text-indigo-800',
       APPROVED: 'bg-blue-100 text-blue-800',
       ACTIVE: 'bg-green-100 text-green-800',
       COMPLETED: 'bg-zinc-100 text-zinc-600',
@@ -178,6 +284,9 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     };
     return colors[status] || 'bg-zinc-100 text-zinc-600';
   };
+
+  const canAssign = order?.status === 'PENDING';
+  const hasAssignmentSelections = selectedVehicleId !== '' && selectedDriverId !== '';
 
   if (!isOpen || !order) return null;
 
@@ -192,7 +301,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
           <div className="flex items-center gap-3">
             <div>
               <h2 className="text-lg font-bold text-zinc-900">
-                {formatToNumber(order.toNumber)}
+                {order.toNumber}
               </h2>
               <p className="text-sm text-zinc-400">
                 Created {formatDateTime(order.createdAt)}
@@ -203,13 +312,13 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {!isEditing && order.status === 'PENDING' && (
+            {!isEditing && canAssign && (
               <>
                 <button
                   type="button"
                   onClick={() => setIsEditing(true)}
                   className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-brand-teal transition-colors"
-                  title="Edit"
+                  title="Edit / Assign"
                 >
                   <Pencil className="size-4" />
                 </button>
@@ -356,37 +465,76 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
             )}
           </div>
 
-          {/* Vehicle & Driver Info */}
+          {/* ── Vehicle & Driver Assignment ── */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {/* Vehicle */}
             <div>
               <label className="block text-sm font-medium text-zinc-500 mb-1">Vehicle</label>
-              <p className="text-sm font-medium text-zinc-900">
-                {order.plateNumber ? (
-                  <>
-                    {order.plateNumber}
-                    {order.requestVehicle && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
-                  </>
-                ) : order.requestVehicle ? (
-                  <span className="text-zinc-400">Requested (not yet assigned)</span>
-                ) : (
-                  '—'
-                )}
-              </p>
+              {isEditing && canAssign ? (
+                <select
+                  value={selectedVehicleId}
+                  onChange={(e) => setSelectedVehicleId(e.target.value)}
+                  disabled={loadingOptions}
+                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal disabled:opacity-50"
+                >
+                  <option value="">
+                    {loadingOptions ? 'Loading…' : '— Select Vehicle —'}
+                  </option>
+                  {vehicles.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.plateNumber} — {v.make} {v.model} ({v.year})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-sm font-medium text-zinc-900">
+                  {order.plateNumber ? (
+                    <>
+                      {order.plateNumber}
+                      {order.requestVehicle && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
+                    </>
+                  ) : order.requestVehicle ? (
+                    <span className="text-zinc-400">Requested (not yet assigned)</span>
+                  ) : (
+                    '—'
+                  )}
+                </p>
+              )}
             </div>
+
+            {/* Driver */}
             <div>
               <label className="block text-sm font-medium text-zinc-500 mb-1">Driver</label>
-              <p className="text-sm font-medium text-zinc-900">
-                {order.driverName ? (
-                  <>
-                    {order.driverName}
-                    {order.requestDriver && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
-                  </>
-                ) : order.requestDriver ? (
-                  <span className="text-zinc-400">Requested (not yet assigned)</span>
-                ) : (
-                  '—'
-                )}
-              </p>
+              {isEditing && canAssign ? (
+                <select
+                  value={selectedDriverId}
+                  onChange={(e) => setSelectedDriverId(e.target.value)}
+                  disabled={loadingOptions}
+                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal disabled:opacity-50"
+                >
+                  <option value="">
+                    {loadingOptions ? 'Loading…' : '— Select Driver —'}
+                  </option>
+                  {drivers.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.fullName}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-sm font-medium text-zinc-900">
+                  {order.driverName ? (
+                    <>
+                      {order.driverName}
+                      {order.requestDriver && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
+                    </>
+                  ) : order.requestDriver ? (
+                    <span className="text-zinc-400">Requested (not yet assigned)</span>
+                  ) : (
+                    '—'
+                  )}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -404,17 +552,42 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                 >
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
-                >
-                  {saving && <Loader2 className="size-4 animate-spin" />}
-                  {saving ? 'Saving...' : 'Save Changes'}
-                </button>
+                {canAssign && (
+                  <button
+                    type="button"
+                    onClick={handleAssignmentSubmit}
+                    disabled={saving || !hasAssignmentSelections}
+                    className="rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+                  >
+                    {saving && <Loader2 className="size-4 animate-spin" />}
+                    {saving ? 'Assigning…' : 'Save Assignment'}
+                  </button>
+                )}
+                {canAssign && (
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+                  >
+                    {saving && <Loader2 className="size-4 animate-spin" />}
+                    {saving ? 'Saving…' : 'Save Fields'}
+                  </button>
+                )}
               </>
             ) : order.status === 'PENDING' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSubmitForRequest}
+                  disabled={saving}
+                  className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+                >
+                  {saving && <Loader2 className="size-4 animate-spin" />}
+                  {saving ? 'Submitting…' : 'For Request'}
+                </button>
+              </>
+            ) : order.status === 'FOR_APPROVAL' ? (
               <>
                 <button
                   type="button"
@@ -422,7 +595,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                   disabled={saving}
                   className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 transition-colors disabled:opacity-60"
                 >
-                  Deny
+                  Reject
                 </button>
                 <button
                   type="button"
@@ -436,6 +609,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
               </>
             ) : (
               <span className="text-sm text-zinc-400 italic">
+                {order.status === 'FOR_REQUEST' && 'This order has been submitted for request'}
                 {order.status === 'APPROVED' && 'This order has been approved'}
                 {order.status === 'CANCELLED' && 'This order has been cancelled'}
                 {order.status === 'ACTIVE' && 'This order is currently active'}

@@ -3,8 +3,10 @@
 // These declarations describe the public API of the ESM-only JS
 // tracker module so that TypeScript consumers (like the backend)
 // can import it with full type safety.
+//
+// Vehicle identification is resolved STRICTLY via database plate
+// number lookups. Hardcoded model/emoji maps have been removed.
 
-/** Summary of the alert dispatch results for a single sync cycle. */
 export interface AlertSummary {
   queued: number;
   sent: number;
@@ -69,10 +71,13 @@ export interface SyncResult {
  * telemetry, generates alerts, dispatches them to Telegram,
  * and persists them to Supabase.
  */
-export function syncFleetAndAlert(): Promise<SyncResult>;
+export function syncFleetAndAlert(options?: {
+  resolveVehicleId?: (plateNumber: string) => Promise<string | null>;
+}): Promise<SyncResult>;
 
 // ── Trip Log Transformer ──────────────────────────────────────
 
+export function extractPlateNumber(vehicle: any): string;
 export function getEngineHours(vehicle: any): number;
 export function getGpsDistanceKm(vehicle: any): number;
 export function getStreetName(vehicle: any): string;

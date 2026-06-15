@@ -8,6 +8,7 @@ function sanitise(row) {
         name: row.name,
         username: row.username,
         userType: row.user_type,
+        department: row.department,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
