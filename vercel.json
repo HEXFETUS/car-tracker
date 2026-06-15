@@ -2,7 +2,7 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter car-tracker-frontend build",
   "outputDirectory": "dist",
-  "framework": "vite",
+  "framework": null,
   "functions": {
     "api/[...path].ts": {
       "maxDuration": 60
