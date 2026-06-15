@@ -131,9 +131,9 @@ export function TravelOrdersPage() {
 
   return (
     <div className="space-y-8">
-      {/* Tab Bar + New Travel Order button on the same row */}
-      <div className="flex items-center justify-between border-b border-zinc-200">
-        <nav className="-mb-px flex gap-6" aria-label="Travel order tabs">
+      {/* Tab Bar */}
+      <div className="border-b border-zinc-200">
+        <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="Travel order tabs">
           {TABS.map((tab) => (
             <button
               key={tab.key}
@@ -142,7 +142,7 @@ export function TravelOrdersPage() {
                 setOrders([]);
               }}
               className={`
-                whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
+                shrink-0 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
                 ${
                   activeTab === tab.key
                     ? 'border-brand-teal text-brand-teal'
@@ -155,12 +155,15 @@ export function TravelOrdersPage() {
             </button>
           ))}
         </nav>
+      </div>
 
+      {/* New Travel Order button — right-aligned */}
+      <div className="flex justify-end">
         <button
           onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
         >
-          <Plus className="size-4" />
+          <Plus className="size-3.5" />
           New Travel Order
         </button>
       </div>
@@ -287,9 +290,9 @@ export function TravelOrdersPage() {
 /** Small helper to render a key-value row in the card body */
 function InfoRow({ label, value }: { label: string; value: string | null }) {
   return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-zinc-400">{label}</span>
-      <span className="font-medium text-zinc-900 truncate ml-2 max-w-[60%]" title={value || ''}>
+    <div className="flex items-start gap-2 text-sm">
+      <span className="text-zinc-400 shrink-0 min-w-[75px]">{label}</span>
+      <span className="font-medium text-zinc-900 break-words min-w-0" title={value || ''}>
         {value || '—'}
       </span>
     </div>

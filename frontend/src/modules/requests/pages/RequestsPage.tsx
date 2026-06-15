@@ -196,9 +196,9 @@ export function RequestsPage() {
 
   return (
     <div className="space-y-8">
-      {/* Tab Bar */}
+      {/* Tab Bar — scrollable on mobile */}
       <div className="border-b border-zinc-200">
-        <nav className="-mb-px flex gap-6" aria-label="Travel request tabs">
+        <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="Travel request tabs">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             return (
@@ -206,11 +206,10 @@ export function RequestsPage() {
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
                 className={`
-                  inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
-                  ${
-                    activeTab === tab.key
-                      ? 'border-brand-teal text-brand-teal'
-                      : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
+                  inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
+                  ${activeTab === tab.key
+                    ? 'border-brand-teal text-brand-teal'
+                    : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
                   }
                 `}
                 aria-current={activeTab === tab.key ? 'page' : undefined}
@@ -296,9 +295,9 @@ export function RequestsPage() {
                   <div className="flex items-center justify-end border-t border-zinc-100 px-5 py-3">
                     <button
                       onClick={() => handleViewDetails(order)}
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors min-h-[44px]"
                     >
-                      <Eye className="size-3.5" />
+                      <Eye className="size-4" />
                       View Details
                     </button>
                   </div>
@@ -511,9 +510,9 @@ export function RequestsPage() {
 /** Small helper to render a key-value row in the card body */
 function InfoRow({ label, value }: { label: string; value: string | null }) {
   return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-zinc-400">{label}</span>
-      <span className="font-medium text-zinc-900 truncate ml-2 max-w-[60%]" title={value || ''}>
+    <div className="flex items-start gap-2 text-sm">
+      <span className="text-zinc-400 shrink-0 min-w-[75px]">{label}</span>
+      <span className="font-medium text-zinc-900 break-words min-w-0" title={value || ''}>
         {value || '—'}
       </span>
     </div>
