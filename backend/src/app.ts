@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import express, { type Application } from 'express';
 import cors from 'cors';
-import carsRouter from './routes/cars.js';
 import vehiclesRouter from './routes/vehicles.js';
 import driversRouter from './routes/drivers.js';
 import travelOrdersRouter from './routes/travel-orders.js';
@@ -19,7 +18,6 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.use('/api/cars', carsRouter);
 app.use('/api/vehicles', vehiclesRouter);
 app.use('/api/drivers', driversRouter);
 app.use('/api/travel-orders', travelOrdersRouter);
