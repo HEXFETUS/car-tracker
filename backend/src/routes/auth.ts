@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import type { AppUser } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
 
+console.log('[auth-router] module loaded');
 const router: ExpressRouter = express.Router();
 
 interface UserRow {
@@ -30,6 +31,7 @@ function sanitise(row: UserRow): AppUser {
 
 // POST /api/auth/login — Authenticate with username + password
 router.post('/login', async (req: Request, res: Response) => {
+  console.log('[auth-login] route hit');
   const { username, password } = req.body;
 
   if (!username || !password) {

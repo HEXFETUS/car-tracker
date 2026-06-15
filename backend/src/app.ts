@@ -26,4 +26,8 @@ app.use('/api/cron', cronRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/auth', authRouter);
 
+app.all('/api/debug/routes', (_req, res) => {
+  res.json({ ok: true, message: 'debug route reached' });
+});
+
 export default app;
