@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express, { type Express } from 'express';
+import express, { type Application } from 'express';
 import cors from 'cors';
 import carsRouter from './routes/cars.js';
 import vehiclesRouter from './routes/vehicles.js';
@@ -10,7 +10,7 @@ import cronRouter from './routes/cron.js';
 import usersRouter from './routes/users.js';
 import authRouter from './routes/auth.js';
 
-const app: Express = express();
+const app: Application = express();
 
 app.use(cors());
 app.use(express.json());
