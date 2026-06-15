@@ -1,8 +1,8 @@
-import { Router, Request, Response } from 'express';
+import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
 
-const router: Router = Router();
+const router: ExpressRouter = express.Router();
 
 /** Maps actual DB columns to API response shape. */
 interface TravelOrderRow {

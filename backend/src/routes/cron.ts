@@ -10,7 +10,7 @@
 //   GET https://your-api.example.com/api/cron/sync-tracker
 //   Headers: { "X-Cron-Secret": "your-cron-secret-here" }
 
-import { Router, Request, Response } from 'express';
+import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import { CRON_SECRET } from '../config/env.js';
 import { syncFleetAndAlert } from '@car-tracker/tracker';
 import { getPool } from '../db/db.js';
@@ -29,7 +29,7 @@ function clampNumeric(value: number, max: number): string {
   return Math.min(value, max).toFixed(2);
 }
 
-const router: Router = Router();
+const router: ExpressRouter = express.Router();
 
 /**
  * Generate a GPS record number in the format GPS-{YEAR}-{SEQUENTIAL}

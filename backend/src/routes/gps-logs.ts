@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
 import { syncFleetAndAlert } from '@car-tracker/tracker';
@@ -41,7 +41,7 @@ async function generateGpsRecordNo(): Promise<string> {
   return `GPS-${year}-${String(nextSeq).padStart(4, '0')}`;
 }
 
-const router: Router = Router();
+const router: ExpressRouter = express.Router();
 
 interface GpsLogRow {
   id: string;

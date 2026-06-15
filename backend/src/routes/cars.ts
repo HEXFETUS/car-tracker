@@ -1,7 +1,7 @@
-import { Router, Request, Response } from 'express';
+import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { Car, ApiResponse } from '@car-tracker/shared';
 
-const router: Router = Router();
+const router: ExpressRouter = express.Router();
 
 const sampleCars: Car[] = [
   {
