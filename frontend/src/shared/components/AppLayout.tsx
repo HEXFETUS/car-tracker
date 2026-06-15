@@ -11,7 +11,6 @@ import {
   Bell,
   ChevronDown,
   Plane,
-  Users,
   MapPin,
   ClipboardCheck,
 } from 'lucide-react';
