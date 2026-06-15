@@ -13,6 +13,10 @@ const app: Application = express();
 
 app.use(cors());
 app.use(express.json());
+app.use((req, _res, next) => {
+  console.log(`[express] ${req.method} ${req.originalUrl}`);
+  next();
+});
 
 app.get(['/api/health', '/health'], (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
