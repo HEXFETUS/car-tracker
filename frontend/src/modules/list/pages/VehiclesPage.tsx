@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Fuel, Loader2 } from 'lucide-react';
+import { Plus, Fuel, Loader2, Eye, Wrench } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { AddVehicleModal } from '../components/AddVehicleModal';
+import { VehicleDetailsModal } from '../components/VehicleDetailsModal';
 import { fetchVehicles, createVehicle } from '../api/vehicles-api';
 import type { Vehicle } from '@car-tracker/shared';
 
@@ -13,7 +14,9 @@ export function VehiclesPage({ hideAddButton }: VehiclesPageProps) {
   const { toast, confirm } = useNotification();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
 
   const loadVehicles = useCallback(async () => {
     try {
@@ -50,11 +53,21 @@ export function VehiclesPage({ hideAddButton }: VehiclesPageProps) {
     try {
       await createVehicle(payload);
       toast('Vehicle added successfully!', 'success');
-      setIsModalOpen(false);
+      setIsAddModalOpen(false);
       await loadVehicles();
     } catch (err: any) {
       toast(err.message || 'Failed to add vehicle', 'error');
     }
+  }
+
+  function handleViewDetails(vehicle: Vehicle) {
+    setSelectedVehicle(vehicle);
+    setIsDetailsModalOpen(true);
+  }
+
+  function handleCloseDetails() {
+    setIsDetailsModalOpen(false);
+    setSelectedVehicle(null);
   }
 
   return (
@@ -62,7 +75,7 @@ export function VehiclesPage({ hideAddButton }: VehiclesPageProps) {
       {!hideAddButton && (
         <div className="flex justify-end">
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => setIsAddModalOpen(true)}
             className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
           >
             <Plus className="size-4" />
@@ -89,8 +102,22 @@ export function VehiclesPage({ hideAddButton }: VehiclesPageProps) {
           {vehicles.map((vehicle) => (
             <div
               key={vehicle.id}
-              className="group rounded-xl bg-white shadow-brand transition-all hover:shadow-brand-lg"
+              className={`group relative rounded-xl shadow-brand transition-all hover:shadow-brand-lg ${
+                vehicle.underRepair === true
+                  ? 'bg-amber-50/40 ring-1 ring-amber-200'
+                  : 'bg-white'
+              }`}
             >
+              {/* Under Repair badge — only show when underRepair is true */}
+              {vehicle.underRepair === true && (
+                <div className="absolute -top-2 -right-2 z-10">
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase shadow-sm text-amber-600 bg-amber-50">
+                    <Wrench className="size-3" />
+                    Under Repair
+                  </span>
+                </div>
+              )}
+
               <div className="flex items-center justify-between rounded-t-xl bg-brand-cream px-5 py-4">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
@@ -131,6 +158,17 @@ export function VehiclesPage({ hideAddButton }: VehiclesPageProps) {
                   </div>
                 )}
               </div>
+
+              {/* View Details button */}
+              <div className="border-t border-zinc-100 px-5 py-3">
+                <button
+                  onClick={() => handleViewDetails(vehicle)}
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-cream px-3 py-2 text-xs font-medium text-zinc-600 transition-all hover:bg-brand-moss/30 active:scale-[0.97]"
+                >
+                  <Eye className="size-3.5" />
+                  View Details
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -138,9 +176,17 @@ export function VehiclesPage({ hideAddButton }: VehiclesPageProps) {
 
       {/* Add Vehicle Modal */}
       <AddVehicleModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
         onSubmit={handleAddVehicle}
+      />
+
+      {/* Vehicle Details Modal */}
+      <VehicleDetailsModal
+        isOpen={isDetailsModalOpen}
+        onClose={handleCloseDetails}
+        onSuccess={loadVehicles}
+        vehicle={selectedVehicle}
       />
     </div>
   );

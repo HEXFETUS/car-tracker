@@ -13,12 +13,13 @@ interface UserRow {
   password: string;
   user_type: string;
   department: string;
+  picture: string | null;
   created_at: string;
   updated_at: string;
 }
 
 function sanitise(row: UserRow): AppUser {
-  return {
+  const result: AppUser = {
     id: row.id,
     name: row.name,
     username: row.username,
@@ -27,6 +28,8 @@ function sanitise(row: UserRow): AppUser {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  if (row.picture) result.picture = row.picture;
+  return result;
 }
 
 // POST /api/auth/login — Authenticate with username + password

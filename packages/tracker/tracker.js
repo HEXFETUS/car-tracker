@@ -731,7 +731,12 @@ export async function syncFleetAndAlert(options = {}) {
       idling_too_long_alert_count: idle.idleAlertCount,
       idling_too_long_alert_threshold_count: idle.idleAlertCount,
     };
-    await setJson(`vehicle:${vid}`, state);
+    // Store vehicle state with a long TTL (24 hours) so that idle
+    // tracking, ignition state, and other stateful detections persist
+    // across sync cycles. Using the default TTL (600s) would cause
+    // the state to expire before the idling-too-long threshold (10min
+    // or more) is reached, breaking idle alerts.
+    await setJson(`vehicle:${vid}`, state, 86400);
 
     vehicleStatuses.push({
       id: vid,

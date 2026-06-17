@@ -13,9 +13,12 @@ import {
   Plane,
   MapPin,
   ClipboardCheck,
+  KeyRound,
+  User,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useState } from 'react';
+import { PasswordModal, AccountModal } from './UserModals';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -31,6 +34,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [modalType, setModalType] = useState<'password' | 'account' | null>(null);
 
   return (
     <div className="flex flex-row min-h-screen bg-brand-pastel text-zinc-900">
@@ -126,15 +131,55 @@ export function AppLayout({ children }: { children: ReactNode }) {
               <span className="absolute right-2 top-2 size-2 rounded-full bg-red-500 ring-2 ring-white" />
             </button>
 
-            <div className="hidden items-center gap-2 sm:flex">
-              <div className="flex size-8 items-center justify-center rounded-full bg-zinc-200 text-sm font-semibold text-zinc-700">
-                {user?.name?.charAt(0) ?? 'A'}
-              </div>
-              <div className="text-right text-sm leading-tight">
-                <p className="font-medium text-zinc-900">{user?.name}</p>
-                <p className="text-xs text-zinc-400">{user?.department}</p>
-              </div>
-              <ChevronDown className="size-4 text-zinc-300" />
+            <div className="relative hidden items-center gap-2 sm:flex">
+              <button
+                onClick={() => {
+                  setUserMenuOpen((prev) => !prev);
+                }}
+                className="flex items-center gap-2 rounded-lg p-1.5 pr-2 transition-colors hover:bg-zinc-100"
+                aria-label="User menu"
+                aria-expanded={userMenuOpen}
+              >
+                <div className="flex size-8 items-center justify-center rounded-full bg-zinc-200 text-sm font-semibold text-zinc-700">
+                  {user?.name?.charAt(0) ?? 'A'}
+                </div>
+                <div className="text-right text-sm leading-tight">
+                  <p className="font-medium text-zinc-900">{user?.name}</p>
+                  <p className="text-xs text-zinc-400">{user?.department}</p>
+                </div>
+                <ChevronDown className="size-4 text-zinc-300" />
+              </button>
+
+              {userMenuOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setUserMenuOpen(false)}
+                  />
+                  <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl bg-white py-1 shadow-brand-lg ring-1 ring-zinc-100">
+                    <button
+                      onClick={() => {
+                        setModalType('account');
+                        setUserMenuOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-zinc-700 transition-colors hover:bg-brand-cream hover:text-brand-teal"
+                    >
+                      <User className="size-4 text-zinc-400" />
+                      Account
+                    </button>
+                    <button
+                      onClick={() => {
+                        setModalType('password');
+                        setUserMenuOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-zinc-700 transition-colors hover:bg-brand-cream hover:text-brand-teal"
+                    >
+                      <KeyRound className="size-4 text-zinc-400" />
+                      Password
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
 
             <button
@@ -149,6 +194,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
         {/* Page content */}
         <main className="flex-1 p-4 lg:p-10">{children}</main>
+
+        {/* Modals */}
+        <PasswordModal
+          open={modalType === 'password'}
+          onClose={() => setModalType(null)}
+          onPasswordChanged={logout}
+          currentUserId={user?.id}
+        />
+        <AccountModal
+          open={modalType === 'account'}
+          currentUser={user ?? null}
+          onClose={() => setModalType(null)}
+        />
       </div>
     </div>
   );

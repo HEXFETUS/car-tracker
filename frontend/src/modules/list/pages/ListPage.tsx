@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Plus, Car, Users, Wrench } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
-import { VehiclesPage } from '@/modules/vehicles/pages/VehiclesPage';
-import { DriversPage } from '@/modules/drivers/pages/DriversPage';
-import { MaintenancePage } from '@/modules/maintenance/pages/MaintenancePage';
-import { AddVehicleModal } from '@/modules/vehicles/components/AddVehicleModal';
-import { AddDriverModal } from '@/modules/drivers/components/AddDriverModal';
-import { createVehicle } from '@/modules/vehicles/api/vehicles-api';
-import { createDriver } from '@/modules/drivers/api/drivers-api';
+import { VehiclesPage } from '@/modules/list/pages/VehiclesPage';
+import { DriversPage } from '@/modules/list/pages/DriversPage';
+import { MaintenancePage } from '@/modules/list/pages/MaintenancePage';
+import { AddVehicleModal } from '@/modules/list/components/AddVehicleModal';
+import { AddDriverModal } from '@/modules/list/components/AddDriverModal';
+import { NewMaintenanceModal } from '@/modules/list/components/NewMaintenanceModal';
+import { createVehicle } from '@/modules/list/api/vehicles-api';
+import { createDriver } from '@/modules/list/api/drivers-api';
+import { createMaintenance } from '@/modules/list/api/maintenance-api';
 
 type TabKey = 'vehicles' | 'drivers' | 'maintenance';
 
@@ -22,6 +24,7 @@ export function ListPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('vehicles');
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
   const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
+  const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   async function handleAddVehicle(payload: {
@@ -75,6 +78,24 @@ export function ListPage() {
     }
   }
 
+  async function handleAddMaintenance(payload: any) {
+    const confirmed = await confirm({
+      title: 'Save Maintenance Record?',
+      message: `You are about to record a "${payload.serviceType}" service. This action can be modified later.`,
+      type: 'info',
+    });
+    if (!confirmed) return;
+
+    try {
+      await createMaintenance(payload);
+      toast('Maintenance record added successfully!', 'success');
+      setIsMaintenanceModalOpen(false);
+      setRefreshKey((k) => k + 1);
+    } catch (err: any) {
+      toast(err.message || 'Failed to add maintenance record', 'error');
+    }
+  }
+
   return (
     <div className="space-y-8">
       {/* Tab Bar + Action button — mobile: separate, desktop: inline */}
@@ -120,6 +141,15 @@ export function ListPage() {
               Add Driver
             </button>
           )}
+          {activeTab === 'maintenance' && (
+            <button
+              onClick={() => setIsMaintenanceModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+            >
+              <Plus className="size-3.5" />
+              Add Maintenance
+            </button>
+          )}
         </div>
 
         {/* Desktop: original buttons */}
@@ -141,13 +171,22 @@ export function ListPage() {
             Add Driver
           </button>
         )}
+        {activeTab === 'maintenance' && (
+          <button
+            onClick={() => setIsMaintenanceModalOpen(true)}
+            className="hidden sm:inline-flex items-center justify-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+          >
+            <Plus className="size-4" />
+            Add Maintenance
+          </button>
+        )}
       </div>
 
       {/* Tab content */}
       <div>
         {activeTab === 'vehicles' && <VehiclesPage key={refreshKey} hideAddButton />}
         {activeTab === 'drivers' && <DriversPage key={refreshKey} hideAddButton />}
-        {activeTab === 'maintenance' && <MaintenancePage />}
+        {activeTab === 'maintenance' && <MaintenancePage key={refreshKey} />}
       </div>
 
       {/* Add Vehicle Modal */}
@@ -162,6 +201,13 @@ export function ListPage() {
         isOpen={isDriverModalOpen}
         onClose={() => setIsDriverModalOpen(false)}
         onSubmit={handleAddDriver}
+      />
+
+      {/* Add Maintenance Modal */}
+      <NewMaintenanceModal
+        isOpen={isMaintenanceModalOpen}
+        onClose={() => setIsMaintenanceModalOpen(false)}
+        onSubmit={handleAddMaintenance}
       />
     </div>
   );

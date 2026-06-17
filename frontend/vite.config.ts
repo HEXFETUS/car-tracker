@@ -7,6 +7,15 @@ export default defineConfig({
   build: {
     outDir: '../dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router'],
+          ui: ['@radix-ui/react-slot', 'lucide-react', 'class-variance-authority', 'clsx', 'tailwind-merge'],
+          query: ['@tanstack/react-query'],
+        },
+      },
+    },
   },
   resolve: {
     alias: {

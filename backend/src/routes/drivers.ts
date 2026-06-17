@@ -12,6 +12,7 @@ interface DriverRow {
   address: string | null;
   license_number: string;
   expiry_date: string;
+  status: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -51,7 +52,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 // POST /api/drivers — Create a new driver
 router.post('/', async (req: Request, res: Response) => {
-  const { fullName, phone, email, address, licenseNumber, expiryDate } = req.body;
+  const { fullName, phone, email, address, licenseNumber, expiryDate, status } = req.body;
 
   if (!fullName || !phone || !email || !licenseNumber || !expiryDate) {
     res.status(400).json({
@@ -79,10 +80,10 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const result = await pool.query<DriverRow>(
-      `INSERT INTO drivers (full_name, phone, email, address, license_number, expiry_date)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO drivers (full_name, phone, email, address, license_number, expiry_date, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [fullName, phone, email, address || null, licenseNumber, expiryDate],
+      [fullName, phone, email, address || null, licenseNumber, expiryDate, status || 'active'],
     );
 
     res.status(201).json({
@@ -96,6 +97,93 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
+// PUT /api/drivers/:id — Update a driver
+router.put('/:id', async (req: Request, res: Response) => {
+  const { fullName, phone, email, address, licenseNumber, expiryDate, status } = req.body;
+
+  try {
+    const pool = getPool();
+
+    // Check duplicate license excluding current driver
+    if (licenseNumber) {
+      const existing = await pool.query<DriverRow>(
+        'SELECT id FROM drivers WHERE license_number = $1 AND id != $2',
+        [licenseNumber, req.params.id],
+      );
+      if (existing.rows.length > 0) {
+        res.status(409).json({
+          success: false,
+          data: null,
+          error: 'A driver with this license number already exists',
+        });
+        return;
+      }
+    }
+
+    const result = await pool.query<DriverRow>(
+      `UPDATE drivers
+       SET full_name = COALESCE($1, full_name),
+           phone = COALESCE($2, phone),
+           email = COALESCE($3, email),
+           address = COALESCE($4, address),
+           license_number = COALESCE($5, license_number),
+           expiry_date = COALESCE($6, expiry_date),
+           status = COALESCE($7, status)
+       WHERE id = $8
+       RETURNING *`,
+      [
+        fullName || null,
+        phone || null,
+        email || null,
+        address ?? null,
+        licenseNumber || null,
+        expiryDate || null,
+        status || null,
+        req.params.id,
+      ],
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ success: false, data: null, error: 'Driver not found' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: mapRow(result.rows[0]),
+      message: 'Driver updated successfully',
+    });
+  } catch (error) {
+    console.error('PUT /api/drivers/:id error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// DELETE /api/drivers/:id — Delete a driver
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<DriverRow>(
+      'DELETE FROM drivers WHERE id = $1 RETURNING *',
+      [req.params.id],
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ success: false, data: null, error: 'Driver not found' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: mapRow(result.rows[0]),
+      message: 'Driver deleted successfully',
+    });
+  } catch (error) {
+    console.error('DELETE /api/drivers/:id error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
 function mapRow(row: DriverRow) {
   return {
     id: row.id,
@@ -105,6 +193,7 @@ function mapRow(row: DriverRow) {
     address: row.address ?? undefined,
     licenseNumber: row.license_number,
     expiryDate: row.expiry_date,
+    status: row.status ?? 'active',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

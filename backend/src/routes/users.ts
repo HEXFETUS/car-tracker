@@ -14,6 +14,7 @@ interface UserRow {
   password: string;
   user_type: string;
   department: string;
+  picture: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -25,12 +26,13 @@ export interface SanitisedUser {
   username: string;
   userType: string;
   department: string;
+  picture?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 function sanitise(row: UserRow): SanitisedUser {
-  return {
+  const result: SanitisedUser = {
     id: row.id,
     name: row.name,
     username: row.username,
@@ -39,6 +41,8 @@ function sanitise(row: UserRow): SanitisedUser {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  if (row.picture) result.picture = row.picture;
+  return result;
 }
 
 // GET /api/users — List all users (password hash excluded)
@@ -117,16 +121,16 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// PUT /api/users/:id — Update user name, username, userType, or department
+// PUT /api/users/:id — Update user name, username, userType, department, or picture
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { name, username, userType, department } = req.body;
+  const { name, username, userType, department, picture } = req.body;
 
-  if (!name && !username && !userType && department === undefined) {
+  if (!name && !username && !userType && department === undefined && picture === undefined) {
     res.status(400).json({
       success: false,
       data: null,
-      error: 'At least one field (name, username, userType, department) must be provided',
+      error: 'At least one field (name, username, userType, department, picture) must be provided',
     });
     return;
   }
@@ -195,6 +199,10 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (department !== undefined) {
       fields.push(`department = $${paramIndex++}`);
       values.push(department);
+    }
+    if (picture !== undefined) {
+      fields.push(`picture = $${paramIndex++}`);
+      values.push(picture);
     }
 
     fields.push(`updated_at = NOW()`);
