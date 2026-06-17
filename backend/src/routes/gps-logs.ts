@@ -10,6 +10,8 @@ import {
   findApprovedTravelOrderForDate,
   findAllTravelOrdersForDate,
   matchTravelOrderToGpsTrip,
+  persistGpsTripLogs,
+  generateGpsRecordNo,
   type TravelOrderWithTimes,
 } from '../services/gpsLogService.js';
 import {
@@ -17,32 +19,6 @@ import {
   fetchCartrackVehicleHistory,
   transformHistoryToTrips,
 } from '../services/cartrackHistoryService.js';
-
-/**
- * Clamp a numeric value to fit within a PostgreSQL NUMERIC(p,s) column.
- * Returns a string to avoid JS floating-point precision loss.
- */
-function clampNumeric(value: number, max: number): string {
-  if (!Number.isFinite(value) || value < 0) return '0';
-  return Math.min(value, max).toFixed(2);
-}
-
-/**
- * Generate a GPS record number in the format GPS-{YEAR}-{SEQUENTIAL}
- * by querying the max existing sequence number for the current year.
- */
-async function generateGpsRecordNo(): Promise<string> {
-  const pool = getPool();
-  const year = new Date().getFullYear();
-  const result = await pool.query<{ max_seq: string | null }>(
-    `SELECT MAX(CAST(SPLIT_PART(gps_record_no, '-', 3) AS INTEGER)) AS max_seq
-       FROM gps_trip_logs
-      WHERE gps_record_no LIKE $1`,
-    [`GPS-${year}-%`],
-  );
-  const nextSeq = (parseInt(result.rows[0]?.max_seq || '0', 10)) + 1;
-  return `GPS-${year}-${String(nextSeq).padStart(4, '0')}`;
-}
 
 const router: ExpressRouter = express.Router();
 
@@ -84,6 +60,9 @@ router.get('/', async (req: Request, res: Response) => {
     // Build WHERE clause from optional filters
     const conditions: string[] = [];
     const params: unknown[] = [];
+
+    // Always filter: only show logs where the car was turned on (has departure time)
+    conditions.push('g.departure_time_gps IS NOT NULL');
 
     if (req.query.vehicleId) {
       conditions.push(`g.vehicle_id = $${params.length + 1}`);
@@ -205,7 +184,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/gps-logs/sync — Trigger fleet sync for the selected date
+// POST /api/gps-logs/sync — Trigger fleet sync and persist GPS trip logs
 router.post('/sync', async (req: Request, res: Response) => {
   const startTime = Date.now();
 
@@ -217,80 +196,15 @@ router.post('/sync', async (req: Request, res: Response) => {
     });
 
     // ── GPS Trip Log Persistence ─────────────────────────────
+    // Uses the shared persistGpsTripLogs() function which handles
+    // travel order resolution, driver validation, record number
+    // generation, and status mapping — same logic as the scheduler.
     let gpsLogsSaved = 0;
     let gpsLogsFailed = 0;
-
     if (result.tripLogs && result.tripLogs.length > 0) {
-      for (const tripLog of result.tripLogs) {
-        try {
-          const vehicleId = tripLog.vehicleId;
-          if (!vehicleId) {
-            gpsLogsFailed += 1;
-            continue;
-          }
-
-          // Resolve travel order and driver in parallel
-          const [travelOrder, directDriverId] = await Promise.all([
-            findActiveTravelOrder(vehicleId),
-            tripLog.driverName ? findDriverByName(tripLog.driverName) : Promise.resolve(null),
-          ]);
-          const driverId = travelOrder?.driver_id ?? directDriverId ?? null;
-          const travelOrderId = travelOrder?.id ?? null;
-          const toStatusAuto = travelOrder?.status ?? null;
-
-          // ── Strict driver validation ──────────────────────────
-          const resolvedDriverId = driverId || null;
-          if (!resolvedDriverId) {
-            console.log('Skipping GPS log for vehicle', tripLog.plateNumber, '— no driver resolved');
-            gpsLogsFailed += 1;
-            continue;
-          }
-
-          // ── Clamp numeric fields ──────────────────────────────
-          const clampedGpsDistanceKm = Number(clampNumeric(Number(tripLog.gpsDistanceKm) || 0, 99999999.99));
-          const clampedEngineHours = Number(clampNumeric(Number(tripLog.engineHours) || 0, 999999.99));
-          const clampedMaxSpeedKph = Number(clampNumeric(Number(tripLog.maxSpeedKph) || 0, 9999.99));
-
-          const timestamp = Date.now();
-          const gpsRecordNo = await generateGpsRecordNo();
-
-          const unauthorizedMovement =
-            !travelOrderId && tripLog.tripStatus === 'Moving';
-          const anomalyFlag = tripLog.anomalyFlag || unauthorizedMovement;
-
-          const validStatuses = ['departed', 'en-route', 'arrived', 'cancelled', 'completed'];
-          let tripStatusGps = 'en-route';
-          if (tripLog.tripStatus === 'Moving') tripStatusGps = 'en-route';
-          else if (tripLog.tripStatus === 'Parked') tripStatusGps = 'arrived';
-          else if (tripLog.tripStatus === 'Idling') tripStatusGps = 'en-route';
-          if (!validStatuses.includes(tripStatusGps)) tripStatusGps = 'en-route';
-
-          await saveGpsTripLog({
-            gpsRecordNo,
-            tripDate: tripLog.tripDate,
-            vehicleId,
-            driverId: resolvedDriverId,
-            originGpsStartPoint: tripLog.originGpsStartPoint || '',
-            destinationGpsEndPoint: tripLog.destinationGpsEndPoint || '',
-            actualRouteRoadTaken: tripLog.actualRouteRoadTaken || '',
-            departureTimeGps: tripLog.departureTimeGps || null,
-            arrivalTimeGps: tripLog.arrivalTimeGps || null,
-            gpsDistanceKm: clampedGpsDistanceKm,
-            engineHours: clampedEngineHours,
-            maxSpeedKph: clampedMaxSpeedKph,
-            tripStatusGps,
-            travelOrderId,
-            toStatusAuto,
-            anomalyFlag,
-            notesRemarks: null,
-          });
-
-          gpsLogsSaved += 1;
-        } catch (logError) {
-          console.error('GPS log save error for vehicle', tripLog.plateNumber, ':', (logError as Error).message);
-          gpsLogsFailed += 1;
-        }
-      }
+      const persistResult = await persistGpsTripLogs(result.tripLogs);
+      gpsLogsSaved = persistResult.saved;
+      gpsLogsFailed = persistResult.failed;
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);

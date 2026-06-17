@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Loader2, Eye } from 'lucide-react';
+import { Plus, Loader2, Eye, Clock, ClipboardCheck, CheckCircle, XCircle } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { NewTravelOrderModal } from '../components/NewTravelOrderModal';
 import { TravelOrderDetailsModal } from '../components/TravelOrderDetailsModal';
@@ -27,11 +27,11 @@ function toLocalISO(datetimeLocal: string): string {
 
 type TabKey = 'pending' | 'for-approval' | 'approved' | 'cancelled';
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'pending', label: 'Needs Assigning' },
-  { key: 'for-approval', label: 'For Approval' },
-  { key: 'approved', label: 'Approved' },
-  { key: 'cancelled', label: 'Cancelled' },
+const TABS: { key: TabKey; label: string; icon: typeof Clock }[] = [
+  { key: 'pending', label: 'Needs Assigning', icon: Clock },
+  { key: 'for-approval', label: 'For Approval', icon: ClipboardCheck },
+  { key: 'approved', label: 'Approved', icon: CheckCircle },
+  { key: 'cancelled', label: 'Cancelled', icon: XCircle },
 ];
 
 export function TravelOrdersPage() {
@@ -134,26 +134,30 @@ export function TravelOrdersPage() {
       {/* Tab Bar + New Travel Order button — mobile: separate, desktop: inline */}
       <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between border-b border-zinc-200">
         <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="Travel order tabs">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => {
-                setActiveTab(tab.key);
-                setOrders([]);
-              }}
-              className={`
-                shrink-0 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
-                ${
-                  activeTab === tab.key
-                    ? 'border-brand-teal text-brand-teal'
-                    : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
-                }
-              `}
-              aria-current={activeTab === tab.key ? 'page' : undefined}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => {
+                  setActiveTab(tab.key);
+                  setOrders([]);
+                }}
+                className={`
+                  inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
+                  ${
+                    activeTab === tab.key
+                      ? 'border-brand-teal text-brand-teal'
+                      : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
+                  }
+                `}
+                aria-current={activeTab === tab.key ? 'page' : undefined}
+              >
+                <Icon className="size-4" />
+                {tab.label}
+              </button>
+            );
+          })}
         </nav>
 
         {/* Mobile: small right-aligned button */}
