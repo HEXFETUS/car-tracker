@@ -116,6 +116,7 @@ export interface AppUser {
   username: string;
   userType: 'SUPERADMIN' | 'ADMIN' | 'DISPATCHER' | 'HR' | 'VIEWER';
   department: string;
+  picture?: string;
   createdAt: string;
   updatedAt: string;
 }
