@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
 import type { AppUser } from '@car-tracker/shared';
@@ -10,7 +10,6 @@ import {
   changeUserPassword,
 } from '../api/users-api';
 import {
-  Plus,
   Pencil,
   X,
   Eye,
@@ -216,7 +215,11 @@ const USER_TYPE_OPTIONS: DropdownOption[] = [
 
 // ── Component ──────────────────────────────────────────────────
 
-export function UsersPage() {
+export interface UsersPageHandle {
+  openCreateModal: () => void;
+}
+
+export const UsersPage = forwardRef<UsersPageHandle, object>(function UsersPage(_props, ref) {
   const { confirm, toast } = useNotification();
 
   // ── State ──────────────────────────────────────────────────
@@ -442,21 +445,14 @@ export function UsersPage() {
     ? users.find((u) => u.id === passwordTargetUserId) ?? null
     : null;
 
+  useImperativeHandle(ref, () => ({
+    openCreateModal,
+  }));
+
   // ── Render ──────────────────────────────────────────────────
 
   return (
     <div className="space-y-8">
-      {/* ── Page header ─────────────────────────────────────── */}
-      <div className="flex items-center justify-end">
-        <button
-          onClick={openCreateModal}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-teal px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-teal/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal focus-visible:ring-offset-2"
-        >
-          <Plus className="size-4" />
-          Add New User
-        </button>
-      </div>
-
       {/* ── Loading state ───────────────────────────────────── */}
       {loading && (
         <div className="flex items-center justify-center py-20">
@@ -1058,4 +1054,4 @@ export function UsersPage() {
       )}
     </div>
   );
-}
+});

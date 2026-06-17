@@ -5,8 +5,6 @@ import { API_BASE } from '@/shared/api';
 
 // ── Types ────────────────────────────────────────────────────────
 
-type ModalType = 'password' | 'account' | null;
-
 interface PasswordModalProps {
   open: boolean;
   onClose: () => void;

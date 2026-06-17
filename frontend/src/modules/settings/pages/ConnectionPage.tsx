@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
 import { fetchConnectionStatus, updateSchedulerInterval, sendTelegramTest, type ConnectionCheck } from '../api/settings-api';
 import {
   Wifi,
   WifiOff,
-  RefreshCw,
   Loader2,
   AlertTriangle,
   ChevronDown,
@@ -410,7 +409,11 @@ function ConnectionCard({ connection, defaultExpanded = false, onReload }: Conne
 
 // ── Component ──────────────────────────────────────────────────
 
-export function ConnectionPage() {
+export interface ConnectionPageHandle {
+  refresh: () => void;
+}
+
+export const ConnectionPage = forwardRef<ConnectionPageHandle, object>(function ConnectionPage(_props, ref) {
   const { toast } = useNotification();
 
   // ── State ──────────────────────────────────────────────────
@@ -420,7 +423,7 @@ export function ConnectionPage() {
   const [timestamp, setTimestamp] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [, setRefreshing] = useState(false);
 
   // ── Data Fetching ────────────────────────────────────────
 
@@ -458,29 +461,14 @@ export function ConnectionPage() {
     loadStatus();
   }, [loadStatus]);
 
+  useImperativeHandle(ref, () => ({
+    refresh: () => loadStatus(true),
+  }));
+
   // ── Render ──────────────────────────────────────────────────
 
   return (
     <div className="space-y-8">
-      {/* ── Page header ─────────────────────────────────────── */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-zinc-900">Connections</h1>
-          <p className="mt-0.5 text-sm text-zinc-500">
-            Monitor the status of all system integrations
-          </p>
-        </div>
-
-        <button
-          onClick={() => loadStatus(true)}
-          disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-teal px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-teal/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal focus-visible:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          <RefreshCw className={cn('size-4', refreshing && 'animate-spin')} />
-          {refreshing ? 'Checking…' : 'Refresh'}
-        </button>
-      </div>
-
       {/* ── Loading state ───────────────────────────────────── */}
       {loading && (
         <div className="flex items-center justify-center py-20">
@@ -530,4 +518,4 @@ export function ConnectionPage() {
       )}
     </div>
   );
-}
+});

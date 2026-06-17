@@ -34,6 +34,21 @@ export interface MaintenanceRecord {
   notes?: string;
 }
 
+export interface Maintenance {
+  id: string;
+  vehicleId: string;
+  vehiclePlate?: string;
+  vehicleName?: string;
+  serviceType: string;
+  cost: number;
+  date: string;
+  remarks?: string;
+  receiptNumber?: string;
+  attachedPicture?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ActivityEntry {
   id: string;
   type: 'created' | 'updated' | 'serviced' | 'sold';
@@ -63,6 +78,8 @@ export interface Vehicle {
   color?: string;
   vehicleType?: string;
   fuelType?: string;
+  underRepair?: boolean;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -77,6 +94,7 @@ export interface Driver {
   address?: string;
   licenseNumber: string;
   expiryDate: string;
+  status?: string;
   createdAt: string;
   updatedAt: string;
 }
