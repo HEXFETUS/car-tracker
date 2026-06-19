@@ -18,8 +18,10 @@ import { fetchGpsAlerts, getVehiclePlate } from '../services/gpsAlertService.js'
 import {
   resolveCartrackUnitId,
   fetchCartrackVehicleHistory,
-  transformHistoryToTrips,
 } from '../services/cartrackHistoryService.js';
+import {
+  syncSingleVehicleDate,
+} from '../services/trackingHistorySyncService.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -48,7 +50,6 @@ interface GpsLogRow {
   destination_verified: boolean;
   trip_type: string;
   parent_trip_id: string | null;
-  location_name: string | null;
   coordinates_origin: string | null;
   coordinates_destination: string | null;
   // Joined columns
@@ -316,95 +317,41 @@ router.get('/sync-history', async (req: Request, res: Response) => {
       return;
     }
 
-    // ── Step 4: Fetch historical tracking data from Cartrack ──
-    const historyPoints = await fetchCartrackVehicleHistory(unitInfo.unitId, dateStr, plateNumber);
-    console.log(`Fetched ${historyPoints.length} history points from Cartrack for ${plateNumber} on ${dateStr}`);
+    // ── Step 4: Run the advanced sync (reconstructs trips from breadcrumbs
+    //     using driving→idling→10min→arrival detection, return trip detection,
+    //     coordinate-based destination verification, and smart TO matching). ──
+    const syncResult = await syncSingleVehicleDate(vehicleId, plateNumber, dateStr);
 
-    // ── Step 5: Transform into trip data ──────────────────────
-    const trips = transformHistoryToTrips(historyPoints, plateNumber, dateStr);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    // ── Step 6: Strict driver validation ──────────────────────
-    // Use the first travel order's driver for validation; each trip
-    // will be matched to the best-fit TO later.
-    const primaryTO = travelOrderCandidates[0];
-    const resolvedDriverId = primaryTO.driver_id || null;
-    if (!resolvedDriverId) {
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-      console.log('Sync-history aborted — no driver assigned to travel order');
+    if (syncResult.tripsCreated === 0 && syncResult.tripsFailed === 0) {
+      // No trips created — could be no GPS data or all duplicates
       res.json({
         success: true,
         synced: false,
         elapsed_seconds: parseFloat(elapsed),
-        message: 'Approved travel order found but no driver is assigned. Sync aborted.',
+        message: syncResult.debugLogs.length > 0
+          ? syncResult.debugLogs[syncResult.debugLogs.length - 1]
+          : 'No GPS data found for this vehicle on the specified date. Sync skipped.',
+        debug_logs: syncResult.debugLogs,
         timestamp: new Date().toISOString(),
       });
       return;
     }
 
-    // ── Step 7: Save the GPS trip log with smart TO matching ──
-    let gpsLogsSaved = 0;
-    let gpsLogsFailed = 0;
-    // Track the last matched TO for response reporting
-    let lastMatchedTOId: string | null = null;
-    let lastMatchedTOStatus: string = primaryTO.status;
-
-    for (const [index, tripData] of trips.entries()) {
-      const gpsRecordNo = await generateGpsRecordNo();
-
-      // Match each GPS trip to the best travel order based on departure/arrival times
-      const matchedTO = matchTravelOrderToGpsTrip(
-        tripData.departureTimeGps || null,
-        tripData.arrivalTimeGps || null,
-        null, // coordinates not available from historical Cartrack data
-        travelOrderCandidates,
-      );
-
-      const matchedTOId = matchedTO?.id ?? null;
-      const matchedTOStatus = matchedTO?.status ?? primaryTO.status;
-      const matchedTODriverId = matchedTO?.driver_id ?? resolvedDriverId;
-      lastMatchedTOId = matchedTOId;
-      lastMatchedTOStatus = matchedTOStatus;
-
-      try {
-        await saveGpsTripLog({
-          gpsRecordNo,
-          tripDate: dateStr,
-          vehicleId,
-          driverId: matchedTODriverId,
-          originGpsStartPoint: tripData.originGpsStartPoint,
-          destinationGpsEndPoint: tripData.destinationGpsEndPoint,
-          actualRouteRoadTaken: tripData.actualRouteRoadTaken || '',
-          departureTimeGps: tripData.departureTimeGps || null,
-          arrivalTimeGps: tripData.arrivalTimeGps || null,
-          gpsDistanceKm: tripData.gpsDistanceKm,
-          engineHours: tripData.engineHours,
-          maxSpeedKph: tripData.maxSpeedKph,
-          tripStatusGps: tripData.tripStatus,
-          travelOrderId: matchedTOId,
-          toStatusAuto: matchedTOStatus,
-          anomalyFlag: tripData.maxSpeedKph > 120,
-          notesRemarks: null, // editable via edit button
-        });
-        gpsLogsSaved += 1;
-      } catch (logError) {
-        console.error('Sync-history save error:', (logError as Error).message);
-        gpsLogsFailed += 1;
-      }
-    }
-
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-
     res.json({
       success: true,
       synced: true,
       elapsed_seconds: parseFloat(elapsed),
-      travel_order_id: lastMatchedTOId,
-      travel_order_status: lastMatchedTOStatus,
-      total_records_found: historyPoints.length,
-      trips_found: trips.length,
-      gps_logs_saved: gpsLogsSaved,
-      gps_logs_failed: gpsLogsFailed,
-      message: `Historical sync completed for vehicle on ${dateStr} with ${travelOrderCandidates.length} travel order(s).`,
+      travel_order_id: null, // matched internally by syncSingleVehicleDate
+      travel_order_status: null,
+      gps_logs_saved: syncResult.tripsCreated,
+      gps_logs_failed: syncResult.tripsFailed,
+      matched_to_number: syncResult.matchedToNumber,
+      trips_created: syncResult.tripsCreated,
+      trips_failed: syncResult.tripsFailed,
+      debug_logs: syncResult.debugLogs,
+      message: `Historical sync completed for vehicle ${plateNumber} on ${dateStr}: ${syncResult.tripsCreated} GPS trip(s) created, ${syncResult.tripsFailed} failed. Matched TO: ${syncResult.matchedToNumber ?? 'N/A'}.`,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -562,7 +509,6 @@ function mapRow(row: GpsLogRow) {
     destinationVerified: row.destination_verified,
     tripType: row.trip_type,
     parentTripId: row.parent_trip_id,
-    locationName: row.location_name,
     vehiclePlateNo: row.plate_number ?? 'Unknown',
     driverName: row.driver_full_name ?? 'Unknown',
     toNumber: row.travel_order_to_number ?? null,

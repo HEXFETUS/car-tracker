@@ -25,7 +25,7 @@ export const CHAT_ID = str('CHAT_ID');
 export const CARTRACK_USERNAME = str('CARTRACK_USERNAME');
 export const CARTRACK_PASSWORD = str('CARTRACK_PASSWORD');
 export const CARTRACK_API_URL = str('CARTRACK_API_URL');
-export const SYNC_INTERVAL_SECONDS = num('SYNC_INTERVAL_SECONDS', 30);
+export const SYNC_INTERVAL_SECONDS = num('SYNC_INTERVAL_SECONDS', 120);
 export const CRON_SECRET = str('CRON_SECRET');
 // ── Database (Supabase / PostgreSQL) ──────────────────────────
 export const DATABASE_URL = str('DATABASE_URL');

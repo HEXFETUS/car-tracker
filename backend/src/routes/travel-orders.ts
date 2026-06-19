@@ -421,6 +421,10 @@ router.post('/', async (req: Request, res: Response) => {
 
   try {
     const pool = getPool();
+    const scheduledDepartureValue = scheduledDepartureAt;
+    const scheduledArrivalValue = scheduledArrivalAt || null;
+    console.log('[TO Create] Backend received scheduled_departure:', scheduledDepartureValue);
+    console.log('[TO Create] Backend received scheduled_arrival:', scheduledArrivalValue);
     const result = await pool.query<TravelOrderRow>(`
       INSERT INTO travel_orders
         (to_number, vehicle_id, driver_id, origin_location, destination_target,
@@ -432,12 +436,14 @@ router.post('/', async (req: Request, res: Response) => {
     `, [
       toNumber,
       vehicleId || null, driverId || null, originLocation || '', destinationLocation,
-      scheduledDepartureAt, scheduledArrivalAt || null,
+      scheduledDepartureValue, scheduledArrivalValue,
       purpose || '', notes || '',
       department || '', travelerName || '',
       requestVehicle ?? false, requestDriver ?? false,
       latLongOrigin || null, latLongDestination || null,
     ]);
+    console.log('[TO Create] DB returned scheduled_departure:', result.rows[0].scheduled_departure);
+    console.log('[TO Create] DB returned scheduled_arrival:', result.rows[0].scheduled_arrival);
 
     res.status(201).json({
       success: true,

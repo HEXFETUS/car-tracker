@@ -21,11 +21,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER set_maintenance_updated_at
-  BEFORE UPDATE ON maintenance
-  FOR EACH ROW
-  EXECUTE FUNCTION update_maintenance_updated_at();
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_trigger
+     WHERE tgname = 'set_maintenance_updated_at'
+       AND tgrelid = 'maintenance'::regclass
+  ) THEN
+    CREATE TRIGGER set_maintenance_updated_at
+      BEFORE UPDATE ON maintenance
+      FOR EACH ROW
+      EXECUTE FUNCTION update_maintenance_updated_at();
+  END IF;
+END $$;
 
 -- Indexes for common lookups
-CREATE INDEX idx_maintenance_vehicle_id ON maintenance (vehicle_id);
-CREATE INDEX idx_maintenance_date      ON maintenance (date);
+CREATE INDEX IF NOT EXISTS idx_maintenance_vehicle_id ON maintenance (vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_maintenance_date      ON maintenance (date);

@@ -168,19 +168,24 @@ async function runCycle(): Promise<void> {
       resolveVehicleId: (plateNumber: string) => findVehicleByPlate(plateNumber),
     });
 
-    // ── Persist GPS Trip Logs to Database ──────────────────────
-    // The syncFleetAndAlert() call generates trip log records from
-    // fleet telemetry (ignition on/off, motion, etc.). We must save
-    // these to the gps_trip_logs table so the system reflects live
-    // vehicle activity in real-time, just like the fleet connection
-    // detects engine events.
+    // ── GPS Log Persistence (DISABLED for scheduler) ───────────
+    // IMPORTANT: The scheduler runs on current fleet status snapshots
+    // from the Cartrack fleet API. These are NOT trip history records.
+    //
+    // Trip logs generated from live vehicle telemetry (ignition on/off,
+    // motion detection, etc.) are unreliable for TO matching because
+    // they lack the `Time`, `Status`, `Events`, and `Location` columns
+    // from the fleet trip history table.
+    //
+    // GPS logs should ONLY be created through the manual Sync History
+    // button, which uses /rest/trips/{plate} and fleet trip history
+    // detail endpoints that return proper Time/Status/Events/Location.
+    //
+    // Therefore, scheduler MUST NOT persist GPS logs from live status.
     let gpsLogsSaved = 0;
     let gpsLogsFailed = 0;
-    if (result.tripLogs && result.tripLogs.length > 0) {
-      const persistResult = await persistGpsTripLogs(result.tripLogs);
-      gpsLogsSaved = persistResult.saved;
-      gpsLogsFailed = persistResult.failed;
-    }
+    // GPS log persistence from scheduler is disabled.
+    // See trackingHistorySyncService.ts for the proper sync flow.
 
     const duration = (Date.now() - cycleStart) / 1000;
     state.lastRunDuration = duration;
