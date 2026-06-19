@@ -2,6 +2,9 @@ import { useState, useRef, useEffect } from 'react';
 import { X, Upload } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useAuth } from '@/modules/auth/context/auth-context';
+import { fetchNextToNumber } from '../api/travel-orders-api';
+import { PlaceSearchInput } from './PlaceSearchInput';
+import { PinpointMapModal } from './PinpointMapModal';
 import type { TravelOrder } from '../types';
 
 interface NewTravelOrderModalProps {
@@ -21,10 +24,11 @@ interface FormErrors {
   purpose?: string;
 }
 
-function generateToNumber(count: number): string {
+type MapTarget = 'origin' | 'destination';
+
+function generateToNumber(seq: number): string {
   const year = new Date().getFullYear();
-  const next = count + 1;
-  return `TO-${year}-${String(next).padStart(4, '0')}`;
+  return `TO-${year}-${String(seq).padStart(4, '0')}`;
 }
 
 function getCurrentDatetimeLocal(): string {
@@ -59,14 +63,29 @@ export function NewTravelOrderModal({
   const [errors, setErrors] = useState<FormErrors>({});
   const [isDragging, setIsDragging] = useState(false);
 
+  // Lat/Lng state
+  const [latLongOrigin, setLatLongOrigin] = useState<string | null>(null);
+  const [latLongDestination, setLatLongDestination] = useState<string | null>(null);
+
+  // Track whether location was pinpointed via the map (hides "Show on Map" footer)
+  const [originPinpointed, setOriginPinpointed] = useState(false);
+  const [destPinpointed, setDestPinpointed] = useState(false);
+
+  // Map modal state
+  const [isMapOpen, setIsMapOpen] = useState(false);
+  const [mapTarget, setMapTarget] = useState<MapTarget>('origin');
+  const [mapInitialQuery, setMapInitialQuery] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
-  const toNumber = generateToNumber(existingCount);
+  // Next TO number state (fetched from API)
+  const [nextSeq, setNextSeq] = useState<number>(1);
+  const toNumber = generateToNumber(nextSeq);
   const [dateIssued, setDateIssued] = useState(new Date().toISOString().slice(0, 10));
   const canEditDateIssued = user?.userType === 'SUPERADMIN';
 
-  // Reset form on open
+  // Fetch next TO number and reset form on open
   useEffect(() => {
     if (isOpen) {
       setDepartment('');
@@ -83,6 +102,18 @@ export function NewTravelOrderModal({
       setImageName('');
       setErrors({});
       setDateIssued(new Date().toISOString().slice(0, 10));
+      setLatLongOrigin(null);
+      setLatLongDestination(null);
+      setOriginPinpointed(false);
+      setDestPinpointed(false);
+
+      // Fetch the next TO number from the DB
+      fetchNextToNumber()
+        .then((seq) => setNextSeq(seq))
+        .catch(() => {
+          // Fallback: use existingCount + 1 if API fails
+          setNextSeq(existingCount + 1);
+        });
     }
   }, [isOpen]);
 
@@ -133,6 +164,8 @@ export function NewTravelOrderModal({
       remarks: remarks.trim() || undefined,
       imageAttachment: imageData,
       status: 'pending',
+      latLongOrigin,
+      latLongDestination,
     };
 
     onSubmit(order);
@@ -166,6 +199,34 @@ export function NewTravelOrderModal({
     setImageData(null);
     setImageName('');
     if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  function handleSelectOriginLocation(placeName: string, lat: string, lng: string) {
+    setBoundFrom(placeName);
+    setLatLongOrigin(`${lat},${lng}`);
+  }
+
+  function handleSelectDestinationLocation(placeName: string, lat: string, lng: string) {
+    setBoundTo(placeName);
+    setLatLongDestination(`${lat},${lng}`);
+  }
+
+  function openMapFor(target: MapTarget, currentQuery: string) {
+    setMapTarget(target);
+    setMapInitialQuery(currentQuery || target === 'origin' ? boundFrom : boundTo);
+    setIsMapOpen(true);
+  }
+
+  function handleMapConfirm(lat: string, lng: string, address: string) {
+    if (mapTarget === 'origin') {
+      setBoundFrom(address);
+      setLatLongOrigin(`${lat},${lng}`);
+      setOriginPinpointed(true);
+    } else {
+      setBoundTo(address);
+      setLatLongDestination(`${lat},${lng}`);
+      setDestPinpointed(true);
+    }
   }
 
   if (!isOpen) return null;
@@ -314,36 +375,40 @@ export function NewTravelOrderModal({
               <label className="block text-sm font-medium text-zinc-700 mb-1">
                 Bound From <span className="text-red-500">*</span>
               </label>
-              <input
-                type="text"
+              <PlaceSearchInput
                 value={boundFrom}
-                onChange={(e) => setBoundFrom(e.target.value)}
+                onChange={setBoundFrom}
+                onSelectLocation={handleSelectOriginLocation}
                 placeholder="e.g. Manila"
-                  className={cn(
-                    'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                    errors.boundFrom ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                  )}
+                error={errors.boundFrom}
+                mapLabel="Show on Map to set exact location"
+                onShowOnMap={() => openMapFor('origin', boundFrom)}
+                hideShowOnMap={originPinpointed}
               />
-              {errors.boundFrom && (
-                <p className="mt-1 text-xs text-red-500">{errors.boundFrom}</p>
+              {latLongOrigin && (
+                <p className="mt-1 text-xs text-zinc-400">
+                  Coordinates: {latLongOrigin}
+                </p>
               )}
             </div>
             <div>
               <label className="block text-sm font-medium text-zinc-700 mb-1">
                 Bound To <span className="text-red-500">*</span>
               </label>
-              <input
-                type="text"
+              <PlaceSearchInput
                 value={boundTo}
-                onChange={(e) => setBoundTo(e.target.value)}
+                onChange={setBoundTo}
+                onSelectLocation={handleSelectDestinationLocation}
                 placeholder="e.g. Cebu"
-                  className={cn(
-                    'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                    errors.boundTo ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                  )}
+                error={errors.boundTo}
+                mapLabel="Show on Map to set exact location"
+                onShowOnMap={() => openMapFor('destination', boundTo)}
+                hideShowOnMap={destPinpointed}
               />
-              {errors.boundTo && (
-                <p className="mt-1 text-xs text-red-500">{errors.boundTo}</p>
+              {latLongDestination && (
+                <p className="mt-1 text-xs text-zinc-400">
+                  Coordinates: {latLongDestination}
+                </p>
               )}
             </div>
           </div>
@@ -507,6 +572,15 @@ export function NewTravelOrderModal({
           </div>
         </form>
       </div>
+
+      {/* Pinpoint Map Modal */}
+      <PinpointMapModal
+        isOpen={isMapOpen}
+        onClose={() => setIsMapOpen(false)}
+        onConfirm={handleMapConfirm}
+        initialQuery={mapInitialQuery}
+        locationLabel={mapTarget === 'origin' ? 'Bound From (Origin)' : 'Bound To (Destination)'}
+      />
     </div>
   );
 }

@@ -12,6 +12,7 @@ import authRouter from './routes/auth.js';
 import settingsRouter from './routes/settings.js';
 import reportsRouter from './routes/reports.js';
 import maintenanceRouter from './routes/maintenance.js';
+import adminSyncRouter from './routes/admin-sync.js';
 
 const app: Application = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -37,6 +38,7 @@ app.use(['/api/auth', '/auth'], authRouter);
 app.use(['/api/settings', '/settings'], settingsRouter);
 app.use(['/api/reports', '/reports'], reportsRouter);
 app.use(['/api/maintenance', '/maintenance'], maintenanceRouter);
+app.use(['/api/admin/sync-tracking-history', '/admin/sync-tracking-history'], adminSyncRouter);
 
 app.all(['/api/debug/routes', '/debug/routes'], (_req, res) => {
   res.json({ ok: true, message: 'debug route reached' });

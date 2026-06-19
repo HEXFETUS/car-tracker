@@ -18,6 +18,14 @@
 import { alreadySentRecently, getJson, setJson } from './state.js';
 import { insertAlertsToSupabase, isSupabaseConfigured, findVehicleIdByPlate } from './supabase.js';
 import { buildTripLogRecord } from './tripLogTransformer.js';
+import {
+  processTripState,
+  consumeOrigin,
+  consumeDestination,
+  hasVehicleArrived,
+  getReturnTripState,
+  resetVehicleState,
+} from './tripStateTracker.js';
 
 // ── Configuration from Environment ────────────────────────────
 
@@ -572,7 +580,7 @@ export async function getVehicleLocation(vehicle) {
   }
   if (!location || typeof location !== 'object') location = {};
   const latitude = firstPresent(vehicle.latitude, vehicle.lat, location.latitude, location.lat);
-  const longitude = firstPresent(vehicle.longitude, vehicle.lng, vehicle.lon, location.longitude, location.lng, location.lon);
+  const longitude = firstPresent(vehicle.longitude, vehicle.lng, location.lon, location.longitude, location.lng, location.lon);
   const locationName = firstPresent(vehicle.location_name, vehicle.position_description, vehicle.location_description, vehicle.area, location.location_name, location.position_description, location.location_description, location.area, location.name, location.label, location.description, location.address);
   if (locationName) return String(locationName);
   if (latitude !== undefined && longitude !== undefined) {
@@ -643,8 +651,9 @@ export async function syncFleetAndAlert(options = {}) {
   const data = await getFleetDataCached();
   const vehicles = extractVehicles(data);
   const vehicleStatuses = [];
-  const tripLogRecords = [];
-  const alertSummary = { queued: 0, sent: 0, skipped: 0, failed: 0, persisted: 0 };
+    const tripLogRecords = [];
+    const alertSummary = { queued: 0, sent: 0, skipped: 0, failed: 0, persisted: 0 };
+    const tripAlerts = [];
 
   for (const vehicle of vehicles) {
     // ── Strict plate number resolution ────────────────────────
@@ -694,6 +703,17 @@ export async function syncFleetAndAlert(options = {}) {
     function pushAlert(type, message) {
       alerts.push({ type, message, vehicle_id: vid, location, speed, fuel });
     }
+
+    // ── Trip State Alerts (origin/destination tracking, ignition/idling) ──
+    const coordinates = getVehicleCoordinates(vehicle);
+    const tripStateAlerts = processTripState(vehicle, vid, coordinates?.latitude ?? null, coordinates?.longitude ?? null);
+    tripStateAlerts.forEach((a) => {
+      pushAlert('trip_state', a.message);
+      tripAlerts.push({ ...a, vehicle_id: vid });
+    });
+
+    const originData = consumeOrigin(vid);
+    const destinationData = consumeDestination(vid);
 
     if (hasPreviousState) {
       if (ignition !== prevIgnition) pushAlert('ignition', formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver));
@@ -768,8 +788,29 @@ export async function syncFleetAndAlert(options = {}) {
       driver,
       to_number: toNumber,
     };
+    // Attach origin/destination coordinates from trip state tracker
+    const originCoord = originData?.originCoordinate || (coordinates ? `${coordinates.latitude.toFixed(5)},${coordinates.longitude.toFixed(5)}` : '');
+    const destinationCoord = destinationData?.destinationCoordinate || '';
+    const arrivalTimeGps = destinationData?.arrivalTime || null;
+
     const tripLogRecord = buildTripLogRecord(vehicle, vehicleStatusForLog, location);
-    tripLogRecords.push({ ...tripLogRecord, vehicleId: vid });
+    tripLogRecords.push({
+      ...tripLogRecord,
+      vehicleId: vid,
+      originGpsStartPoint: originCoord || tripLogRecord.originGpsStartPoint,
+      destinationGpsEndPoint: destinationCoord || tripLogRecord.destinationGpsEndPoint,
+      arrivalTimeGps: arrivalTimeGps || tripLogRecord.arrivalTimeGps,
+    });
+  }
+
+  // Persist trip-state alerts via the existing alert pipeline
+  if (tripAlerts.length) {
+    const tripAlertResult = await sendVehicleAlerts(tripAlerts);
+    alertSummary.queued += tripAlertResult.queued;
+    alertSummary.sent += tripAlertResult.sent;
+    alertSummary.skipped += tripAlertResult.skipped;
+    alertSummary.failed += tripAlertResult.failed;
+    alertSummary.persisted += tripAlertResult.persisted || 0;
   }
 
   return { status: 'ok', vehicles: vehicles.length, alerts: alertSummary, data: vehicleStatuses, tripLogs: tripLogRecords };

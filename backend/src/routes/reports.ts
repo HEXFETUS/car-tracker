@@ -43,8 +43,8 @@ router.get('/reconciliation', async (_req: Request, res: Response) => {
     `);
 
     const data = result.rows.map((row) => {
-      const toEstMileageKm = row.gps_distance_km ?? 0;
-      const gpsActualMileageKm = row.gps_distance_km ?? 0;
+      const toEstMileageKm = parseFloat(String(row.gps_distance_km ?? 0));
+      const gpsActualMileageKm = parseFloat(String(row.gps_distance_km ?? 0));
       const varianceKm = 0;
       const variancePct = 0;
       const status: 'Matched' | 'Flagged' = 'Matched';

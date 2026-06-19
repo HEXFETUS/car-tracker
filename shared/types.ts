@@ -102,6 +102,7 @@ export interface Driver {
 // ── GPS Trip Log ───────────────────────────────────────────────
 
 export type TripStatus = 'departed' | 'en-route' | 'arrived' | 'cancelled' | 'completed';
+export type TripType = 'OUTBOUND' | 'RETURN';
 
 export interface GpsTripLog {
   id: string;
@@ -111,9 +112,11 @@ export interface GpsTripLog {
   driverId: string;
   originGpsStartPoint: string;
   destinationGpsEndPoint: string;
+  coordinatesOrigin?: string | null;
+  coordinatesDestination?: string | null;
   actualRouteRoadTaken: string;
-  departureTimeGps: string; // ISO datetime
-  arrivalTimeGps: string; // ISO datetime
+  departureTimeGps: string | null; // ISO datetime
+  arrivalTimeGps: string | null;   // ISO datetime
   gpsDistanceKm: number;
   engineHours: number;
   maxSpeedKph: number;
@@ -122,6 +125,11 @@ export interface GpsTripLog {
   toStatusAuto?: string | null;
   anomalyFlag: boolean;
   notesRemarks?: string | null;
+  // New fields for enhanced trip detection
+  destinationVerified?: boolean;
+  tripType?: TripType;
+  parentTripId?: string | null;
+  locationName?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -155,4 +163,28 @@ export interface PaginatedResponse<T> {
   page: number;
   pageSize: number;
   message?: string;
+}
+
+export type SyncVehicleResult =
+  | { status: 'no_travel_order' }
+  | { status: 'cartrack_unavailable' }
+  | { status: 'no_gps_data' }
+  | { status: 'completed'; tripsCreated: number; tripsFailed: number; vehiclePlate: string };
+
+export interface TrackingHistorySyncResult {
+  success: boolean;
+  fromDate: string;
+  toDate: string;
+  totalVehiclesProcessed: number;
+  totalTripsCreated: number;
+  totalTripsFailed: number;
+  results: SyncVehicleResult[];
+  elapsedSeconds: number;
+}
+
+export interface AdminSyncResponse {
+  success: boolean;
+  data: TrackingHistorySyncResult;
+  message: string;
+  elapsed_seconds: number;
 }

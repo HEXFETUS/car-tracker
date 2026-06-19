@@ -14,6 +14,7 @@ import {
   generateGpsRecordNo,
   type TravelOrderWithTimes,
 } from '../services/gpsLogService.js';
+import { fetchGpsAlerts, getVehiclePlate } from '../services/gpsAlertService.js';
 import {
   resolveCartrackUnitId,
   fetchCartrackVehicleHistory,
@@ -43,6 +44,13 @@ interface GpsLogRow {
   notes_remarks: string | null;
   created_at: string;
   updated_at: string;
+  // Enhanced trip detection fields
+  destination_verified: boolean;
+  trip_type: string;
+  parent_trip_id: string | null;
+  location_name: string | null;
+  coordinates_origin: string | null;
+  coordinates_destination: string | null;
   // Joined columns
   plate_number?: string;
   driver_full_name?: string;
@@ -347,6 +355,7 @@ router.get('/sync-history', async (req: Request, res: Response) => {
       const matchedTO = matchTravelOrderToGpsTrip(
         tripData.departureTimeGps || null,
         tripData.arrivalTimeGps || null,
+        null, // coordinates not available from historical Cartrack data
         travelOrderCandidates,
       );
 
@@ -468,6 +477,38 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/gps-logs/alerts — List GPS alerts
+router.get('/alerts', async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+    const vehicleId = req.query.vehicleId as string | undefined;
+    const alertType = req.query.alertType as string | undefined;
+
+    const result = await fetchGpsAlerts({ page, pageSize, vehicleId, alertType });
+
+    // Enrich with plate numbers
+    const enriched = await Promise.all(
+      result.data.map(async (alert) => {
+        const plate = await getVehiclePlate(alert.vehicle_id);
+        return { ...alert, vehiclePlate: plate ?? 'Unknown' };
+      }),
+    );
+
+    res.json({
+      success: true,
+      data: enriched,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      message: 'GPS alerts retrieved successfully',
+    });
+  } catch (error) {
+    console.error('GET /api/gps-logs/alerts error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
 // GET /api/gps-logs/:id — Get single GPS log by ID
 router.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -505,6 +546,8 @@ function mapRow(row: GpsLogRow) {
     driverId: row.driver_id,
     originGpsStartPoint: row.origin_gps_start_point,
     destinationGpsEndPoint: row.destination_gps_end_point,
+    coordinatesOrigin: row.coordinates_origin,
+    coordinatesDestination: row.coordinates_destination,
     actualRouteRoadTaken: row.actual_route_road_taken,
     departureTimeGps: row.departure_time_gps,
     arrivalTimeGps: row.arrival_time_gps,
@@ -516,6 +559,10 @@ function mapRow(row: GpsLogRow) {
     toStatusAuto: row.to_status_auto,
     anomalyFlag: row.anomaly_flag,
     notesRemarks: row.notes_remarks,
+    destinationVerified: row.destination_verified,
+    tripType: row.trip_type,
+    parentTripId: row.parent_trip_id,
+    locationName: row.location_name,
     vehiclePlateNo: row.plate_number ?? 'Unknown',
     driverName: row.driver_full_name ?? 'Unknown',
     toNumber: row.travel_order_to_number ?? null,

@@ -4,6 +4,7 @@
 // Called by the cron sync pipeline after each fleet telemetry cycle.
 
 import { getPool } from '../db/db.js';
+import { createGpsAlert, getVehiclePlate } from './gpsAlertService.js';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -14,6 +15,8 @@ export interface GpsLogInsertData {
   driverId: string | null;
   originGpsStartPoint: string;
   destinationGpsEndPoint: string;
+  coordinatesOrigin?: string | null;
+  coordinatesDestination?: string | null;
   actualRouteRoadTaken: string;
   departureTimeGps: string | null;
   arrivalTimeGps: string | null;
@@ -25,6 +28,11 @@ export interface GpsLogInsertData {
   toStatusAuto: string | null;
   anomalyFlag: boolean;
   notesRemarks: string | null;
+  // Enhanced fields
+  destinationVerified?: boolean;
+  tripType?: 'OUTBOUND' | 'RETURN';
+  parentTripId?: string | null;
+  locationName?: string | null;
 }
 
 export interface ApprovedTravelOrderResult {
@@ -80,7 +88,7 @@ export async function findActiveTravelOrder(
     `SELECT id, status, driver_id
        FROM travel_orders
       WHERE vehicle_id = $1
-        AND UPPER(status) = 'ACTIVE'
+        AND UPPER(status) IN ('ACTIVE', 'APPROVED')
       ORDER BY created_at DESC
       LIMIT 1`,
     [vehicleId],
@@ -91,6 +99,10 @@ export async function findActiveTravelOrder(
 export interface TravelOrderWithTimes extends ApprovedTravelOrderResult {
   scheduled_departure: string | null;
   scheduled_arrival: string | null;
+  lat_long_origin: string | null;
+  lat_long_destination: string | null;
+  to_number: string | null;
+  location_name: string | null;
 }
 
 /**
@@ -125,15 +137,18 @@ export async function findApprovedTravelOrderForDate(
  * for the same vehicle/driver on the same day, so we can match each
  * GPS trip to the correct TO based on departure/arrival time proximity.
  *
- * Returns an array of matching travel orders ordered by scheduled_departure_at ASC.
+ * Returns an array of matching travel orders ordered by scheduled_departure ASC.
  */
 export async function findAllTravelOrdersForDate(
   vehicleId: string,
   dateStr: string,
 ): Promise<TravelOrderWithTimes[]> {
   const pool = getPool();
-  const result = await pool.query<TravelOrderWithTimes>(
-    `SELECT id, vehicle_id, driver_id, status, scheduled_departure, scheduled_arrival
+    const result = await pool.query<TravelOrderWithTimes>(
+    `SELECT id, vehicle_id, driver_id, status,
+            scheduled_departure, scheduled_arrival,
+            lat_long_origin, lat_long_destination,
+            to_number, location_name
        FROM travel_orders
       WHERE vehicle_id = $1
         AND status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
@@ -148,12 +163,11 @@ export async function findAllTravelOrdersForDate(
  * Given a GPS trip's departure and arrival times, find the best-matching
  * travel order from a list of candidate orders. The matching algorithm:
  *
- * 1. Compute the time difference between the GPS departure time and each
- *    TO's scheduled departure time (absolute difference in ms).
- * 2. If a TO's scheduled range (departure → arrival) fully contains the
- *    GPS trip times, prefer that TO.
- * 3. Otherwise, pick the TO with the closest scheduled departure time to
- *    the GPS departure time.
+ * Priority:
+ * 1. Same vehicle (already filtered in query)
+ * 2. GPS departure falls within TO departure window
+ * 3. GPS arrival falls within TO expected trip window
+ * 4. Destination coordinates match TO destination coordinates
  *
  * Returns the matched travel order, or the first candidate if no clear
  * match can be determined, or null if candidates list is empty.
@@ -161,29 +175,68 @@ export async function findAllTravelOrdersForDate(
 export function matchTravelOrderToGpsTrip(
   gpsDepartureTime: string | null,
   gpsArrivalTime: string | null,
+  gpsDestinationCoord: string | null,
   candidates: TravelOrderWithTimes[],
 ): TravelOrderWithTimes | null {
   if (!candidates || candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0];
 
-  // If we have no GPS timestamps, fall back to the first candidate
-  if (!gpsDepartureTime && !gpsArrivalTime) return candidates[0];
+  // If we have no GPS timestamps and no coordinates, fall back to the first candidate
+  if (!gpsDepartureTime && !gpsArrivalTime && !gpsDestinationCoord) return candidates[0];
 
   const gpsDepMs = gpsDepartureTime ? new Date(gpsDepartureTime).getTime() : null;
   const gpsArrMs = gpsArrivalTime ? new Date(gpsArrivalTime).getTime() : null;
 
   // First pass: look for a TO whose scheduled range fully contains the GPS trip
+  // AND has matching destination coordinates
   for (const to of candidates) {
     const toDepMs = to.scheduled_departure ? new Date(to.scheduled_departure).getTime() : null;
     const toArrMs = to.scheduled_arrival ? new Date(to.scheduled_arrival).getTime() : null;
 
-    // If both TO times exist and both GPS times exist, check containment
+    // Time-based containment check
+    const timeMatches = (() => {
+      if (toDepMs !== null && toArrMs !== null && gpsDepMs !== null && gpsArrMs !== null) {
+        return gpsDepMs >= toDepMs && gpsArrMs <= toArrMs;
+      }
+      if (toDepMs !== null && gpsDepMs !== null && toArrMs === null) {
+        const diffMs = Math.abs(gpsDepMs - toDepMs);
+        return diffMs <= 2 * 60 * 60 * 1000; // within 2 hours
+      }
+      return false;
+    })();
+
+    // Coordinate-based match check
+    const coordMatches = gpsDestinationCoord && to.lat_long_destination
+      ? haversineDistance(gpsDestinationCoord, to.lat_long_destination) <= 200
+      : false;
+
+    if (timeMatches && coordMatches) {
+      return to;
+    }
+  }
+
+  // Second pass: coordinate-only match
+  if (gpsDestinationCoord) {
+    for (const to of candidates) {
+      if (to.lat_long_destination) {
+        const dist = haversineDistance(gpsDestinationCoord, to.lat_long_destination);
+        if (dist <= 200) {
+          return to;
+        }
+      }
+    }
+  }
+
+  // Third pass: time-only containment or closest departure
+  for (const to of candidates) {
+    const toDepMs = to.scheduled_departure ? new Date(to.scheduled_departure).getTime() : null;
+    const toArrMs = to.scheduled_arrival ? new Date(to.scheduled_arrival).getTime() : null;
+
     if (toDepMs !== null && toArrMs !== null && gpsDepMs !== null && gpsArrMs !== null) {
       if (gpsDepMs >= toDepMs && gpsArrMs <= toArrMs) {
         return to;
       }
     }
-    // If only TO departure exists, check if GPS departure is close (within 2 hours)
     if (toDepMs !== null && gpsDepMs !== null && toArrMs === null) {
       const diffMs = Math.abs(gpsDepMs - toDepMs);
       if (diffMs <= 2 * 60 * 60 * 1000) {
@@ -192,7 +245,7 @@ export function matchTravelOrderToGpsTrip(
     }
   }
 
-  // Second pass: find the TO with closest scheduled departure to GPS departure
+  // Fourth pass: find the TO with closest scheduled departure to GPS departure
   if (gpsDepMs !== null) {
     let bestMatch: TravelOrderWithTimes | null = null;
     let bestDiff = Infinity;
@@ -213,6 +266,29 @@ export function matchTravelOrderToGpsTrip(
 
   // Fallback: return the first candidate
   return candidates[0];
+}
+
+/**
+ * Calculate haversine distance in meters between two coordinate strings.
+ */
+export function haversineDistance(coord1: string | null, coord2: string | null): number {
+  if (!coord1 || !coord2) return Infinity;
+  const match1 = String(coord1).trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  const match2 = String(coord2).trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  if (!match1 || !match2) return Infinity;
+
+  const lat1 = Number(match1[1]);
+  const lon1 = Number(match1[2]);
+  const lat2 = Number(match2[1]);
+  const lon2 = Number(match2[2]);
+
+  const R = 6371e3; // Earth radius in meters
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 /**
@@ -242,11 +318,13 @@ export async function saveGpsTripLog(logData: GpsLogInsertData): Promise<{ id: s
     `INSERT INTO gps_trip_logs
        (gps_record_no, trip_date, vehicle_id, driver_id,
         origin_gps_start_point, destination_gps_end_point,
+        coordinates_origin, coordinates_destination,
         actual_route_road_taken, departure_time_gps, arrival_time_gps,
         gps_distance_km, engine_hours, max_speed_kph,
         trip_status_gps, travel_order_id, to_status_auto,
-        anomaly_flag, notes_remarks)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        anomaly_flag, notes_remarks,
+        destination_verified, trip_type, parent_trip_id, location_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
      ON CONFLICT (gps_record_no) DO UPDATE SET
         gps_distance_km     = EXCLUDED.gps_distance_km,
         max_speed_kph       = EXCLUDED.max_speed_kph,
@@ -254,7 +332,13 @@ export async function saveGpsTripLog(logData: GpsLogInsertData): Promise<{ id: s
         arrival_time_gps    = EXCLUDED.arrival_time_gps,
         trip_status_gps     = EXCLUDED.trip_status_gps,
         anomaly_flag        = EXCLUDED.anomaly_flag,
-        notes_remarks       = EXCLUDED.notes_remarks
+        notes_remarks       = EXCLUDED.notes_remarks,
+        destination_verified = COALESCE(EXCLUDED.destination_verified, gps_trip_logs.destination_verified),
+        trip_type           = COALESCE(EXCLUDED.trip_type, gps_trip_logs.trip_type),
+        parent_trip_id      = COALESCE(EXCLUDED.parent_trip_id, gps_trip_logs.parent_trip_id),
+        location_name       = COALESCE(EXCLUDED.location_name, gps_trip_logs.location_name),
+        coordinates_origin  = COALESCE(EXCLUDED.coordinates_origin, gps_trip_logs.coordinates_origin),
+        coordinates_destination = COALESCE(EXCLUDED.coordinates_destination, gps_trip_logs.coordinates_destination)
      RETURNING id`,
     [
       logData.gpsRecordNo,
@@ -263,6 +347,8 @@ export async function saveGpsTripLog(logData: GpsLogInsertData): Promise<{ id: s
       logData.driverId,
       logData.originGpsStartPoint,
       logData.destinationGpsEndPoint,
+      logData.coordinatesOrigin ?? null,
+      logData.coordinatesDestination ?? null,
       logData.actualRouteRoadTaken,
       logData.departureTimeGps,
       logData.arrivalTimeGps,
@@ -274,6 +360,10 @@ export async function saveGpsTripLog(logData: GpsLogInsertData): Promise<{ id: s
       logData.toStatusAuto,
       logData.anomalyFlag,
       logData.notesRemarks,
+      logData.destinationVerified ?? false,
+      logData.tripType ?? 'OUTBOUND',
+      logData.parentTripId ?? null,
+      logData.locationName ?? null,
     ],
   );
   return result.rows[0];
@@ -287,12 +377,19 @@ export async function updateGpsTripLog(
   updates: {
     arrivalTimeGps?: string | null;
     destinationGpsEndPoint?: string;
+    coordinatesDestination?: string;
     gpsDistanceKm?: number;
     engineHours?: number;
     maxSpeedKph?: number;
     tripStatusGps?: string;
     anomalyFlag?: boolean;
     notesRemarks?: string | null;
+    destinationVerified?: boolean;
+    tripType?: 'OUTBOUND' | 'RETURN';
+    parentTripId?: string | null;
+    locationName?: string | null;
+    travelOrderId?: string | null;
+    travelOrderNo?: string | null;
   },
 ): Promise<void> {
   const pool = getPool();
@@ -307,6 +404,10 @@ export async function updateGpsTripLog(
   if (updates.destinationGpsEndPoint !== undefined) {
     setClauses.push(`destination_gps_end_point = $${idx++}`);
     values.push(updates.destinationGpsEndPoint);
+  }
+  if (updates.coordinatesDestination !== undefined) {
+    setClauses.push(`coordinates_destination = $${idx++}`);
+    values.push(updates.coordinatesDestination);
   }
   if (updates.gpsDistanceKm !== undefined) {
     setClauses.push(`gps_distance_km = $${idx++}`);
@@ -331,6 +432,30 @@ export async function updateGpsTripLog(
   if (updates.notesRemarks !== undefined) {
     setClauses.push(`notes_remarks = $${idx++}`);
     values.push(updates.notesRemarks);
+  }
+  if (updates.destinationVerified !== undefined) {
+    setClauses.push(`destination_verified = $${idx++}`);
+    values.push(updates.destinationVerified);
+  }
+  if (updates.tripType !== undefined) {
+    setClauses.push(`trip_type = $${idx++}`);
+    values.push(updates.tripType);
+  }
+  if (updates.parentTripId !== undefined) {
+    setClauses.push(`parent_trip_id = $${idx++}`);
+    values.push(updates.parentTripId);
+  }
+  if (updates.locationName !== undefined) {
+    setClauses.push(`location_name = $${idx++}`);
+    values.push(updates.locationName);
+  }
+  if (updates.travelOrderId !== undefined) {
+    setClauses.push(`travel_order_id = $${idx++}`);
+    values.push(updates.travelOrderId);
+  }
+  if (updates.travelOrderNo !== undefined) {
+    setClauses.push(`travel_order_no = $${idx++}`);
+    values.push(updates.travelOrderNo);
   }
 
   if (setClauses.length === 0) return;
@@ -385,6 +510,8 @@ export interface TripLogRecord {
   tripDate: string;
   originGpsStartPoint: string;
   destinationGpsEndPoint: string;
+  coordinatesOrigin?: string | null;
+  coordinatesDestination?: string | null;
   actualRouteRoadTaken: string;
   departureTimeGps: string | null;
   arrivalTimeGps: string | null;
@@ -481,7 +608,7 @@ export async function persistGpsTripLogs(
       const anomalyFlag = tripLog.anomalyFlag || unauthorizedMovement || noDriverAssigned;
 
       const anomalyNotes: string[] = [];
-      if (unauthorizedMovement) anomalyNotes.push('No travel order linked to this trip');
+      if (unauthorizedMovement && !tripLog.toNumber) anomalyNotes.push('No travel order linked to this trip');
       if (noDriverAssigned) anomalyNotes.push('No driver assigned to this vehicle');
       if (tripLog.anomalyFlag && tripLog.anomalyFlag === true) {
         if (tripLog.maxSpeedKph > 120) anomalyNotes.push('Speeding detected');
@@ -491,7 +618,7 @@ export async function persistGpsTripLogs(
 
       // ── Ongoing Trip Tracking ─────────────────────────────
       // One row per trip: START creates the row, ONGOING updates it, END finalizes it.
-      const ongoingTrip = await findOngoingTripLog(vehicleId);
+      const ongoingTrip = await findOngoingTripLogSync(vehicleId);
       const hasDeparture = Boolean(tripLog.departureTimeGps);
       const hasArrival = Boolean(tripLog.arrivalTimeGps);
 
@@ -541,6 +668,8 @@ export async function persistGpsTripLogs(
         driverId: resolvedDriverId,
         originGpsStartPoint: tripLog.originGpsStartPoint || '',
         destinationGpsEndPoint: tripLog.destinationGpsEndPoint || '',
+        coordinatesOrigin: tripLog.coordinatesOrigin || null,
+        coordinatesDestination: tripLog.coordinatesDestination || null,
         actualRouteRoadTaken: tripLog.actualRouteRoadTaken || '',
         departureTimeGps: tripLog.departureTimeGps || null,
         arrivalTimeGps: tripLog.arrivalTimeGps || null,
@@ -552,6 +681,10 @@ export async function persistGpsTripLogs(
         toStatusAuto,
         anomalyFlag,
         notesRemarks,
+        destinationVerified: false,
+        tripType: 'OUTBOUND',
+        parentTripId: null,
+        locationName: null,
       });
 
       saved += 1;
@@ -562,4 +695,23 @@ export async function persistGpsTripLogs(
   }
 
   return { saved, failed };
+}
+
+/**
+ * Synchronous version of findOngoingTripLog for use within persistGpsTripLogs
+ * to avoid await-in-loop issues.
+ */
+async function findOngoingTripLogSync(vehicleId: string): Promise<{ id: string } | null> {
+  const pool = getPool();
+  const result = await pool.query<{ id: string }>(
+    `SELECT id
+       FROM gps_trip_logs
+      WHERE vehicle_id = $1
+        AND arrival_time_gps IS NULL
+        AND departure_time_gps IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [vehicleId],
+  );
+  return result.rows[0] ?? null;
 }

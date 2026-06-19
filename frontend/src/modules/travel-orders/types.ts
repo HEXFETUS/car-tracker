@@ -13,4 +13,8 @@ export interface TravelOrder {
   remarks?: string;
   imageAttachment: string | null;
   status: 'pending' | 'for_approval' | 'approved' | 'rejected';
+  /** Lat/Lng for origin (lat,lng format) */
+  latLongOrigin?: string | null;
+  /** Lat/Lng for destination (lat,lng format) */
+  latLongDestination?: string | null;
 }

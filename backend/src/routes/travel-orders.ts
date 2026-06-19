@@ -26,6 +26,9 @@ interface TravelOrderRow {
   notes?: string | null;
   // Migration 013: who approved/rejected
   approved_by?: string | null;
+  // Migration 016: lat/long coordinates
+  lat_long_origin?: string | null;
+  lat_long_destination?: string | null;
   // Joined columns
   plate_number?: string;
   driver_name?: string;
@@ -57,6 +60,8 @@ interface TravelOrderResponse {
   approvedByName: string | null;
   createdAt: string;
   updatedAt: string;
+  latLongOrigin?: string | null;
+  latLongDestination?: string | null;
 }
 
 // GET /api/travel-orders/pending — Fetch PENDING orders where vehicle_id AND driver_id are NULL
@@ -339,6 +344,26 @@ router.get('/', async (_req: Request, res: Response) => {
   }
 });
 
+// GET /api/travel-orders/next-number — Get the next available TO number for the current year
+router.get('/next-number', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const year = new Date().getFullYear();
+    // Find the highest sequence number for TO numbers in the current year
+    const result = await pool.query<{ max_seq: number | null }>(
+      `SELECT MAX(CAST(SPLIT_PART(to_number, '-', 3) AS INTEGER)) AS max_seq
+       FROM travel_orders
+       WHERE to_number LIKE $1`,
+      [`TO-${year}-%`],
+    );
+    const nextSeq = (result.rows[0]?.max_seq ?? 0) + 1;
+    res.json({ success: true, data: nextSeq, message: 'Next TO number retrieved' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/next-number error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
 // GET /api/travel-orders/:id
 router.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -373,6 +398,7 @@ router.post('/', async (req: Request, res: Response) => {
     scheduledDepartureAt, scheduledArrivalAt, purpose, notes,
     department, travelerName, requestVehicle, requestDriver,
     toNumber,
+    latLongOrigin, latLongDestination,
   } = req.body;
 
   if (!destinationLocation) {
@@ -399,8 +425,9 @@ router.post('/', async (req: Request, res: Response) => {
       INSERT INTO travel_orders
         (to_number, vehicle_id, driver_id, origin_location, destination_target,
          scheduled_departure, scheduled_arrival, purpose_of_travel, notes,
-         department, traveler_name, request_vehicle, request_driver)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         department, traveler_name, request_vehicle, request_driver,
+         lat_long_origin, lat_long_destination)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `, [
       toNumber,
@@ -409,6 +436,7 @@ router.post('/', async (req: Request, res: Response) => {
       purpose || '', notes || '',
       department || '', travelerName || '',
       requestVehicle ?? false, requestDriver ?? false,
+      latLongOrigin || null, latLongDestination || null,
     ]);
 
     res.status(201).json({
@@ -457,6 +485,8 @@ router.patch('/:id', async (req: Request, res: Response) => {
     travelerName: 'traveler_name',
     requestVehicle: 'request_vehicle',
     requestDriver: 'request_driver',
+    latLongOrigin: 'lat_long_origin',
+    latLongDestination: 'lat_long_destination',
   };
   const allowedFields = Object.keys(fieldMap);
   const updates: string[] = [];
@@ -519,6 +549,8 @@ function mapRow(row: TravelOrderRow): TravelOrderResponse {
     approvedByName: row.approver_name ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    latLongOrigin: row.lat_long_origin ?? null,
+    latLongDestination: row.lat_long_destination ?? null,
   };
 }
 

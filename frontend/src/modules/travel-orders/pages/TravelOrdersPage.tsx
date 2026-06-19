@@ -87,6 +87,8 @@ export function TravelOrdersPage() {
         travelerName: order.travelerName,
         requestVehicle: order.requestVehicle,
         requestDriver: order.requestDriver,
+        latLongOrigin: order.latLongOrigin,
+        latLongDestination: order.latLongDestination,
       });
       toast('Travel order created!', 'success');
       setIsModalOpen(false);

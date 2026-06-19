@@ -1,6 +1,14 @@
 import type { ApiResponse } from '@car-tracker/shared';
 import { API_BASE } from '@/shared/api';
 
+/** Fetch the next available TO sequence number for the current year. */
+export async function fetchNextToNumber(): Promise<number> {
+  const res = await fetch(`${API_BASE}/api/travel-orders/next-number`);
+  const body: ApiResponse<number> = await res.json();
+  if (!body.success) throw new Error(body.error ?? 'Failed to fetch next TO number');
+  return body.data;
+}
+
 /** Shape returned by the /api/travel-orders endpoint. */
 export interface TravelOrderData {
   id: string;
@@ -121,6 +129,8 @@ export async function createTravelOrder(
     travelerName?: string;
     requestVehicle?: boolean;
     requestDriver?: boolean;
+    latLongOrigin?: string | null;
+    latLongDestination?: string | null;
   },
 ): Promise<TravelOrderData> {
   const res = await fetch(`${API_BASE}/api/travel-orders`, {
