@@ -51,6 +51,7 @@ export interface FetchAlertsParams {
   pageSize?: number;
   vehicleId?: string;
   alertType?: string;
+  alertDate?: string;
 }
 
 export interface GpsAlertsResult {
@@ -80,6 +81,10 @@ export async function fetchGpsAlerts(params: FetchAlertsParams = {}): Promise<Gp
   if (params.alertType) {
     conditions.push(`alert_type = $${values.length + 1}`);
     values.push(params.alertType);
+  }
+  if (params.alertDate) {
+    conditions.push(`DATE(created_at) = $${values.length + 1}`);
+    values.push(params.alertDate);
   }
 
   const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';

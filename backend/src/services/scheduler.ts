@@ -10,6 +10,7 @@
 
 import { syncFleetAndAlert } from '@car-tracker/tracker';
 import { findVehicleByPlate, persistGpsTripLogs } from './gpsLogService.js';
+import { insertTelemetry, telemetryExists } from './gpsTelemetryService.js';
 import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
 
 // ── Scheduler State ────────────────────────────────────────────
@@ -187,6 +188,64 @@ async function runCycle(): Promise<void> {
     // GPS log persistence from scheduler is disabled.
     // See trackingHistorySyncService.ts for the proper sync flow.
 
+    // ── GPS Telemetry Persistence ──────────────────────────────
+    // Save raw telemetry snapshots for each vehicle to the
+    // gps_telemetry table. This provides a historical record of
+    // vehicle location, speed, fuel, and ignition state over time.
+    // Uses deduplication to skip records with identical key fields.
+    let telemetrySaved = 0;
+    let telemetrySkipped = 0;
+    const vehicles = result.data as unknown as Array<Record<string, unknown>> | undefined;
+    if (vehicles && vehicles.length > 0) {
+      for (const vehicle of vehicles) {
+        try {
+          const ign = Boolean(vehicle.ignition);
+          const spd = Number(vehicle.speed || 0);
+          const eventType = ign
+            ? (spd > 0 ? 'LOCATION_UPDATE' : 'IDLING')
+            : 'IGNITION_OFF';
+          const coords = vehicle.coordinates as { latitude?: number; longitude?: number } | null | undefined;
+          const recordedAt = new Date().toISOString();
+          const fuelLiters = Number(vehicle.fuel_liters) || null;
+          const locationName = String(vehicle.location ?? '') || null;
+
+          // Deduplication: skip if identical record already exists
+          const exists = await telemetryExists(
+            String(vehicle.id ?? ''),
+            recordedAt,
+            eventType,
+            spd,
+            fuelLiters,
+            ign,
+            locationName,
+          );
+
+          if (exists) {
+            telemetrySkipped += 1;
+            continue;
+          }
+
+          await insertTelemetry({
+            vehicleId: String(vehicle.id ?? ''),
+            plateNumber: String(vehicle.name ?? '').split(' (')[0],
+            eventType,
+            latitude: coords?.latitude ?? null,
+            longitude: coords?.longitude ?? null,
+            speedKmh: spd,
+            fuelLiters,
+            ignition: ign,
+            locationName,
+            driverName: null,
+            toNumber: String(vehicle.to_number ?? '') || null,
+            recordedAt,
+          });
+          telemetrySaved += 1;
+        } catch (err) {
+          console.error(`[scheduler] Failed to save telemetry for ${String(vehicle.id)}:`, (err as Error).message);
+        }
+      }
+    }
+
     const duration = (Date.now() - cycleStart) / 1000;
     state.lastRunDuration = duration;
     state.lastRunAt = new Date().toISOString();
@@ -200,6 +259,8 @@ async function runCycle(): Promise<void> {
       `alerts_persisted=${result.alerts.persisted}`,
       `gps_logs_saved=${gpsLogsSaved}`,
       `gps_logs_failed=${gpsLogsFailed}`,
+      `telemetry_saved=${telemetrySaved}`,
+      `telemetry_skipped=${telemetrySkipped}`,
       `duration=${duration.toFixed(2)}s`,
     ].join(', ');
 

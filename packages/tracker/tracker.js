@@ -595,7 +595,12 @@ export function getTravelOrderNumber(vehicle) {
 }
 
 export function getDriver(vehicle) {
-  return firstKey(vehicle, ['driver', 'driver_name', 'driverName', 'assigned_driver', 'assignedDriver']);
+  const raw = firstKey(vehicle, ['driver', 'driver_name', 'driverName', 'assigned_driver', 'assignedDriver']);
+  // Cartrack sometimes returns driver as an object { name: "..." } instead of a plain string
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw.name || raw.full_name || raw.display_name || raw.label || JSON.stringify(raw);
+  }
+  return raw ? String(raw) : null;
 }
 
 // ── Vehicle Status Builder ────────────────────────────────────

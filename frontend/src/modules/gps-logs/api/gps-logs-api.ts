@@ -228,12 +228,14 @@ export async function fetchGpsAlerts(params: {
   pageSize?: number;
   vehicleId?: string;
   alertType?: string;
+  alertDate?: string;
 } = {}): Promise<GpsAlertsResult> {
   const qs = new URLSearchParams();
   if (params.page) qs.set('page', String(params.page));
   if (params.pageSize) qs.set('pageSize', String(params.pageSize));
   if (params.vehicleId) qs.set('vehicleId', params.vehicleId);
   if (params.alertType) qs.set('alertType', params.alertType);
+  if (params.alertDate) qs.set('alertDate', params.alertDate);
 
   const url = `${API_BASE}/alerts?${qs.toString()}`;
   const res = await fetch(url);
@@ -276,6 +278,31 @@ export interface VehicleSyncResult {
   vehiclePlate?: string;
 }
 
+export interface TelemetryRow {
+  id: string;
+  vehicleId: string;
+  plateNumber: string;
+  eventType: string;
+  latitude: number | null;
+  longitude: number | null;
+  speedKmh: number;
+  fuelLiters: number | null;
+  ignition: boolean;
+  locationName: string | null;
+  driverName: string | null;
+  toNumber: string | null;
+  recordedAt: string;
+  createdAt: string;
+}
+
+export interface TelemetryResult {
+  success: boolean;
+  data: TelemetryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface TrackingHistorySyncResponse {
   success: boolean;
   data: {
@@ -292,6 +319,30 @@ export interface TrackingHistorySyncResponse {
   elapsed_seconds: number;
 }
 
+export async function fetchTelemetry(params: {
+  page?: number;
+  pageSize?: number;
+  vehicleId?: string;
+  plateNumber?: string;
+  eventType?: string;
+  dateFrom?: string;
+  dateTo?: string;
+} = {}): Promise<TelemetryResult> {
+  const qs = new URLSearchParams();
+  if (params.page) qs.set('page', String(params.page));
+  if (params.pageSize) qs.set('pageSize', String(params.pageSize));
+  if (params.vehicleId) qs.set('vehicleId', params.vehicleId);
+  if (params.plateNumber) qs.set('plateNumber', params.plateNumber);
+  if (params.eventType) qs.set('eventType', params.eventType);
+  if (params.dateFrom) qs.set('dateFrom', params.dateFrom);
+  if (params.dateTo) qs.set('dateTo', params.dateTo);
+
+  const url = `${API_BASE}/telemetry?${qs.toString()}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed to fetch telemetry');
+  return res.json();
+}
+
 export async function syncTrackingHistory(payload: AdminSyncPayload): Promise<TrackingHistorySyncResponse> {
   const res = await fetch('/api/admin/sync-tracking-history', {
     method: 'POST',
@@ -299,5 +350,88 @@ export async function syncTrackingHistory(payload: AdminSyncPayload): Promise<Tr
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Tracking history sync failed');
+  return res.json();
+}
+
+export interface TravelReportRow {
+  id: string;
+  toNumber: string;
+  driverName: string;
+  vehiclePlate: string;
+  travelHours: string;
+  from: string;
+  to: string;
+  tripDate: string;
+  departureTime: string | null;
+  arrivalTime: string | null;
+}
+
+export interface TravelReportsResult {
+  success: boolean;
+  data: TravelReportRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  message?: string;
+}
+
+export async function fetchTravelReports(params: {
+  vehicleId?: string;
+  tripDate?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<TravelReportsResult> {
+  const qs = new URLSearchParams();
+  if (params.vehicleId) qs.set('vehicleId', params.vehicleId);
+  if (params.tripDate) qs.set('tripDate', params.tripDate);
+  qs.set('page', String(params.page || 1));
+  qs.set('pageSize', String(params.pageSize || 20));
+
+  const res = await fetch(`/api/gps-logs/reports?${qs.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch travel reports');
+  return res.json();
+}
+
+export interface OrderStatusRow {
+  id: string;
+  toNumber: string;
+  travelDate: string;
+  driverName: string;
+  vehiclePlate: string;
+  vehicleId: string;
+  origin: string;
+  destination: string;
+  toStatus: string;
+  lastLocation: string;
+  lastUpdate: string;
+  speed: number;
+  fuel: number | null;
+  ignition: boolean;
+  eventType: string;
+}
+
+export interface OrderStatusResult {
+  success: boolean;
+  data: OrderStatusRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  message?: string;
+}
+
+export async function fetchOrderStatus(params: {
+  vehicleId?: string;
+  tripDate?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<OrderStatusResult> {
+  const qs = new URLSearchParams();
+  if (params.vehicleId) qs.set('vehicleId', params.vehicleId);
+  if (params.tripDate) qs.set('tripDate', params.tripDate);
+  qs.set('page', String(params.page || 1));
+  qs.set('pageSize', String(params.pageSize || 20));
+
+  const res = await fetch(`/api/gps-logs/order-status?${qs.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch order status');
   return res.json();
 }

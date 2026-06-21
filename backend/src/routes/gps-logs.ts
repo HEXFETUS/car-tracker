@@ -15,6 +15,7 @@ import {
   type TravelOrderWithTimes,
 } from '../services/gpsLogService.js';
 import { fetchGpsAlerts, getVehiclePlate } from '../services/gpsAlertService.js';
+import { fetchTelemetry } from '../services/gpsTelemetryService.js';
 import {
   resolveCartrackUnitId,
   fetchCartrackVehicleHistory,
@@ -56,9 +57,11 @@ interface GpsLogRow {
   plate_number?: string;
   driver_full_name?: string;
   travel_order_to_number?: string | null;
+  to_origin?: string | null;
+  to_destination?: string | null;
 }
 
-// GET /api/gps-logs — List all with LEFT JOINs for enrichment
+// GET /api/gps-logs — List telemetry data with LEFT JOINs for enrichment
 router.get('/', async (req: Request, res: Response) => {
   try {
     const pool = getPool();
@@ -70,54 +73,73 @@ router.get('/', async (req: Request, res: Response) => {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
-    // Always filter: only show logs where the car was turned on (has departure time)
-    conditions.push('g.departure_time_gps IS NOT NULL');
-
     if (req.query.vehicleId) {
-      conditions.push(`g.vehicle_id = $${params.length + 1}`);
+      conditions.push(`t.vehicle_id = $${params.length + 1}`);
       params.push(req.query.vehicleId);
     }
-    if (req.query.driverId) {
-      conditions.push(`g.driver_id = $${params.length + 1}`);
-      params.push(req.query.driverId);
-    }
     if (req.query.tripDate) {
-      conditions.push(`g.trip_date = $${params.length + 1}`);
+      conditions.push(`DATE(t.recorded_at) = $${params.length + 1}`);
       params.push(req.query.tripDate);
     }
-    if (req.query.anomalyFlag !== undefined) {
-      conditions.push(`g.anomaly_flag = $${params.length + 1}`);
-      params.push(req.query.anomalyFlag === 'true');
+    if (req.query.eventType) {
+      conditions.push(`t.event_type = $${params.length + 1}`);
+      params.push(req.query.eventType);
     }
 
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     // Count total matching rows
     const countResult = await pool.query<{ total: string }>(
-      `SELECT COUNT(*) AS total FROM gps_trip_logs g ${whereClause}`,
+      `SELECT COUNT(*) AS total FROM gps_telemetry t ${whereClause}`,
       params,
     );
     const total = parseInt(countResult.rows[0]?.total || '0', 10);
 
     // Fetch paginated data with joins
     const dataParams = [...params, pageSize, offset];
-    const dataResult = await pool.query<GpsLogRow>(
+    const dataResult = await pool.query(
       `SELECT
-        g.*,
-        v.plate_number,
-        d.full_name AS driver_full_name,
-        t_o.to_number AS travel_order_to_number
-      FROM gps_trip_logs g
-      LEFT JOIN vehicles      v   ON v.id = g.vehicle_id
-      LEFT JOIN drivers       d   ON d.id = g.driver_id
-      LEFT JOIN travel_orders t_o ON t_o.id = g.travel_order_id
+        t.*,
+        v.plate_number
+      FROM gps_telemetry t
+      LEFT JOIN vehicles v ON v.id = t.vehicle_id
       ${whereClause}
-      ORDER BY g.created_at DESC
+      ORDER BY t.recorded_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       dataParams,
     );
 
-    const data = dataResult.rows.map(mapRow);
+    const data = dataResult.rows.map((row) => ({
+      id: row.id,
+      gpsRecordNo: 'TEL-' + row.id.slice(0, 8),
+      tripDate: new Date(row.recorded_at).toISOString().split('T')[0],
+      vehicleId: row.vehicle_id,
+      driverId: null,
+      originGpsStartPoint: row.location_name || 'N/A',
+      destinationGpsEndPoint: 'N/A',
+      coordinatesOrigin: null,
+      coordinatesDestination: null,
+      actualRouteRoadTaken: null,
+      departureTimeGps: row.recorded_at,
+      arrivalTimeGps: null,
+      gpsDistanceKm: 0,
+      engineHours: 0,
+      maxSpeedKph: row.speed_kmh,
+      tripStatusGps: row.ignition ? 'en-route' : 'arrived',
+      travelOrderId: null,
+      toStatusAuto: null,
+      anomalyFlag: false,
+      notesRemarks: row.event_type,
+      destinationVerified: false,
+      tripType: 'telemetry',
+      parentTripId: null,
+      locationName: row.location_name,
+      vehiclePlateNo: row.plate_number || 'Unknown',
+      driverName: 'Unknown',
+      toNumber: null,
+      createdAt: row.created_at,
+      updatedAt: row.created_at,
+    }));
 
     const response = {
       success: true,
@@ -125,12 +147,14 @@ router.get('/', async (req: Request, res: Response) => {
       total,
       page,
       pageSize,
-      message: 'GPS logs retrieved successfully',
+      message: 'GPS telemetry retrieved successfully',
     };
     res.json(response);
   } catch (error) {
-    console.error('GET /api/gps-logs error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
+    const err = error as Error;
+    console.error('GET /api/gps-logs error:', err.message);
+    console.error('Stack:', err.stack);
+    res.status(500).json({ success: false, data: null, error: err.message });
   }
 });
 
@@ -431,8 +455,9 @@ router.get('/alerts', async (req: Request, res: Response) => {
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
     const vehicleId = req.query.vehicleId as string | undefined;
     const alertType = req.query.alertType as string | undefined;
+    const alertDate = req.query.alertDate as string | undefined;
 
-    const result = await fetchGpsAlerts({ page, pageSize, vehicleId, alertType });
+    const result = await fetchGpsAlerts({ page, pageSize, vehicleId, alertType, alertDate });
 
     // Enrich with plate numbers
     const enriched = await Promise.all(
@@ -452,6 +477,220 @@ router.get('/alerts', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('GET /api/gps-logs/alerts error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// GET /api/gps-logs/order-status — Travel orders with latest telemetry
+router.get('/order-status', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+    const offset = (page - 1) * pageSize;
+    const vehicleId = req.query.vehicleId as string | undefined;
+    const tripDate = req.query.tripDate as string | undefined;
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (vehicleId) {
+      conditions.push(`t.vehicle_id = $${params.length + 1}`);
+      params.push(vehicleId);
+    }
+    if (tripDate) {
+      conditions.push(`t.travel_date = $${params.length + 1}`);
+      params.push(tripDate);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    // Count total
+    const countResult = await pool.query<{ total: string }>(
+      `SELECT COUNT(*) AS total FROM travel_orders t ${whereClause}`,
+      params,
+    );
+    const total = parseInt(countResult.rows[0]?.total || '0', 10);
+
+    // Fetch travel orders with latest telemetry
+    const dataParams = [...params, pageSize, offset];
+    const dataResult = await pool.query(
+      `SELECT
+        t.id,
+        t.to_number,
+        t.travel_date,
+        t.origin,
+        t.destination,
+        t.status as to_status,
+        v.id as vehicle_id,
+        v.plate_number,
+        d.id as driver_id,
+        d.full_name as driver_name,
+        tel.id as telemetry_id,
+        tel.event_type as telemetry_event,
+        tel.latitude as telemetry_lat,
+        tel.longitude as telemetry_lng,
+        tel.speed_kmh as telemetry_speed,
+        tel.fuel_liters as telemetry_fuel,
+        tel.ignition as telemetry_ignition,
+        tel.location_name as telemetry_location,
+        tel.recorded_at as telemetry_time
+      FROM travel_orders t
+      LEFT JOIN vehicles v ON v.id = t.vehicle_id
+      LEFT JOIN drivers d ON d.id = t.driver_id
+      LEFT JOIN LATERAL (
+        SELECT * FROM gps_telemetry 
+        WHERE vehicle_id = t.vehicle_id 
+        ORDER BY recorded_at DESC 
+        LIMIT 1
+      ) tel ON true
+      ${whereClause}
+      ORDER BY t.travel_date DESC, t.created_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      dataParams,
+    );
+
+    const data = dataResult.rows.map((row) => ({
+      id: row.id,
+      toNumber: row.to_number || 'N/A',
+      travelDate: row.travel_date,
+      driverName: row.driver_name || 'Unassigned',
+      vehiclePlate: row.plate_number || 'Unknown',
+      vehicleId: row.vehicle_id,
+      origin: row.origin || 'N/A',
+      destination: row.destination || 'N/A',
+      toStatus: row.to_status || 'N/A',
+      // Latest telemetry
+      lastLocation: row.telemetry_location || 'No location data',
+      lastUpdate: row.telemetry_time ? new Date(row.telemetry_time).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }) : 'N/A',
+      speed: row.telemetry_speed ?? 0,
+      fuel: row.telemetry_fuel,
+      ignition: row.telemetry_ignition ?? false,
+      eventType: row.telemetry_event || 'N/A',
+    }));
+
+    res.json({
+      success: true,
+      data,
+      total,
+      page,
+      pageSize,
+      message: 'Travel order status retrieved successfully',
+    });
+  } catch (error) {
+    console.error('GET /api/gps-logs/order-status error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+// GET /api/gps-logs/reports — Travel reports with TO, Driver, Vehicle, Travel Hours
+router.get('/reports', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+    const offset = (page - 1) * pageSize;
+    const vehicleId = req.query.vehicleId as string | undefined;
+    const tripDate = req.query.tripDate as string | undefined;
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (vehicleId) {
+      conditions.push(`g.vehicle_id = $${params.length + 1}`);
+      params.push(vehicleId);
+    }
+    if (tripDate) {
+      conditions.push(`g.trip_date = $${params.length + 1}`);
+      params.push(tripDate);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    // Count total
+    const countResult = await pool.query<{ total: string }>(
+      `SELECT COUNT(*) AS total FROM gps_trip_logs g ${whereClause}`,
+      params,
+    );
+    const total = parseInt(countResult.rows[0]?.total || '0', 10);
+
+    // Fetch reports with JOINs
+    const dataParams = [...params, pageSize, offset];
+    const dataResult = await pool.query<GpsLogRow>(
+      `SELECT
+        g.*,
+        v.plate_number,
+        d.full_name AS driver_full_name,
+        t_o.to_number AS travel_order_to_number,
+        t_o.origin AS to_origin,
+        t_o.destination AS to_destination
+      FROM gps_trip_logs g
+      LEFT JOIN vehicles v ON v.id = g.vehicle_id
+      LEFT JOIN drivers d ON d.id = g.driver_id
+      LEFT JOIN travel_orders t_o ON t_o.id = g.travel_order_id
+      ${whereClause}
+      ORDER BY g.trip_date DESC, g.created_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      dataParams,
+    );
+
+    const data = dataResult.rows.map((row) => ({
+      id: row.id,
+      toNumber: row.travel_order_to_number || 'N/A',
+      driverName: row.driver_full_name || 'Unknown',
+      vehiclePlate: row.plate_number || 'Unknown',
+      travelHours: row.engine_hours ? Number(row.engine_hours).toFixed(1) : '0.0',
+      from: row.origin_gps_start_point || row.to_origin || 'N/A',
+      to: row.destination_gps_end_point || row.to_destination || 'N/A',
+      tripDate: row.trip_date,
+      departureTime: row.departure_time_gps,
+      arrivalTime: row.arrival_time_gps,
+    }));
+
+    res.json({
+      success: true,
+      data,
+      total,
+      page,
+      pageSize,
+      message: 'Travel reports retrieved successfully',
+    });
+  } catch (error) {
+    const err = error as Error;
+    console.error('GET /api/gps-logs/reports error:', err.message);
+    console.error('Stack:', err.stack);
+    res.status(500).json({ success: false, data: null, error: err.message });
+  }
+});
+
+// GET /api/gps-logs/telemetry — List raw GPS telemetry data
+router.get('/telemetry', async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 50));
+    const vehicleId = req.query.vehicleId as string | undefined;
+    const plateNumber = req.query.plateNumber as string | undefined;
+    const eventType = req.query.eventType as string | undefined;
+    const dateFrom = req.query.dateFrom as string | undefined;
+    const dateTo = req.query.dateTo as string | undefined;
+
+    const result = await fetchTelemetry({ page, pageSize, vehicleId, plateNumber, eventType, dateFrom, dateTo });
+
+    res.json({
+      success: true,
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      message: 'GPS telemetry retrieved successfully',
+    });
+  } catch (error) {
+    console.error('GET /api/gps-logs/telemetry error:', (error as Error).message);
     res.status(500).json({ success: false, data: null, error: 'Database error' });
   }
 });
