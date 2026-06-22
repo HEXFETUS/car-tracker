@@ -36,6 +36,10 @@ export interface TelemetryRow {
   toNumber: string | null;
   recordedAt: string;
   createdAt: string;
+  // Active travel order info
+  activeToNumber?: string | null;
+  activeToStatus?: string | null;
+  activeDriverName?: string | null;
 }
 
 interface TelemetryDbRow {
@@ -53,6 +57,9 @@ interface TelemetryDbRow {
   to_number: string | null;
   recorded_at: string;
   created_at: string;
+  active_to_number: string | null;
+  active_to_status: string | null;
+  active_driver_name: string | null;
 }
 
 /**
@@ -131,6 +138,7 @@ export interface TelemetryResult {
 
 /**
  * Fetch telemetry data with pagination and optional filters.
+ * Includes active travel order and driver information via LEFT JOIN.
  */
 export async function fetchTelemetry(
   params: FetchTelemetryParams = {},
@@ -144,38 +152,53 @@ export async function fetchTelemetry(
   const values: unknown[] = [];
 
   if (params.vehicleId) {
-    conditions.push(`vehicle_id = $${values.length + 1}`);
+    conditions.push(`gt.vehicle_id = $${values.length + 1}`);
     values.push(params.vehicleId);
   }
   if (params.plateNumber) {
-    conditions.push(`plate_number ILIKE $${values.length + 1}`);
+    conditions.push(`gt.plate_number ILIKE $${values.length + 1}`);
     values.push(`%${params.plateNumber}%`);
   }
   if (params.eventType) {
-    conditions.push(`event_type = $${values.length + 1}`);
+    conditions.push(`gt.event_type = $${values.length + 1}`);
     values.push(params.eventType);
   }
   if (params.dateFrom) {
-    conditions.push(`recorded_at >= $${values.length + 1}`);
+    conditions.push(`gt.recorded_at >= $${values.length + 1}`);
     values.push(params.dateFrom);
   }
   if (params.dateTo) {
-    conditions.push(`recorded_at <= $${values.length + 1}`);
+    conditions.push(`gt.recorded_at <= $${values.length + 1}`);
     values.push(params.dateTo + 'T23:59:59.999Z');
   }
 
   const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
   const countResult = await pool.query<{ total: string }>(
-    `SELECT COUNT(*) AS total FROM gps_telemetry ${whereClause}`,
+    `SELECT COUNT(*) AS total FROM gps_telemetry gt ${whereClause}`,
     values,
   );
   const total = parseInt(countResult.rows[0]?.total || '0', 10);
 
   const dataResult = await pool.query<TelemetryDbRow>(
-    `SELECT * FROM gps_telemetry
+    `SELECT 
+      gt.*,
+      to_data.to_number as active_to_number,
+      to_data.status as active_to_status,
+      d.full_name as active_driver_name
+     FROM gps_telemetry gt
+     LEFT JOIN LATERAL (
+       SELECT to_number, status, driver_id
+       FROM travel_orders
+       WHERE vehicle_id = gt.vehicle_id
+       AND status IN ('APPROVED', 'ACTIVE')
+       AND DATE(scheduled_departure) = DATE(gt.recorded_at)
+       ORDER BY created_at DESC
+       LIMIT 1
+     ) to_data ON true
+     LEFT JOIN drivers d ON d.id = to_data.driver_id
      ${whereClause}
-     ORDER BY recorded_at DESC
+     ORDER BY gt.recorded_at DESC
      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
     [...values, pageSize, offset],
   );
@@ -195,6 +218,9 @@ export async function fetchTelemetry(
     toNumber: row.to_number,
     recordedAt: row.recorded_at,
     createdAt: row.created_at,
+    activeToNumber: row.active_to_number ?? null,
+    activeToStatus: row.active_to_status ?? null,
+    activeDriverName: row.active_driver_name ?? null,
   }));
 
   return {

@@ -205,7 +205,12 @@ async function runCycle(): Promise<void> {
             ? (spd > 0 ? 'LOCATION_UPDATE' : 'IDLING')
             : 'IGNITION_OFF';
           const coords = vehicle.coordinates as { latitude?: number; longitude?: number } | null | undefined;
-          const recordedAt = new Date().toISOString();
+          // Round timestamp to sync interval to enable deduplication
+          // This ensures multiple syncs within the same 120s window share the same recordedAt
+          const now = Date.now();
+          const intervalMs = SYNC_INTERVAL_SECONDS * 1000;
+          const rounded = new Date(Math.floor(now / intervalMs) * intervalMs).toISOString();
+          const recordedAt = rounded;
           const fuelLiters = Number(vehicle.fuel_liters) || null;
           const locationName = String(vehicle.location ?? '') || null;
 

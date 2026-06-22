@@ -868,6 +868,16 @@ export function GpsLogsPage() {
   }, [telemetryPage, telemetryPageSize, telemetryVehicleFilter, telemetryEventFilter, telemetryDateFrom, telemetryDateTo, toast]);
 
   useEffect(() => {
+    if (activeTab === 'telemetry') {
+      setTelemetryEventFilter('');
+      setTelemetryVehicleFilter('');
+      setTelemetryDateFrom('');
+      setTelemetryDateTo('');
+      setTelemetryPage(1);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     if (activeTab === 'telemetry') loadTelemetry();
   }, [activeTab, loadTelemetry]);
 
@@ -1177,7 +1187,6 @@ export function GpsLogsPage() {
                     <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Speed</th>
                     <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Fuel</th>
                     <th className="px-4 py-3.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Ignition</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">TO No.</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1200,7 +1209,6 @@ export function GpsLogsPage() {
                           {row.ignition ? 'ON' : 'OFF'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-zinc-600 text-xs font-mono">{row.toNumber || '—'}</td>
                     </tr>
                   ))}
                 </tbody>

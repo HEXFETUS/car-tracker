@@ -293,6 +293,10 @@ export interface TelemetryRow {
   toNumber: string | null;
   recordedAt: string;
   createdAt: string;
+  // Active travel order info
+  activeToNumber?: string | null;
+  activeToStatus?: string | null;
+  activeDriverName?: string | null;
 }
 
 export interface TelemetryResult {

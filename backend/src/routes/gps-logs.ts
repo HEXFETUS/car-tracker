@@ -86,11 +86,23 @@ router.get('/', async (req: Request, res: Response) => {
       params.push(req.query.eventType);
     }
 
+    // Only show vehicles with active/approved travel orders
+    conditions.push(`to_data.to_number IS NOT NULL`);
+
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-    // Count total matching rows
+    // Count total matching rows (must use same JOINs as main query for to_data filter)
     const countResult = await pool.query<{ total: string }>(
-      `SELECT COUNT(*) AS total FROM gps_telemetry t ${whereClause}`,
+      `SELECT COUNT(*) AS total FROM gps_telemetry t
+       LEFT JOIN LATERAL (
+         SELECT to_number FROM travel_orders
+         WHERE vehicle_id = t.vehicle_id
+         AND status IN ('APPROVED', 'ACTIVE')
+         AND DATE(scheduled_departure) = DATE(t.recorded_at)
+         ORDER BY created_at DESC
+         LIMIT 1
+       ) to_data ON true
+       ${whereClause}`,
       params,
     );
     const total = parseInt(countResult.rows[0]?.total || '0', 10);
@@ -100,9 +112,22 @@ router.get('/', async (req: Request, res: Response) => {
     const dataResult = await pool.query(
       `SELECT
         t.*,
-        v.plate_number
+        v.plate_number,
+        to_data.to_number as active_to_number,
+        to_data.status as active_to_status,
+        d.full_name as active_driver_name
       FROM gps_telemetry t
       LEFT JOIN vehicles v ON v.id = t.vehicle_id
+      LEFT JOIN LATERAL (
+        SELECT to_number, status, driver_id
+        FROM travel_orders
+        WHERE vehicle_id = t.vehicle_id
+        AND status IN ('APPROVED', 'ACTIVE')
+        AND DATE(scheduled_departure) = DATE(t.recorded_at)
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) to_data ON true
+      LEFT JOIN drivers d ON d.id = to_data.driver_id
       ${whereClause}
       ORDER BY t.recorded_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -127,7 +152,7 @@ router.get('/', async (req: Request, res: Response) => {
       maxSpeedKph: row.speed_kmh,
       tripStatusGps: row.ignition ? 'en-route' : 'arrived',
       travelOrderId: null,
-      toStatusAuto: null,
+      toStatusAuto: row.active_to_status || null,
       anomalyFlag: false,
       notesRemarks: row.event_type,
       destinationVerified: false,
@@ -135,8 +160,8 @@ router.get('/', async (req: Request, res: Response) => {
       parentTripId: null,
       locationName: row.location_name,
       vehiclePlateNo: row.plate_number || 'Unknown',
-      driverName: 'Unknown',
-      toNumber: null,
+      driverName: row.active_driver_name || 'Unknown',
+      toNumber: row.active_to_number || null,
       createdAt: row.created_at,
       updatedAt: row.created_at,
     }));
@@ -499,7 +524,7 @@ router.get('/order-status', async (req: Request, res: Response) => {
       params.push(vehicleId);
     }
     if (tripDate) {
-      conditions.push(`t.travel_date = $${params.length + 1}`);
+      conditions.push(`DATE(t.scheduled_departure) = $${params.length + 1}`);
       params.push(tripDate);
     }
 
@@ -518,7 +543,7 @@ router.get('/order-status', async (req: Request, res: Response) => {
       `SELECT
         t.id,
         t.to_number,
-        t.travel_date,
+        DATE(t.scheduled_departure) as travel_date,
         t.origin,
         t.destination,
         t.status as to_status,
@@ -545,7 +570,7 @@ router.get('/order-status', async (req: Request, res: Response) => {
         LIMIT 1
       ) tel ON true
       ${whereClause}
-      ORDER BY t.travel_date DESC, t.created_at DESC
+      ORDER BY t.scheduled_departure DESC, t.created_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       dataParams,
     );
