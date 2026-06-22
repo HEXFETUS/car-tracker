@@ -544,8 +544,8 @@ router.get('/order-status', async (req: Request, res: Response) => {
         t.id,
         t.to_number,
         DATE(t.scheduled_departure) as travel_date,
-        t.origin,
-        t.destination,
+        t.origin_location as origin,
+        t.destination_target as destination,
         t.status as to_status,
         v.id as vehicle_id,
         v.plate_number,
@@ -559,7 +559,8 @@ router.get('/order-status', async (req: Request, res: Response) => {
         tel.fuel_liters as telemetry_fuel,
         tel.ignition as telemetry_ignition,
         tel.location_name as telemetry_location,
-        tel.recorded_at as telemetry_time
+        tel.recorded_at as telemetry_time,
+        (SELECT COALESCE(SUM(engine_hours), 0) FROM gps_trip_logs WHERE travel_order_id = t.id) as total_hours
       FROM travel_orders t
       LEFT JOIN vehicles v ON v.id = t.vehicle_id
       LEFT JOIN drivers d ON d.id = t.driver_id
@@ -597,6 +598,7 @@ router.get('/order-status', async (req: Request, res: Response) => {
       fuel: row.telemetry_fuel,
       ignition: row.telemetry_ignition ?? false,
       eventType: row.telemetry_event || 'N/A',
+      totalHours: Number(row.total_hours) || 0,
     }));
 
     res.json({
@@ -652,8 +654,8 @@ router.get('/reports', async (req: Request, res: Response) => {
         v.plate_number,
         d.full_name AS driver_full_name,
         t_o.to_number AS travel_order_to_number,
-        t_o.origin AS to_origin,
-        t_o.destination AS to_destination
+        t_o.origin_location AS to_origin,
+        t_o.destination_target AS to_destination
       FROM gps_trip_logs g
       LEFT JOIN vehicles v ON v.id = g.vehicle_id
       LEFT JOIN drivers d ON d.id = g.driver_id

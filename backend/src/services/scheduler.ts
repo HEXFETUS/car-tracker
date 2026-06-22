@@ -8,9 +8,9 @@
 //
 // The interval can be changed at runtime via updateInterval().
 
-import { syncFleetAndAlert } from '@car-tracker/tracker';
+import { syncFleetAndAlert, getIgnition } from '@car-tracker/tracker';
 import { findVehicleByPlate, persistGpsTripLogs } from './gpsLogService.js';
-import { insertTelemetry, telemetryExists } from './gpsTelemetryService.js';
+import { insertTelemetry, getLatestTelemetry } from './gpsTelemetryService.js';
 import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
 
 // ── Scheduler State ────────────────────────────────────────────
@@ -169,6 +169,11 @@ async function runCycle(): Promise<void> {
       resolveVehicleId: (plateNumber: string) => findVehicleByPlate(plateNumber),
     });
 
+    console.log(`[scheduler] Sync result: ${result.vehicles} vehicles, ${result.data.length} statuses, ${result.tripLogs.length} trip logs`);
+    if (result.data.length > 0) {
+      console.log('[scheduler] Sample vehicle:', JSON.stringify(result.data[0], null, 2));
+    }
+
     // ── GPS Log Persistence (DISABLED for scheduler) ───────────
     // IMPORTANT: The scheduler runs on current fleet status snapshots
     // from the Cartrack fleet API. These are NOT trip history records.
@@ -196,12 +201,15 @@ async function runCycle(): Promise<void> {
     let telemetrySaved = 0;
     let telemetrySkipped = 0;
     const vehicles = result.data as unknown as Array<Record<string, unknown>> | undefined;
+    console.log(`[scheduler] Processing ${vehicles?.length || 0} vehicles for telemetry`);
     if (vehicles && vehicles.length > 0) {
       for (const vehicle of vehicles) {
         try {
-          const ign = Boolean(vehicle.ignition);
+          const ign = getIgnition(vehicle);
           const spd = Number(vehicle.speed || 0);
-          const eventType = ign
+          // Safety override: vehicle cannot move without ignition
+          const effectiveIgnition = spd > 0 ? true : ign;
+          const eventType = effectiveIgnition
             ? (spd > 0 ? 'LOCATION_UPDATE' : 'IDLING')
             : 'IGNITION_OFF';
           const coords = vehicle.coordinates as { latitude?: number; longitude?: number } | null | undefined;
@@ -214,20 +222,26 @@ async function runCycle(): Promise<void> {
           const fuelLiters = Number(vehicle.fuel_liters) || null;
           const locationName = String(vehicle.location ?? '') || null;
 
-          // Deduplication: skip if identical record already exists
-          const exists = await telemetryExists(
-            String(vehicle.id ?? ''),
-            recordedAt,
-            eventType,
-            spd,
-            fuelLiters,
-            ign,
-            locationName,
-          );
-
-          if (exists) {
-            telemetrySkipped += 1;
-            continue;
+          // Deduplication: skip if identical state was already recorded
+          // within the current sync interval window
+          const last = await getLatestTelemetry(String(vehicle.id ?? ''));
+          if (last) {
+            const stateUnchanged =
+              last.speedKmh === spd &&
+              last.ignition === effectiveIgnition &&
+              last.eventType === eventType &&
+              last.fuelLiters === fuelLiters &&
+              last.locationName === locationName;
+            // Only skip if the last record was from the same sync interval
+            // (rounded to the same timestamp). This allows periodic snapshots
+            // while preventing duplicate saves within the same cycle.
+            const lastRecordedAt = new Date(last.recordedAt).getTime();
+            const currentRounded = new Date(recordedAt).getTime();
+            const sameInterval = lastRecordedAt === currentRounded;
+            if (stateUnchanged && sameInterval) {
+              telemetrySkipped += 1;
+              continue;
+            }
           }
 
           await insertTelemetry({
@@ -238,7 +252,7 @@ async function runCycle(): Promise<void> {
             longitude: coords?.longitude ?? null,
             speedKmh: spd,
             fuelLiters,
-            ignition: ign,
+            ignition: effectiveIgnition,
             locationName,
             driverName: null,
             toNumber: String(vehicle.to_number ?? '') || null,
@@ -249,6 +263,8 @@ async function runCycle(): Promise<void> {
           console.error(`[scheduler] Failed to save telemetry for ${String(vehicle.id)}:`, (err as Error).message);
         }
       }
+    } else {
+      console.log('[scheduler] No vehicles in result.data - check Cartrack API response');
     }
 
     const duration = (Date.now() - cycleStart) / 1000;

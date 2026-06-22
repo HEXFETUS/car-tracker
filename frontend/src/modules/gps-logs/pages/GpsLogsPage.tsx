@@ -961,33 +961,25 @@ export function GpsLogsPage() {
               <table className="w-full text-sm whitespace-nowrap">
                 <thead>
                   <tr className="border-b border-zinc-100 bg-brand-cream/50">
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">TO No.</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Date</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">TO No.</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Driver</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Vehicle</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Last Location</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Last Update</th>
-                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Speed</th>
-                    <th className="px-4 py-3.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Ignition</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Location Update</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Total Hrs</th>
                   </tr>
                 </thead>
                 <tbody>
                   {reportsResult.map((row, idx) => (
                     <tr key={row.id} className={cn('border-b border-zinc-50 transition-colors hover:bg-brand-cream/30', idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50/30')}>
-                      <td className="px-4 py-3 text-zinc-600 text-xs font-mono">{row.toNumber}</td>
                       <td className="px-4 py-3 text-zinc-700 text-xs">{formatDate(row.travelDate)}</td>
+                      <td className="px-4 py-3 text-zinc-600 text-xs font-mono">{row.toNumber}</td>
                       <td className="px-4 py-3 text-zinc-700">{row.driverName}</td>
                       <td className="px-4 py-3">
                         <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">{row.vehiclePlate}</span>
                       </td>
                       <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.lastLocation}>{row.lastLocation}</td>
-                      <td className="px-4 py-3 text-zinc-600 text-xs">{row.lastUpdate}</td>
-                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{row.speed} km/h</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={cn('inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium', row.ignition ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
-                          {row.ignition ? 'ON' : 'OFF'}
-                        </span>
-                      </td>
+                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{Number(row.totalHours).toFixed(1)} hrs</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1013,9 +1005,6 @@ export function GpsLogsPage() {
                     <p className="text-xs font-mono font-bold text-brand-teal truncate">{row.toNumber}</p>
                     <p className="text-[10px] text-zinc-400 mt-0.5">{formatDate(row.travelDate)}</p>
                   </div>
-                  <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', row.ignition ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
-                    {row.ignition ? 'ON' : 'OFF'}
-                  </span>
                 </div>
                 <div className="px-4 py-3 space-y-2">
                   <div className="flex items-center gap-2">
@@ -1023,17 +1012,13 @@ export function GpsLogsPage() {
                     <span className="text-sm text-zinc-700 truncate">{row.driverName}</span>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Last Location</p>
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Location Update</p>
                     <p className="text-xs text-zinc-700 truncate" title={row.lastLocation}>{row.lastLocation}</p>
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                     <div>
-                      <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Speed</p>
-                      <p className="text-xs font-mono text-zinc-700">{row.speed} km/h</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Updated</p>
-                      <p className="text-xs text-zinc-700">{row.lastUpdate}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Total Hrs</p>
+                      <p className="text-xs font-mono text-zinc-700">{Number(row.totalHours).toFixed(1)} hrs</p>
                     </div>
                   </div>
                 </div>

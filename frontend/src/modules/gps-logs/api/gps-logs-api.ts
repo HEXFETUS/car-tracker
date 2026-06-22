@@ -412,6 +412,7 @@ export interface OrderStatusRow {
   fuel: number | null;
   ignition: boolean;
   eventType: string;
+  totalHours: number;
 }
 
 export interface OrderStatusResult {

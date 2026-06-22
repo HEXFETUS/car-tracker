@@ -78,6 +78,7 @@ export function syncFleetAndAlert(options?: {
 // ── Trip Log Transformer ──────────────────────────────────────
 
 export function extractPlateNumber(vehicle: any): string;
+export function getIgnition(vehicle: any): boolean;
 export function getEngineHours(vehicle: any): number;
 export function getGpsDistanceKm(vehicle: any): number;
 export function getStreetName(vehicle: any): string;

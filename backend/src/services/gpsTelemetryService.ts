@@ -63,6 +63,38 @@ interface TelemetryDbRow {
 }
 
 /**
+ * Get the most recent telemetry record for a vehicle.
+ * Returns null if no record exists.
+ */
+export async function getLatestTelemetry(vehicleId: string): Promise<{
+  speedKmh: number;
+  fuelLiters: number | null;
+  ignition: boolean;
+  locationName: string | null;
+  eventType: string;
+  recordedAt: string;
+} | null> {
+  const pool = getPool();
+  const result = await pool.query<{ speed_kmh: number; fuel_liters: number | null; ignition: boolean; location_name: string | null; event_type: string; recorded_at: string }>(
+    `SELECT speed_kmh, fuel_liters, ignition, location_name, event_type, recorded_at
+     FROM gps_telemetry
+     WHERE vehicle_id = $1
+     ORDER BY recorded_at DESC
+     LIMIT 1`,
+    [vehicleId],
+  );
+  if (result.rows.length === 0) return null;
+  return {
+    speedKmh: result.rows[0].speed_kmh,
+    fuelLiters: result.rows[0].fuel_liters,
+    ignition: result.rows[0].ignition,
+    locationName: result.rows[0].location_name,
+    eventType: result.rows[0].event_type,
+    recordedAt: result.rows[0].recorded_at,
+  };
+}
+
+/**
  * Check if a telemetry record with the same key fields already exists.
  * Used for deduplication to prevent saving identical records.
  */
