@@ -91,45 +91,79 @@ router.get('/', async (req: Request, res: Response) => {
 
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-    // Count total matching rows (must use same JOINs as main query for to_data filter)
+    // Count total matching rows (must use same JOINs and deduplication as main query)
     const countResult = await pool.query<{ total: string }>(
-      `SELECT COUNT(*) AS total FROM gps_telemetry t
-       LEFT JOIN LATERAL (
-         SELECT to_number FROM travel_orders
-         WHERE vehicle_id = t.vehicle_id
-         AND status IN ('APPROVED', 'ACTIVE')
-         AND DATE(scheduled_departure) = DATE(t.recorded_at)
-         ORDER BY created_at DESC
-         LIMIT 1
-       ) to_data ON true
-       ${whereClause}`,
+      `WITH ranked_telemetry AS (
+        SELECT
+          t.id,
+          LAG(t.event_type) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_event_type,
+          LAG(t.speed_kmh) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_speed,
+          LAG(t.ignition) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_ignition,
+          LAG(t.fuel_liters) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_fuel,
+          LAG(t.location_name) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_location
+        FROM gps_telemetry t
+        LEFT JOIN LATERAL (
+          SELECT to_number FROM travel_orders
+          WHERE vehicle_id = t.vehicle_id
+          AND status IN ('APPROVED', 'ACTIVE')
+          AND DATE(scheduled_departure) = DATE(t.recorded_at)
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) to_data ON true
+        ${whereClause}
+      )
+      SELECT COUNT(*) AS total FROM ranked_telemetry
+      WHERE prev_event_type IS NULL
+         OR prev_event_type != event_type
+         OR prev_speed != speed_kmh
+         OR prev_ignition != ignition
+         OR (prev_fuel IS DISTINCT FROM fuel_liters)
+         OR (prev_location IS DISTINCT FROM location_name)`,
       params,
     );
     const total = parseInt(countResult.rows[0]?.total || '0', 10);
 
-    // Fetch paginated data with joins
+    // Fetch paginated data with joins, filtering out consecutive duplicates
+    // where vehicle state (event_type, speed, ignition, fuel, location) hasn't changed
     const dataParams = [...params, pageSize, offset];
     const dataResult = await pool.query(
-      `SELECT
-        t.*,
-        v.plate_number,
-        to_data.to_number as active_to_number,
-        to_data.status as active_to_status,
-        d.full_name as active_driver_name
-      FROM gps_telemetry t
-      LEFT JOIN vehicles v ON v.id = t.vehicle_id
-      LEFT JOIN LATERAL (
-        SELECT to_number, status, driver_id
-        FROM travel_orders
-        WHERE vehicle_id = t.vehicle_id
-        AND status IN ('APPROVED', 'ACTIVE')
-        AND DATE(scheduled_departure) = DATE(t.recorded_at)
-        ORDER BY created_at DESC
-        LIMIT 1
-      ) to_data ON true
-      LEFT JOIN drivers d ON d.id = to_data.driver_id
-      ${whereClause}
-      ORDER BY t.recorded_at DESC
+      `WITH ranked_telemetry AS (
+        SELECT
+          t.*,
+          v.plate_number,
+          to_data.to_number as active_to_number,
+          to_data.status as active_to_status,
+          d.full_name as active_driver_name,
+          LAG(t.event_type) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_event_type,
+          LAG(t.speed_kmh) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_speed,
+          LAG(t.ignition) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_ignition,
+          LAG(t.fuel_liters) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_fuel,
+          LAG(t.location_name) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_location,
+          ROW_NUMBER() OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at DESC) as rn
+        FROM gps_telemetry t
+        LEFT JOIN vehicles v ON v.id = t.vehicle_id
+        LEFT JOIN LATERAL (
+          SELECT to_number, status, driver_id
+          FROM travel_orders
+          WHERE vehicle_id = t.vehicle_id
+          AND status IN ('APPROVED', 'ACTIVE')
+          AND DATE(scheduled_departure) = DATE(t.recorded_at)
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) to_data ON true
+        LEFT JOIN drivers d ON d.id = to_data.driver_id
+        ${whereClause}
+      )
+      SELECT *
+      FROM ranked_telemetry
+      WHERE rn = 1
+         OR prev_event_type IS NULL
+         OR prev_event_type != event_type
+         OR prev_speed != speed_kmh
+         OR prev_ignition != ignition
+         OR (prev_fuel IS DISTINCT FROM fuel_liters)
+         OR (prev_location IS DISTINCT FROM location_name)
+      ORDER BY recorded_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       dataParams,
     );
