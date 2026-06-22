@@ -206,32 +206,75 @@ export async function fetchTelemetry(
 
   const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
+  // Count total with deduplication (same logic as data query)
   const countResult = await pool.query<{ total: string }>(
-    `SELECT COUNT(*) AS total FROM gps_telemetry gt ${whereClause}`,
+    `WITH ranked_telemetry AS (
+      SELECT
+        gt.id,
+        LAG(gt.event_type) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_event_type,
+        LAG(gt.speed_kmh) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_speed,
+        LAG(gt.ignition) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_ignition,
+        LAG(gt.fuel_liters) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_fuel,
+        LAG(gt.location_name) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_location
+      FROM gps_telemetry gt
+      LEFT JOIN LATERAL (
+        SELECT to_number FROM travel_orders
+        WHERE vehicle_id = gt.vehicle_id
+        AND status IN ('APPROVED', 'ACTIVE')
+        AND DATE(scheduled_departure) = DATE(gt.recorded_at)
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) to_data ON true
+      LEFT JOIN drivers d ON d.id = to_data.driver_id
+      ${whereClause}
+    )
+    SELECT COUNT(*) AS total FROM ranked_telemetry
+    WHERE prev_event_type IS NULL
+       OR prev_event_type != event_type
+       OR prev_speed != speed_kmh
+       OR prev_ignition != ignition
+       OR (prev_fuel IS DISTINCT FROM fuel_liters)
+       OR (prev_location IS DISTINCT FROM location_name)`,
     values,
   );
   const total = parseInt(countResult.rows[0]?.total || '0', 10);
 
+  // Fetch data with deduplication - filter out consecutive duplicates
   const dataResult = await pool.query<TelemetryDbRow>(
-    `SELECT 
-      gt.*,
-      to_data.to_number as active_to_number,
-      to_data.status as active_to_status,
-      d.full_name as active_driver_name
-     FROM gps_telemetry gt
-     LEFT JOIN LATERAL (
-       SELECT to_number, status, driver_id
-       FROM travel_orders
-       WHERE vehicle_id = gt.vehicle_id
-       AND status IN ('APPROVED', 'ACTIVE')
-       AND DATE(scheduled_departure) = DATE(gt.recorded_at)
-       ORDER BY created_at DESC
-       LIMIT 1
-     ) to_data ON true
-     LEFT JOIN drivers d ON d.id = to_data.driver_id
-     ${whereClause}
-     ORDER BY gt.recorded_at DESC
-     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    `WITH ranked_telemetry AS (
+      SELECT 
+        gt.*,
+        to_data.to_number as active_to_number,
+        to_data.status as active_to_status,
+        d.full_name as active_driver_name,
+        LAG(gt.event_type) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_event_type,
+        LAG(gt.speed_kmh) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_speed,
+        LAG(gt.ignition) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_ignition,
+        LAG(gt.fuel_liters) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_fuel,
+        LAG(gt.location_name) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_location
+      FROM gps_telemetry gt
+      LEFT JOIN LATERAL (
+        SELECT to_number, status, driver_id
+        FROM travel_orders
+        WHERE vehicle_id = gt.vehicle_id
+        AND status IN ('APPROVED', 'ACTIVE')
+        AND DATE(scheduled_departure) = DATE(gt.recorded_at)
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) to_data ON true
+      LEFT JOIN drivers d ON d.id = to_data.driver_id
+      ${whereClause}
+    )
+    SELECT *
+    FROM ranked_telemetry
+    WHERE prev_event_type IS NULL
+       OR prev_event_type != event_type
+       OR prev_speed != speed_kmh
+       OR prev_ignition != ignition
+       OR (prev_fuel IS DISTINCT FROM fuel_liters)
+       OR (prev_location IS DISTINCT FROM location_name)
+    ORDER BY recorded_at DESC
+    LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
     [...values, pageSize, offset],
   );
 
