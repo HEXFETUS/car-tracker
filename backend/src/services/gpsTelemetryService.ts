@@ -73,10 +73,12 @@ export async function getLatestTelemetry(vehicleId: string): Promise<{
   locationName: string | null;
   eventType: string;
   recordedAt: string;
+  latitude: number | null;
+  longitude: number | null;
 } | null> {
   const pool = getPool();
-  const result = await pool.query<{ speed_kmh: number; fuel_liters: number | null; ignition: boolean; location_name: string | null; event_type: string; recorded_at: string }>(
-    `SELECT speed_kmh, fuel_liters, ignition, location_name, event_type, recorded_at
+  const result = await pool.query<{ speed_kmh: number; fuel_liters: number | null; ignition: boolean; location_name: string | null; event_type: string; recorded_at: string; latitude: number | null; longitude: number | null }>(
+    `SELECT speed_kmh, fuel_liters, ignition, location_name, event_type, recorded_at, latitude, longitude
      FROM gps_telemetry
      WHERE vehicle_id = $1
      ORDER BY recorded_at DESC
@@ -91,6 +93,8 @@ export async function getLatestTelemetry(vehicleId: string): Promise<{
     locationName: result.rows[0].location_name,
     eventType: result.rows[0].event_type,
     recordedAt: result.rows[0].recorded_at,
+    latitude: result.rows[0].latitude,
+    longitude: result.rows[0].longitude,
   };
 }
 
@@ -211,6 +215,11 @@ export async function fetchTelemetry(
     `WITH ranked_telemetry AS (
       SELECT
         gt.id,
+        gt.event_type,
+        gt.speed_kmh,
+        gt.ignition,
+        gt.fuel_liters,
+        gt.location_name,
         LAG(gt.event_type) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_event_type,
         LAG(gt.speed_kmh) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_speed,
         LAG(gt.ignition) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_ignition,
@@ -218,7 +227,7 @@ export async function fetchTelemetry(
         LAG(gt.location_name) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_location
       FROM gps_telemetry gt
       LEFT JOIN LATERAL (
-        SELECT to_number FROM travel_orders
+        SELECT to_number, status, driver_id FROM travel_orders
         WHERE vehicle_id = gt.vehicle_id
         AND status IN ('APPROVED', 'ACTIVE')
         AND DATE(scheduled_departure) = DATE(gt.recorded_at)

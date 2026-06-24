@@ -10,6 +10,7 @@ import {
   Pencil,
   Save,
   X,
+  Filter,
 } from 'lucide-react';
 
 export function ReconciliationPage() {
@@ -18,11 +19,12 @@ export function ReconciliationPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editRemarks, setEditRemarks] = useState('');
   const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<'Matched' | 'Flagged' | ''>('');
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchReconciliation()
+    fetchReconciliation({ status: statusFilter || undefined })
       .then((data) => {
         if (!cancelled) setRecords(data);
       })
@@ -35,7 +37,7 @@ export function ReconciliationPage() {
     return () => {
       cancelled = true;
     };
-  }, [toast]);
+  }, [toast, statusFilter]);
 
   const handleEdit = (rec: ReconciliationRecord) => {
     setEditId(rec.id);
@@ -62,8 +64,22 @@ export function ReconciliationPage() {
       <div className="flex items-start gap-3 rounded-xl bg-brand-moss/30 p-4 shadow-brand">
         <AlertTriangle className="mt-0.5 size-5 shrink-0 text-brand-teal" />
         <p className="text-sm leading-relaxed text-zinc-700">
-          Enter TO No. and GPS Record No. to auto-pull data. Variance {">"} 20% is automatically flagged.
+          Reconciliation compares GPS actual mileage against Travel Order estimated distance. Variance {">"} 20% is automatically flagged. Only APPROVED, ACTIVE, and COMPLETED travel orders are shown.
         </p>
+      </div>
+
+      {/* Status filter */}
+      <div className="flex items-center gap-3">
+        <Filter className="size-4 text-zinc-500" />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as 'Matched' | 'Flagged' | '')}
+          className="rounded-lg border border-brand-sage/40 bg-white px-3 py-1.5 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+        >
+          <option value="">All Statuses</option>
+          <option value="Matched">Matched</option>
+          <option value="Flagged">Flagged</option>
+        </select>
       </div>
 
       {loading && (
@@ -86,11 +102,13 @@ export function ReconciliationPage() {
                   <th className="whitespace-nowrap px-4 py-4">Trip Date</th>
                   <th className="whitespace-nowrap px-4 py-4">Origin</th>
                   <th className="whitespace-nowrap px-4 py-4">Destination</th>
+                  <th className="whitespace-nowrap px-4 py-4">Arrival Time</th>
                   <th className="whitespace-nowrap px-4 py-4 text-right">TO Est. (km)</th>
                   <th className="whitespace-nowrap px-4 py-4 text-right">GPS Actual (km)</th>
                   <th className="whitespace-nowrap px-4 py-4 text-right">Variance (km)</th>
                   <th className="whitespace-nowrap px-4 py-4 text-right">Variance %</th>
-                  <th className="whitespace-nowrap px-4 py-4">Status</th>
+                  <th className="whitespace-nowrap px-4 py-4">TO Status</th>
+                  <th className="whitespace-nowrap px-4 py-4">Match Status</th>
                   <th className="whitespace-nowrap px-4 py-4">Explanation / Remarks</th>
                   <th className="whitespace-nowrap px-4 py-4 text-center">Action</th>
                 </tr>
@@ -125,6 +143,9 @@ export function ReconciliationPage() {
                       <td className="whitespace-nowrap px-4 py-4 text-zinc-700">
                         {rec.destination}
                       </td>
+                      <td className="whitespace-nowrap px-4 py-4 text-zinc-500">
+                        {rec.arrivalTime || '—'}
+                      </td>
                       <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-zinc-900">
                         {rec.toEstMileageKm.toFixed(1)}
                       </td>
@@ -147,6 +168,17 @@ export function ReconciliationPage() {
                         )}
                       >
                         {rec.variancePct.toFixed(1)}%
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-4">
+                        <span className={cn(
+                          'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+                          rec.toStatus === 'APPROVED' && 'bg-blue-100 text-blue-700',
+                          rec.toStatus === 'ACTIVE' && 'bg-green-100 text-green-700',
+                          rec.toStatus === 'COMPLETED' && 'bg-gray-100 text-gray-700',
+                          !rec.toStatus && 'bg-zinc-100 text-zinc-700'
+                        )}>
+                          {rec.toStatus || 'Unknown'}
+                        </span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">
                         {rec.status === 'Matched' ? (
@@ -211,7 +243,7 @@ export function ReconciliationPage() {
       {/* Mobile cards */}
       {!loading && (
         <div className="space-y-4 md:hidden">
-          {records.map((rec) => (
+                {records.map((rec) => (
             <div key={rec.id} className="rounded-xl bg-white p-5 shadow-brand">
               <div className="mb-3 flex items-center justify-between">
                 <div>
@@ -220,17 +252,28 @@ export function ReconciliationPage() {
                     {rec.vehiclePlate} &middot; {rec.tripDate}
                   </p>
                 </div>
-                {rec.status === 'Matched' ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-brand-sage/20 px-3 py-0.5 text-xs font-medium text-brand-sage">
-                    <CheckCircle2 className="size-3.5" />
-                    Matched
+                <div className="flex gap-2">
+                  <span className={cn(
+                    'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+                    rec.toStatus === 'APPROVED' && 'bg-blue-100 text-blue-700',
+                    rec.toStatus === 'ACTIVE' && 'bg-green-100 text-green-700',
+                    rec.toStatus === 'COMPLETED' && 'bg-gray-100 text-gray-700',
+                    !rec.toStatus && 'bg-zinc-100 text-zinc-700'
+                  )}>
+                    {rec.toStatus || 'Unknown'}
                   </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-0.5 text-xs font-medium text-red-600">
-                    <AlertTriangle className="size-3.5" />
-                    Flagged
-                  </span>
-                )}
+                  {rec.status === 'Matched' ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-sage/20 px-3 py-0.5 text-xs font-medium text-brand-sage">
+                      <CheckCircle2 className="size-3.5" />
+                      Matched
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-0.5 text-xs font-medium text-red-600">
+                      <AlertTriangle className="size-3.5" />
+                      Flagged
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
@@ -240,6 +283,10 @@ export function ReconciliationPage() {
                 <div>
                   <p className="text-xs text-zinc-400">Route</p>
                   <p className="truncate text-zinc-700">{rec.origin} &rarr; {rec.destination}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-400">Arrival Time</p>
+                  <p className="text-zinc-500">{rec.arrivalTime || '—'}</p>
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">TO Est.</p>

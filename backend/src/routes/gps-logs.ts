@@ -12,6 +12,7 @@ import {
   matchTravelOrderToGpsTrip,
   persistGpsTripLogs,
   generateGpsRecordNo,
+  haversineDistance,
   type TravelOrderWithTimes,
 } from '../services/gpsLogService.js';
 import { fetchGpsAlerts, getVehiclePlate } from '../services/gpsAlertService.js';
@@ -59,6 +60,10 @@ interface GpsLogRow {
   travel_order_to_number?: string | null;
   to_origin?: string | null;
   to_destination?: string | null;
+  // Calculated fields for moving hours and bound-to-bound distance
+  moving_hours?: number | null;
+  bound_to_bound_distance_km?: number | null;
+  calculated_arrival_time?: string | null;
 }
 
 // GET /api/gps-logs — List telemetry data with LEFT JOINs for enrichment
@@ -96,6 +101,11 @@ router.get('/', async (req: Request, res: Response) => {
       `WITH ranked_telemetry AS (
         SELECT
           t.id,
+          t.event_type,
+          t.speed_kmh,
+          t.ignition,
+          t.fuel_liters,
+          t.location_name,
           LAG(t.event_type) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_event_type,
           LAG(t.speed_kmh) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_speed,
           LAG(t.ignition) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_ignition,
@@ -127,12 +137,31 @@ router.get('/', async (req: Request, res: Response) => {
     // where vehicle state (event_type, speed, ignition, fuel, location) hasn't changed
     const dataParams = [...params, pageSize, offset];
     const dataResult = await pool.query(
-      `WITH ranked_telemetry AS (
+      `WITH departure_times AS (
+        SELECT
+          t.vehicle_id,
+          DATE(t.scheduled_departure) as travel_date,
+          MIN(gt.recorded_at) as departure_time_gps
+        FROM travel_orders t
+        JOIN gps_telemetry gt
+          ON gt.vehicle_id = t.vehicle_id
+          AND DATE(gt.recorded_at) = DATE(t.scheduled_departure)
+          AND t.lat_long_origin IS NOT NULL
+          AND t.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+          AND gt.speed_kmh > 0
+        WHERE (
+          SELECT haversine_distance(t.lat_long_origin, CONCAT(gt.latitude, ',', gt.longitude)) / 1000.0
+        ) <= 2.0
+        GROUP BY t.vehicle_id, DATE(t.scheduled_departure)
+      ),
+      ranked_telemetry AS (
         SELECT
           t.*,
           v.plate_number,
           to_data.to_number as active_to_number,
           to_data.status as active_to_status,
+          to_data.lat_long_origin as to_lat_long_origin,
+          to_data.lat_long_destination as to_lat_long_destination,
           d.full_name as active_driver_name,
           LAG(t.event_type) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_event_type,
           LAG(t.speed_kmh) OVER (PARTITION BY t.vehicle_id ORDER BY t.recorded_at) as prev_speed,
@@ -143,7 +172,7 @@ router.get('/', async (req: Request, res: Response) => {
         FROM gps_telemetry t
         LEFT JOIN vehicles v ON v.id = t.vehicle_id
         LEFT JOIN LATERAL (
-          SELECT to_number, status, driver_id
+          SELECT to_number, status, driver_id, lat_long_origin, lat_long_destination
           FROM travel_orders
           WHERE vehicle_id = t.vehicle_id
           AND status IN ('APPROVED', 'ACTIVE')
@@ -153,9 +182,74 @@ router.get('/', async (req: Request, res: Response) => {
         ) to_data ON true
         LEFT JOIN drivers d ON d.id = to_data.driver_id
         ${whereClause}
+      ),
+      trip_start_times AS (
+        SELECT
+          vehicle_id,
+          DATE(recorded_at) as calc_date,
+          MIN(recorded_at) as trip_start
+        FROM gps_telemetry
+        GROUP BY vehicle_id, DATE(recorded_at)
+      ),
+      cumulative_hours AS (
+        SELECT
+          t.vehicle_id,
+          DATE(t.recorded_at) as calc_date,
+          t.id,
+          EXTRACT(EPOCH FROM (t.recorded_at - tst.trip_start)) / 3600.0 as engine_hours
+        FROM gps_telemetry t
+        JOIN trip_start_times tst
+          ON t.vehicle_id = tst.vehicle_id
+          AND DATE(t.recorded_at) = tst.calc_date
+      ),
+      time_diffs AS (
+        SELECT
+          t.id,
+          t.vehicle_id,
+          DATE(t.recorded_at) as calc_date,
+          t.recorded_at,
+          t.speed_kmh,
+          EXTRACT(EPOCH FROM (
+            t.recorded_at - LAG(t.recorded_at) OVER (
+              PARTITION BY t.vehicle_id, DATE(t.recorded_at)
+              ORDER BY t.recorded_at
+            )
+          )) as time_diff_seconds
+        FROM gps_telemetry t
+      ),
+      cumulative_moving AS (
+        SELECT
+          td.vehicle_id,
+          td.calc_date,
+          td.recorded_at,
+          td.id,
+          SUM(
+            CASE WHEN td.speed_kmh > 0 THEN td.time_diff_seconds ELSE 0 END
+          ) OVER (
+            PARTITION BY td.vehicle_id, td.calc_date
+            ORDER BY td.recorded_at
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) / 3600.0 as moving_hours
+        FROM time_diffs td
+        WHERE td.time_diff_seconds IS NOT NULL
       )
-      SELECT *
-      FROM ranked_telemetry
+      SELECT
+        rt.*,
+        dt.departure_time_gps,
+        COALESCE(ch.engine_hours, 0) as engine_hours,
+        COALESCE(cm.moving_hours, 0) as moving_hours
+      FROM ranked_telemetry rt
+      LEFT JOIN departure_times dt
+        ON dt.vehicle_id = rt.vehicle_id
+        AND dt.travel_date = DATE(rt.recorded_at)
+      LEFT JOIN cumulative_hours ch
+        ON rt.vehicle_id = ch.vehicle_id
+        AND DATE(rt.recorded_at) = ch.calc_date
+        AND rt.id = ch.id
+      LEFT JOIN cumulative_moving cm
+        ON rt.vehicle_id = cm.vehicle_id
+        AND DATE(rt.recorded_at) = cm.calc_date
+        AND rt.id = cm.id
       WHERE rn = 1
          OR prev_event_type IS NULL
          OR prev_event_type != event_type
@@ -168,37 +262,56 @@ router.get('/', async (req: Request, res: Response) => {
       dataParams,
     );
 
-    const data = dataResult.rows.map((row) => ({
-      id: row.id,
-      gpsRecordNo: 'TEL-' + row.id.slice(0, 8),
-      tripDate: new Date(row.recorded_at).toISOString().split('T')[0],
-      vehicleId: row.vehicle_id,
-      driverId: null,
-      originGpsStartPoint: row.location_name || 'N/A',
-      destinationGpsEndPoint: 'N/A',
-      coordinatesOrigin: null,
-      coordinatesDestination: null,
-      actualRouteRoadTaken: null,
-      departureTimeGps: row.recorded_at,
-      arrivalTimeGps: null,
-      gpsDistanceKm: 0,
-      engineHours: 0,
-      maxSpeedKph: row.speed_kmh,
-      tripStatusGps: row.ignition ? 'en-route' : 'arrived',
-      travelOrderId: null,
-      toStatusAuto: row.active_to_status || null,
-      anomalyFlag: false,
-      notesRemarks: row.event_type,
-      destinationVerified: false,
-      tripType: 'telemetry',
-      parentTripId: null,
-      locationName: row.location_name,
-      vehiclePlateNo: row.plate_number || 'Unknown',
-      driverName: row.active_driver_name || 'Unknown',
-      toNumber: row.active_to_number || null,
-      createdAt: row.created_at,
-      updatedAt: row.created_at,
-    }));
+    const data = dataResult.rows.map((row: any) => {
+      // Calculate distance from origin location to current telemetry location
+      let distanceFromOrigin = 0;
+      
+      // Get origin coordinates from travel order (stored as "lat,long" text)
+      const originCoord = row.to_lat_long_origin;
+      
+      // Get current telemetry location from separate latitude/longitude columns
+      // gps_telemetry table has latitude and longitude as separate float8 columns
+      if (originCoord && row.latitude != null && row.longitude != null) {
+        const currentCoord = `${row.latitude},${row.longitude}`;
+        const distMeters = haversineDistance(originCoord, currentCoord);
+        distanceFromOrigin = distMeters / 1000; // Convert to km
+      }
+
+      return {
+        id: row.id,
+        gpsRecordNo: 'TEL-' + row.id.slice(0, 8),
+        tripDate: new Date(row.recorded_at).toISOString().split('T')[0],
+        vehicleId: row.vehicle_id,
+        driverId: null,
+        originGpsStartPoint: row.location_name || 'N/A',
+        destinationGpsEndPoint: 'N/A',
+        coordinatesOrigin: null,
+        coordinatesDestination: null,
+        actualRouteRoadTaken: null,
+        departureTimeGps: row.departure_time_gps || row.recorded_at,
+        arrivalTimeGps: null,
+        gpsDistanceKm: distanceFromOrigin, // Distance from origin to current location
+        engineHours: row.engine_hours ?? 0,
+        maxSpeedKph: row.speed_kmh,
+        tripStatusGps: row.ignition ? 'en-route' : 'arrived',
+        travelOrderId: null,
+        toStatusAuto: row.active_to_status || null,
+        anomalyFlag: false,
+        notesRemarks: row.event_type,
+        destinationVerified: false,
+        tripType: 'telemetry',
+        parentTripId: null,
+        locationName: row.location_name,
+        vehiclePlateNo: row.plate_number || 'Unknown',
+        driverName: row.active_driver_name || 'Unknown',
+        toNumber: row.active_to_number || null,
+        toOrigin: row.to_lat_long_origin || null,
+        toDestination: row.to_lat_long_destination || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        movingHours: row.moving_hours ?? null,
+      };
+    });
 
     const response = {
       success: true,
@@ -540,7 +653,7 @@ router.get('/alerts', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/gps-logs/order-status — Travel orders with latest telemetry
+// GET /api/gps-logs/order-status — Travel orders with latest telemetry and arrival time
 router.get('/order-status', async (req: Request, res: Response) => {
   try {
     const pool = getPool();
@@ -571,19 +684,50 @@ router.get('/order-status', async (req: Request, res: Response) => {
     );
     const total = parseInt(countResult.rows[0]?.total || '0', 10);
 
-    // Fetch travel orders with latest telemetry
+    // Fetch travel orders with latest telemetry and arrival time
     const dataParams = [...params, pageSize, offset];
     const dataResult = await pool.query(
-      `SELECT
+      `WITH departure_times AS (
+        SELECT
+          t.vehicle_id,
+          DATE(t.scheduled_departure) as travel_date,
+          MIN(gt.recorded_at) as departure_time_gps
+        FROM travel_orders t
+        JOIN gps_telemetry gt
+          ON gt.vehicle_id = t.vehicle_id
+          AND DATE(gt.recorded_at) = DATE(t.scheduled_departure)
+          AND t.lat_long_origin IS NOT NULL
+          AND t.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+        WHERE (
+          SELECT haversine_distance(t.lat_long_origin, CONCAT(gt.latitude, ',', gt.longitude)) / 1000.0
+        ) <= 2.0
+        GROUP BY t.vehicle_id, DATE(t.scheduled_departure)
+      ),
+      arrival_times AS (
+        SELECT
+          t.vehicle_id,
+          DATE(t.scheduled_departure) as travel_date,
+          MIN(gt.recorded_at) as arrival_time_gps
+        FROM travel_orders t
+        JOIN gps_telemetry gt
+          ON gt.vehicle_id = t.vehicle_id
+          AND DATE(gt.recorded_at) = DATE(t.scheduled_departure)
+          AND t.lat_long_destination IS NOT NULL
+          AND t.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+        WHERE (
+          SELECT haversine_distance(t.lat_long_destination, CONCAT(gt.latitude, ',', gt.longitude)) / 1000.0
+        ) <= 0.1
+        GROUP BY t.vehicle_id, DATE(t.scheduled_departure)
+      )
+      SELECT
         t.id,
         t.to_number,
         DATE(t.scheduled_departure) as travel_date,
         t.origin_location as origin,
         t.destination_target as destination,
         t.status as to_status,
-        v.id as vehicle_id,
+        t.vehicle_id,
         v.plate_number,
-        d.id as driver_id,
         d.full_name as driver_name,
         tel.id as telemetry_id,
         tel.event_type as telemetry_event,
@@ -594,10 +738,18 @@ router.get('/order-status', async (req: Request, res: Response) => {
         tel.ignition as telemetry_ignition,
         tel.location_name as telemetry_location,
         tel.recorded_at as telemetry_time,
+        dt.departure_time_gps,
+        at.arrival_time_gps,
         (SELECT COALESCE(SUM(engine_hours), 0) FROM gps_trip_logs WHERE travel_order_id = t.id) as total_hours
       FROM travel_orders t
       LEFT JOIN vehicles v ON v.id = t.vehicle_id
       LEFT JOIN drivers d ON d.id = t.driver_id
+      LEFT JOIN departure_times dt
+        ON dt.vehicle_id = t.vehicle_id
+        AND dt.travel_date = DATE(t.scheduled_departure)
+      LEFT JOIN arrival_times at
+        ON at.vehicle_id = t.vehicle_id
+        AND at.travel_date = DATE(t.scheduled_departure)
       LEFT JOIN LATERAL (
         SELECT * FROM gps_telemetry 
         WHERE vehicle_id = t.vehicle_id 
@@ -610,7 +762,7 @@ router.get('/order-status', async (req: Request, res: Response) => {
       dataParams,
     );
 
-    const data = dataResult.rows.map((row) => ({
+    const data = dataResult.rows.map((row: any) => ({
       id: row.id,
       toNumber: row.to_number || 'N/A',
       travelDate: row.travel_date,
@@ -633,6 +785,22 @@ router.get('/order-status', async (req: Request, res: Response) => {
       ignition: row.telemetry_ignition ?? false,
       eventType: row.telemetry_event || 'N/A',
       totalHours: Number(row.total_hours) || 0,
+      departureTime: row.departure_time_gps
+        ? new Date(row.departure_time_gps).toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+        : null,
+      arrivalTime: row.arrival_time_gps
+        ? new Date(row.arrival_time_gps).toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+        : null,
     }));
 
     res.json({
@@ -680,20 +848,37 @@ router.get('/reports', async (req: Request, res: Response) => {
     );
     const total = parseInt(countResult.rows[0]?.total || '0', 10);
 
-    // Fetch reports with JOINs
+    // Fetch reports with JOINs and arrival time calculation
     const dataParams = [...params, pageSize, offset];
     const dataResult = await pool.query<GpsLogRow>(
-      `SELECT
+      `WITH arrival_times AS (
+        SELECT
+          g.id as log_id,
+          MIN(t.recorded_at) as arrival_time_gps
+        FROM gps_trip_logs g
+        JOIN travel_orders t_o ON t_o.id = g.travel_order_id
+        JOIN gps_telemetry t
+          ON t.vehicle_id = g.vehicle_id
+          AND DATE(t.recorded_at) = g.trip_date
+          AND t_o.lat_long_destination IS NOT NULL
+        WHERE (
+          SELECT haversine_distance(t_o.lat_long_destination, CONCAT(t.latitude, ',', t.longitude)) / 1000.0
+        ) <= 0.2
+        GROUP BY g.id
+      )
+      SELECT
         g.*,
         v.plate_number,
         d.full_name AS driver_full_name,
         t_o.to_number AS travel_order_to_number,
         t_o.origin_location AS to_origin,
-        t_o.destination_target AS to_destination
+        t_o.destination_target AS to_destination,
+        COALESCE(at.arrival_time_gps, g.arrival_time_gps) as calculated_arrival_time
       FROM gps_trip_logs g
       LEFT JOIN vehicles v ON v.id = g.vehicle_id
       LEFT JOIN drivers d ON d.id = g.driver_id
       LEFT JOIN travel_orders t_o ON t_o.id = g.travel_order_id
+      LEFT JOIN arrival_times at ON at.log_id = g.id
       ${whereClause}
       ORDER BY g.trip_date DESC, g.created_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -710,7 +895,7 @@ router.get('/reports', async (req: Request, res: Response) => {
       to: row.destination_gps_end_point || row.to_destination || 'N/A',
       tripDate: row.trip_date,
       departureTime: row.departure_time_gps,
-      arrivalTime: row.arrival_time_gps,
+      arrivalTime: row.calculated_arrival_time,
     }));
 
     res.json({
@@ -785,6 +970,15 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 function mapRow(row: GpsLogRow) {
+  // For GPS trip logs, calculate distance from origin to destination
+  let distance = row.gps_distance_km;
+  
+  // If coordinates are available, calculate haversine distance
+  if (row.coordinates_origin && row.coordinates_destination) {
+    const distMeters = haversineDistance(row.coordinates_origin, row.coordinates_destination);
+    distance = distMeters / 1000; // Convert to km
+  }
+
   return {
     id: row.id,
     gpsRecordNo: row.gps_record_no,
@@ -798,7 +992,7 @@ function mapRow(row: GpsLogRow) {
     actualRouteRoadTaken: row.actual_route_road_taken,
     departureTimeGps: row.departure_time_gps,
     arrivalTimeGps: row.arrival_time_gps,
-    gpsDistanceKm: row.gps_distance_km,
+    gpsDistanceKm: distance,
     engineHours: row.engine_hours,
     maxSpeedKph: row.max_speed_kph,
     tripStatusGps: row.trip_status_gps,
@@ -814,6 +1008,7 @@ function mapRow(row: GpsLogRow) {
     toNumber: row.travel_order_to_number ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    movingHours: row.moving_hours ?? null,
   };
 }
 

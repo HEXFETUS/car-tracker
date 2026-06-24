@@ -8,9 +8,11 @@
 //
 // The interval can be changed at runtime via updateInterval().
 
-import { syncFleetAndAlert, getIgnition } from '@car-tracker/tracker';
+import { syncFleetAndAlert, getIgnition, sendTelegram } from '@car-tracker/tracker';
 import { findVehicleByPlate, persistGpsTripLogs } from './gpsLogService.js';
 import { insertTelemetry, getLatestTelemetry } from './gpsTelemetryService.js';
+import { createNoTravelOrderAlert } from './gpsAlertService.js';
+import { getPool } from '../db/db.js';
 import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
 
 // ── Scheduler State ────────────────────────────────────────────
@@ -164,9 +166,49 @@ async function runCycle(): Promise<void> {
   console.log(`[scheduler] Starting sync cycle ${cycleLabel}...`);
 
   try {
+    const pool = getPool();
+
+    // ── Fetch driver & TO number from approved travel orders ───
+    // Single query to get all vehicle-to-driver mappings
+    const driverOverrides = new Map<string, string>();
+    const toNumberOverrides = new Map<string, string>();
+    const noToVehicleIds = new Set<string>();
+    try {
+      const allTOData = await pool.query<{ vehicle_id: string; driver_name: string | null; to_number: string }>(
+        `SELECT DISTINCT ON (to_table.vehicle_id) 
+           to_table.vehicle_id, 
+           d.full_name AS driver_name,
+           to_table.to_number
+         FROM travel_orders to_table
+         LEFT JOIN drivers d ON d.id = to_table.driver_id
+         WHERE to_table.status = 'APPROVED'
+         AND to_table.vehicle_id IS NOT NULL
+         AND DATE(to_table.scheduled_departure) = CURRENT_DATE`,
+      );
+      for (const row of allTOData.rows) {
+        if (row.driver_name) driverOverrides.set(row.vehicle_id, row.driver_name);
+        if (row.to_number) toNumberOverrides.set(row.vehicle_id, row.to_number);
+      }
+      // Track vehicles with NO approved TO for today (for warning suffix)
+      const allVehicleResult = await pool.query<{ vehicle_id: string }>(
+        `SELECT id AS vehicle_id FROM vehicles WHERE id IS NOT NULL`,
+      );
+      for (const v of allVehicleResult.rows) {
+        if (!toNumberOverrides.has(v.vehicle_id)) {
+          noToVehicleIds.add(v.vehicle_id);
+        }
+      }
+      console.log(`[scheduler] Fetched ${driverOverrides.size} driver, ${toNumberOverrides.size} TO overrides, ${noToVehicleIds.size} vehicles with no TO`);
+    } catch (err) {
+      console.error('[scheduler] Failed to fetch overrides:', (err as Error).message);
+    }
+
     const result = await syncFleetAndAlert({
       // Use the backend's direct PostgreSQL pool for plate validation
       resolveVehicleId: (plateNumber: string) => findVehicleByPlate(plateNumber),
+      driverOverrides: Object.fromEntries(driverOverrides),
+      toNumberOverrides: Object.fromEntries(toNumberOverrides),
+      noToVehicleIds: Array.from(noToVehicleIds),
     });
 
     console.log(`[scheduler] Sync result: ${result.vehicles} vehicles, ${result.data.length} statuses, ${result.tripLogs.length} trip logs`);
@@ -201,6 +243,77 @@ async function runCycle(): Promise<void> {
     let telemetrySaved = 0;
     let telemetrySkipped = 0;
     const vehicles = result.data as unknown as Array<Record<string, unknown>> | undefined;
+
+    // ── Unauthorized Travel Alert Detection ────────────────────
+    // After telemetry is saved, check for vehicles traveling without
+    // an approved travel order and create alerts if needed.
+    // Uses direct DB lookup to ensure accuracy (not Cartrack's to_number).
+    let unauthorizedTravelAlertsCreated = 0;
+    if (vehicles && vehicles.length > 0) {
+      for (const vehicle of vehicles) {
+        try {
+          const vid = String(vehicle.id ?? '');
+          const speed = Number(vehicle.speed || 0);
+          const isMoving = speed > 0;
+
+          // Only alert if vehicle is currently moving
+          if (!isMoving) continue;
+
+          // Check DB directly for approved travel order (today only)
+          const toResult = await pool.query<{ exists: boolean }>(
+            `SELECT EXISTS(
+               SELECT 1 FROM travel_orders
+               WHERE vehicle_id = $1
+                 AND status = 'APPROVED'
+                 AND DATE(scheduled_departure) = CURRENT_DATE
+               LIMIT 1
+             ) as exists`,
+            [vid],
+          );
+          const hasApprovedTO = toResult.rows[0]?.exists ?? false;
+
+          // Skip if vehicle has an approved travel order
+          if (hasApprovedTO) continue;
+
+          // Deduplication: check if we already created an alert for this vehicle recently
+          const recentAlertResult = await pool.query<{ id: string }>(
+            `SELECT id FROM gps_alerts
+             WHERE vehicle_id = $1
+               AND alert_type = 'NO_APPROVED_TRAVEL_ORDER'
+               AND created_at > NOW() - INTERVAL '1 hour'
+             LIMIT 1`,
+            [vid],
+          );
+
+          if (recentAlertResult.rows.length > 0) {
+            // Alert already exists within the last hour — skip
+            continue;
+          }
+
+          // Get latest telemetry for location data
+          const latestTelemetry = await getLatestTelemetry(vid);
+          const latitude = latestTelemetry?.latitude ?? null;
+          const longitude = latestTelemetry?.longitude ?? null;
+          const locationName = latestTelemetry?.locationName || null;
+
+          await createNoTravelOrderAlert(vid, latitude, longitude, locationName);
+          unauthorizedTravelAlertsCreated += 1;
+
+          // Send Telegram notification
+          try {
+            const plate = await (await import('./gpsAlertService.js')).getVehiclePlate(vid);
+            const locationText = locationName || 'Unknown location';
+            const driverName = driverOverrides.get(vid) || 'Unassigned';
+            const message = `🚨 NO APPROVED TRAVEL ORDER - Vehicle ${plate ?? 'Unknown'}\n👤 Driver: ${driverName}\n📍 Location: ${locationText}\n🕘 ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+            await sendTelegram(message);
+          } catch (telegramError) {
+            console.error(`[scheduler] Failed to send Telegram alert for ${vid}:`, (telegramError as Error).message);
+          }
+        } catch (err) {
+          console.error(`[scheduler] Failed to check unauthorized travel for ${String(vehicle.id)}:`, (err as Error).message);
+        }
+      }
+    }
     console.log(`[scheduler] Processing ${vehicles?.length || 0} vehicles for telemetry`);
     if (vehicles && vehicles.length > 0) {
       for (const vehicle of vehicles) {
@@ -282,6 +395,7 @@ async function runCycle(): Promise<void> {
       `gps_logs_failed=${gpsLogsFailed}`,
       `telemetry_saved=${telemetrySaved}`,
       `telemetry_skipped=${telemetrySkipped}`,
+      `unauthorized_travel_alerts=${unauthorizedTravelAlertsCreated}`,
       `duration=${duration.toFixed(2)}s`,
     ].join(', ');
 

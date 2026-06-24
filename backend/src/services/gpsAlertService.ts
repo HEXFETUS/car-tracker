@@ -18,7 +18,7 @@ export interface GpsAlertRow {
 export interface CreateGpsAlertInput {
   vehicleId: string;
   gpsLogId?: string | null;
-  alertType: 'IGNITION_ON' | 'IGNITION_OFF' | 'IDLING';
+  alertType: 'IGNITION_ON' | 'IGNITION_OFF' | 'IDLING' | 'NO_APPROVED_TRAVEL_ORDER';
   alertMessage: string;
   latitude?: number | null;
   longitude?: number | null;
@@ -112,6 +112,22 @@ export async function fetchGpsAlerts(params: FetchAlertsParams = {}): Promise<Gp
     page,
     pageSize,
   };
+}
+
+/**
+ * Create an alert for a vehicle traveling without an approved travel order.
+ */
+export async function createNoTravelOrderAlert(vehicleId: string, latitude: number | null, longitude: number | null, locationName: string | null): Promise<{ id: string }> {
+  const plate = await getVehiclePlate(vehicleId);
+  const locationText = locationName || 'Unknown location';
+  const message = `Vehicle ${plate ?? 'Unknown'} is traveling without an approved travel order — Location: ${locationText}`;
+  return createGpsAlert({
+    vehicleId,
+    alertType: 'NO_APPROVED_TRAVEL_ORDER',
+    alertMessage: message,
+    latitude,
+    longitude,
+  });
 }
 
 /**

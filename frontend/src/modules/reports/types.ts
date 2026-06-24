@@ -13,9 +13,13 @@ export interface ReconciliationRecord {
   varianceKm: number;
   /** Derived: (varianceKm / toEstMileageKm) * 100 */
   variancePct: number;
-  /** Derived: 'Matched' if variancePct <= 20, else 'Flagged' */
+  /** Derived: 'Matched' if |variancePct| <= 20, else 'Flagged' */
   status: 'Matched' | 'Flagged';
   explanationRemarks: string;
+  /** Travel order status: APPROVED, ACTIVE, COMPLETED, etc. */
+  toStatus?: string;
+  /** GPS-based arrival time (when vehicle was within 200m of destination) */
+  arrivalTime?: string | null;
 }
 
 /** Monthly KPI indicators */

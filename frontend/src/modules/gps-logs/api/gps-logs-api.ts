@@ -15,6 +15,8 @@ export interface EnrichedGpsTripLog {
   coordinatesOrigin?: string | null;
   coordinatesDestination?: string | null;
   actualRouteRoadTaken: string;
+  toOrigin?: string | null;
+  toDestination?: string | null;
   departureTimeGps: string | null;
   arrivalTimeGps: string | null;
   gpsDistanceKm: number | null;
@@ -35,6 +37,9 @@ export interface EnrichedGpsTripLog {
   toNumber: string | null;
   createdAt: string;
   updatedAt: string;
+  // Calculated fields
+  movingHours?: number | null;
+  boundToBoundDistanceKm?: number | null;
 }
 
 export interface GpsLogsResult {
@@ -413,6 +418,8 @@ export interface OrderStatusRow {
   ignition: boolean;
   eventType: string;
   totalHours: number;
+  departureTime: string | null;
+  arrivalTime: string | null;
 }
 
 export interface OrderStatusResult {

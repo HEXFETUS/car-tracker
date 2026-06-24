@@ -195,7 +195,8 @@ function formatLocationTime(location, eventTime) {
 export function formatSpeedingAlert(name, speed, location, eventTime, toNumber = null, driver = null) {
   const excess = Math.max(0, speed - SPEED_LIMIT_KMH);
   const extraLines = [];
-  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   return formatAlert(
     `🚨 SPEEDING - ${name}`,
     `⚡ Speed: ${formatSpeed(speed)} km/h (Limit: ${SPEED_LIMIT_KMH} km/h)`,
@@ -207,7 +208,8 @@ export function formatSpeedingAlert(name, speed, location, eventTime, toNumber =
 
 export function formatIgnitionAlert(name, ignition, location, eventTime, toNumber = null, driver = null) {
   const extraLines = [];
-  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   return formatAlert(
     `${ignition ? '🔑 IGNITION ON' : '🔒 IGNITION OFF'} - ${name}`,
     ...extraLines,
@@ -217,13 +219,15 @@ export function formatIgnitionAlert(name, ignition, location, eventTime, toNumbe
 
 export function formatMotionAlert(name, location, eventTime, toNumber = null, driver = null) {
   const extraLines = [];
-  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   return formatAlert(`🟢 MOTION STARTED - ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
 }
 
 export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber = null, driver = null) {
   const extraLines = [];
-  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   return formatAlert(
     `🗺 LOCATION UPDATE - ${name}`,
     `📍 ${location}`,
@@ -236,13 +240,15 @@ export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime
 
 export function formatIdleAlert(name, location, eventTime, toNumber = null, driver = null) {
   const extraLines = [];
-  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   return formatAlert(`⏱ IDLING - ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
 }
 
 export function formatIdlingTooLongAlert(name, idleMinutes, fuel, location, eventTime, toNumber = null, driver = null) {
   const extraLines = [];
-  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   return formatAlert(
     `⏱ IDLING TOO LONG - ${name}`,
     `⏱ Idling for ${formatMinutes(idleMinutes)}`,
@@ -254,7 +260,8 @@ export function formatIdlingTooLongAlert(name, idleMinutes, fuel, location, even
 
 export function formatFuelAlert(name, fuel, location, eventTime, toNumber = null, driver = null) {
   const extraLines = [];
-  if (driver) extraLines.push(`👤 Driver: ${driver}`);
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   return formatAlert(
     `⛽ FUEL LOW - ${name}`,
     `Fuel: ${formatFuelLiters(fuel)} (Warning below ${LOW_FUEL_LITERS} L)`,
@@ -393,6 +400,7 @@ export function getVehicleModel(_vehicle) {
  * with the Travel Order number appended if an active link exists.
  */
 export function getVehicleDisplayName(vehicle) {
+  if (vehicle.to_display_name) return vehicle.to_display_name;
   const plate = extractPlateNumber(vehicle);
   const toNumber = getTravelOrderNumber(vehicle);
   return toNumber ? `${plate} (TO-${toNumber})` : plate;
@@ -598,9 +606,10 @@ export function getDriver(vehicle) {
   const raw = firstKey(vehicle, ['driver', 'driver_name', 'driverName', 'assigned_driver', 'assignedDriver']);
   // Cartrack sometimes returns driver as an object { name: "..." } instead of a plain string
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    return raw.name || raw.full_name || raw.display_name || raw.label || JSON.stringify(raw);
+    return raw.name || raw.full_name || raw.display_name || raw.label || null;
   }
-  return raw ? String(raw) : null;
+  const str = raw ? String(raw).trim() : '';
+  return str && !str.startsWith('{') ? str : null;
 }
 
 // ── Vehicle Status Builder ────────────────────────────────────
@@ -652,7 +661,7 @@ export async function buildVehicleStatus(vehicle) {
  *   When provided, this is used instead of the built-in Supabase lookup.
  */
 export async function syncFleetAndAlert(options = {}) {
-  const { resolveVehicleId: resolveFn } = options;
+  const { resolveVehicleId: resolveFn, driverOverrides = {}, toNumberOverrides = {}, noToVehicleIds = [] } = options;
   const data = await getFleetDataCached();
   const vehicles = extractVehicles(data);
   const vehicleStatuses = [];
@@ -680,8 +689,18 @@ export async function syncFleetAndAlert(options = {}) {
       continue;
     }
 
-    const name = getVehicleDisplayName(vehicle);
     const vid = resolvedVehicleId;
+    // Apply TO number override before display name is computed
+    const overrideToNumber = toNumberOverrides[vid];
+    if (overrideToNumber) {
+      const plate = extractPlateNumber(vehicle);
+      vehicle.to_display_name = `${plate} (${overrideToNumber})`;
+    } else if (noToVehicleIds.includes(vid)) {
+      // Vehicle has NO approved travel order for today
+      const plate = extractPlateNumber(vehicle);
+      vehicle.to_display_name = `${plate} (⚠️ No TO)`;
+    }
+    const name = getVehicleDisplayName(vehicle);
     const ignition = getIgnition(vehicle);
     const speed = getVehicleSpeed(vehicle);
     const fuel = getVehicleFuel(vehicle);
@@ -702,7 +721,7 @@ export async function syncFleetAndAlert(options = {}) {
     const moving = speed > 0;
     const idle = getIdleStatus(ignition, moving, prev, getVehicleIdleMinutes(vehicle));
     const toNumber = getTravelOrderNumber(vehicle);
-    const driver = getDriver(vehicle);
+    const driver = driverOverrides[vid] || getDriver(vehicle);
 
     const alerts = [];
     function pushAlert(type, message) {

@@ -71,6 +71,7 @@ const ALERT_TYPE_COLORS: Record<string, string> = {
   IGNITION_ON: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   IGNITION_OFF: 'bg-slate-50 text-slate-700 border-slate-200',
   IDLING: 'bg-amber-50 text-amber-700 border-amber-200',
+  NO_APPROVED_TRAVEL_ORDER: 'bg-red-50 text-red-700 border-red-200',
 };
 
 // ── Page Component ─────────────────────────────────────────────
@@ -458,18 +459,15 @@ export function GpsLogsPage() {
               <table className="w-full text-sm whitespace-nowrap">
                 <thead>
                   <tr className="border-b border-zinc-100 bg-brand-cream/50">
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">GPS Record No.</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Trip Date</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Departure Time</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Vehicle Plate No.</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Driver Name</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Origin (GPS Start)</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Destination (GPS End)</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Location</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Route / Road Taken</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Departure Time</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Arrival Time</th>
                     <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Distance (km)</th>
                     <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Engine Hours</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Moving Hrs</th>
                     <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Max Speed</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Trip Status</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Linked TO No.</th>
@@ -484,25 +482,22 @@ export function GpsLogsPage() {
                     const hasAnomaly = log.anomalyFlag && !log.toNumber;
                     return (
                       <tr key={log.id} className={cn('border-b border-zinc-50 transition-colors hover:bg-brand-cream/30', idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50/30', hasAnomaly && 'bg-red-50/40 hover:bg-red-50/60')}>
-                        <td className="px-4 py-3 font-mono text-xs font-medium text-zinc-900">{log.gpsRecordNo}</td>
-                        <td className="px-4 py-3 text-zinc-700">{formatDate(log.tripDate)}</td>
+                        <td className="px-4 py-3 text-zinc-600 text-xs">{formatDateTime(log.departureTimeGps)}</td>
                         <td className="px-4 py-3">
                           <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">{log.vehiclePlateNo}</span>
                         </td>
                         <td className="px-4 py-3 text-zinc-700">{log.driverName}</td>
-                        <td className="px-4 py-3 text-zinc-600 max-w-40 truncate" title={log.originGpsStartPoint}>{log.originGpsStartPoint}</td>
-                        <td className="px-4 py-3 text-zinc-600 max-w-40 truncate" title={log.destinationGpsEndPoint}>{log.destinationGpsEndPoint}</td>
+                        <td className="px-4 py-3 text-zinc-600 max-w-40 truncate" title={log.toOrigin || log.originGpsStartPoint}>{log.toOrigin || log.originGpsStartPoint}</td>
+                        <td className="px-4 py-3 text-zinc-600 max-w-40 truncate" title={log.toDestination || log.destinationGpsEndPoint}>{log.toDestination || log.destinationGpsEndPoint}</td>
                         <td className="px-4 py-3 text-zinc-600 max-w-45 truncate" title={log.locationName || undefined}>
                           {log.destinationVerified
                             ? <span className="text-brand-teal font-medium">{log.locationName || log.destinationGpsEndPoint}</span>
                             : <span className="text-zinc-500">{log.locationName || log.destinationGpsEndPoint}</span>
                           }
                         </td>
-                        <td className="px-4 py-3 text-zinc-600 max-w-45 truncate" title={log.actualRouteRoadTaken}>{log.actualRouteRoadTaken}</td>
-                        <td className="px-4 py-3 text-zinc-600 text-xs">{formatDateTime(log.departureTimeGps)}</td>
-                        <td className="px-4 py-3 text-zinc-600 text-xs">{formatDateTime(log.arrivalTimeGps)}</td>
                         <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{formatNumber(log.gpsDistanceKm, 1)}</td>
                         <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{formatNumber(log.engineHours, 1)}</td>
+                        <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{formatNumber(log.movingHours, 1)}</td>
                         <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{formatNumber(log.maxSpeedKph, 0)}</td>
                         <td className="px-4 py-3">
                           <span className={cn('inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium capitalize', STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600')}>
@@ -553,8 +548,6 @@ export function GpsLogsPage() {
                 <div key={log.id} className={cn('rounded-xl bg-white shadow-brand overflow-hidden', hasAnomaly && 'ring-1 ring-red-200')}>
                   <div className="flex items-center justify-between bg-brand-cream/60 px-4 py-3">
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-mono font-bold text-brand-teal truncate">{log.gpsRecordNo}</p>
-                      <p className="text-xs text-zinc-400 mt-0.5">{formatDate(log.tripDate)}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize', STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600')}>
@@ -573,24 +566,18 @@ export function GpsLogsPage() {
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                       <div>
                         <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Origin</p>
-                        <p className="text-xs text-zinc-700 truncate" title={log.originGpsStartPoint}>{log.originGpsStartPoint}</p>
+                        <p className="text-xs text-zinc-700 truncate" title={log.toOrigin || log.originGpsStartPoint}>{log.toOrigin || log.originGpsStartPoint}</p>
                       </div>
                       <div>
                         <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Destination</p>
-                        <p className="text-xs text-zinc-700 truncate" title={log.destinationGpsEndPoint}>{log.destinationGpsEndPoint}</p>
+                        <p className="text-xs text-zinc-700 truncate" title={log.toDestination || log.destinationGpsEndPoint}>{log.toDestination || log.destinationGpsEndPoint}</p>
                       </div>
                       <div>
-                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Location</p>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Route / Road Taken</p>
                         <p className={`text-xs truncate ${log.destinationVerified ? 'text-brand-teal font-medium' : 'text-zinc-700'}`} title={log.locationName || undefined}>
                           {log.locationName || log.destinationGpsEndPoint}
                         </p>
                       </div>
-                      {log.actualRouteRoadTaken && (
-                        <div className="col-span-2">
-                          <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Route</p>
-                          <p className="text-xs text-zinc-600 truncate">{log.actualRouteRoadTaken}</p>
-                        </div>
-                      )}
                       <div>
                         <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Departure</p>
                         <p className="text-xs text-zinc-700">{formatDateTime(log.departureTimeGps)}</p>
@@ -606,6 +593,10 @@ export function GpsLogsPage() {
                       <div>
                         <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Engine</p>
                         <p className="text-xs font-mono text-zinc-700">{formatNumber(log.engineHours, 1)} hrs</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Moving</p>
+                        <p className="text-xs font-mono text-zinc-700">{formatNumber(log.movingHours, 1)} hrs</p>
                       </div>
                       <div>
                         <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Max Speed</p>
@@ -690,6 +681,7 @@ export function GpsLogsPage() {
                 <option value="MOTION">Motion Started</option>
                 <option value="LOCATION_UPDATE">Location Update</option>
                 <option value="TRIP_STATE">Trip State</option>
+                <option value="NO_APPROVED_TRAVEL_ORDER">No Approved Travel Order</option>
               </select>
             </div>
             {alertTypeFilter && (
@@ -966,6 +958,8 @@ export function GpsLogsPage() {
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Driver</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Vehicle</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Location Update</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Departure Time</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Arrival Time</th>
                     <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Total Hrs</th>
                   </tr>
                 </thead>
@@ -979,6 +973,8 @@ export function GpsLogsPage() {
                         <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">{row.vehiclePlate}</span>
                       </td>
                       <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.lastLocation}>{row.lastLocation}</td>
+                      <td className="px-4 py-3 text-zinc-500 text-xs">{row.departureTime || '—'}</td>
+                      <td className="px-4 py-3 text-zinc-500 text-xs">{row.arrivalTime || '—'}</td>
                       <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{Number(row.totalHours).toFixed(1)} hrs</td>
                     </tr>
                   ))}
@@ -1016,6 +1012,14 @@ export function GpsLogsPage() {
                     <p className="text-xs text-zinc-700 truncate" title={row.lastLocation}>{row.lastLocation}</p>
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Departure Time</p>
+                      <p className="text-xs text-zinc-700">{row.departureTime || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Arrival Time</p>
+                      <p className="text-xs text-zinc-700">{row.arrivalTime || '—'}</p>
+                    </div>
                     <div>
                       <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Total Hrs</p>
                       <p className="text-xs font-mono text-zinc-700">{Number(row.totalHours).toFixed(1)} hrs</p>
