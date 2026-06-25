@@ -852,7 +852,7 @@ router.get('/reports', async (req: Request, res: Response) => {
     const dataParams = [...params, pageSize, offset];
     const dataResult = await pool.query(
       `WITH trip_legs AS (
-        -- Leg 1: Origin → Destination
+        -- Trip 1: Outbound (Origin → Destination)
         SELECT
           t.id as to_id,
           t.to_number,
@@ -866,7 +866,7 @@ router.get('/reports', async (req: Request, res: Response) => {
           v.plate_number,
           d.full_name as driver_name,
           1 as leg_number,
-          'Origin → Destination' as leg_description
+          'Outbound' as leg_description
         FROM travel_orders t
         LEFT JOIN vehicles v ON v.id = t.vehicle_id
         LEFT JOIN drivers d ON d.id = t.driver_id
@@ -876,7 +876,7 @@ router.get('/reports', async (req: Request, res: Response) => {
         
         UNION ALL
         
-        -- Leg 2: Destination → Origin (return trip)
+        -- Trip 2: Return (Destination → Origin)
         SELECT
           t.id as to_id,
           t.to_number,
@@ -890,7 +890,7 @@ router.get('/reports', async (req: Request, res: Response) => {
           v.plate_number,
           d.full_name as driver_name,
           2 as leg_number,
-          'Destination → Origin' as leg_description
+          'Return' as leg_description
         FROM travel_orders t
         LEFT JOIN vehicles v ON v.id = t.vehicle_id
         LEFT JOIN drivers d ON d.id = t.driver_id

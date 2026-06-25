@@ -373,6 +373,11 @@ export interface TravelReportRow {
   tripDate: string;
   departureTime: string | null;
   arrivalTime: string | null;
+  legNumber: number;
+  legDescription: string;
+  movingHours: string;
+  idlingHours: string;
+  totalHours: string;
 }
 
 export interface TravelReportsResult {

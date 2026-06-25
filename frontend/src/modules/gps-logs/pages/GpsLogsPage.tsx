@@ -8,7 +8,7 @@ import {
   fetchTrackedVehicles,
   fetchGpsAlerts,
   fetchTelemetry,
-  fetchOrderStatus,
+  fetchTravelReports,
   syncTrackingHistory,
   type GpsLogsResult,
   type SyncHistoryResult,
@@ -16,7 +16,7 @@ import {
   type EnrichedGpsTripLog,
   type GpsAlertRow,
   type TelemetryRow,
-  type OrderStatusRow,
+  type TravelReportRow,
 } from '../api/gps-logs-api';
 import { EditGpsLogModal } from '../components/EditGpsLogModal';
 
@@ -26,9 +26,11 @@ type TabKey = 'logs' | 'reports' | 'alerts' | 'telemetry';
 
 // ── Formatting Helpers ─────────────────────────────────────────
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | undefined | null): string {
+  if (!iso) return '—';
   // Parse YYYY-MM-DD as local time to avoid timezone shift
   const [year, month, day] = iso.split('-').map(Number);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return '—';
   const d = new Date(year, month - 1, day);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
@@ -98,7 +100,7 @@ export function GpsLogsPage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
 
   // Reports state
-  const [reportsResult, setReportsResult] = useState<OrderStatusRow[] | null>(null);
+  const [reportsResult, setReportsResult] = useState<TravelReportRow[] | null>(null);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsError, setReportsError] = useState<string | null>(null);
   const [reportsTotal, setReportsTotal] = useState(0);
@@ -309,11 +311,11 @@ export function GpsLogsPage() {
     try {
       setReportsLoading(true);
       setReportsError(null);
-      const data = await fetchOrderStatus({
-        page: reportsPage,
-        pageSize: reportsPageSize,
+      const data = await fetchTravelReports({
         vehicleId: reportsVehicleFilter || undefined,
         tripDate: reportsDateFilter || undefined,
+        page: reportsPage,
+        pageSize: reportsPageSize,
       });
       setReportsResult(data.data);
       setReportsTotal(data.total);
@@ -957,7 +959,7 @@ export function GpsLogsPage() {
                   <tr className="border-b border-zinc-100 bg-brand-cream/50">
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Date</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">TO No.</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Leg</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Trip</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Driver</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Vehicle</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">From</th>
@@ -976,7 +978,7 @@ export function GpsLogsPage() {
                       <td className="px-4 py-3 text-zinc-600 text-xs font-mono">{row.toNumber}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium bg-brand-teal/10 text-brand-teal border-brand-teal/20">
-                          Leg {row.legNumber}
+                          {row.legDescription}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-zinc-700">{row.driverName}</td>
@@ -1022,7 +1024,6 @@ export function GpsLogsPage() {
                     <span className="text-sm text-zinc-700 truncate">{row.driverName}</span>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Leg {row.legNumber}</p>
                     <p className="text-xs text-brand-teal font-medium truncate" title={row.legDescription}>{row.legDescription}</p>
                   </div>
                   <div>
