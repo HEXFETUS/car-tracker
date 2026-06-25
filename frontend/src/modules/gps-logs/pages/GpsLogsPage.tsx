@@ -957,9 +957,12 @@ export function GpsLogsPage() {
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">TO No.</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Driver</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Vehicle</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Location Update</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Origin</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Destination</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Departure Time</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Arrival Time</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Moving Hrs</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Idling Hrs</th>
                     <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Total Hrs</th>
                   </tr>
                 </thead>
@@ -972,10 +975,13 @@ export function GpsLogsPage() {
                       <td className="px-4 py-3">
                         <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">{row.vehiclePlate}</span>
                       </td>
-                      <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.lastLocation}>{row.lastLocation}</td>
+                      <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.origin}>{row.origin}</td>
+                      <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.destination}>{row.destination}</td>
                       <td className="px-4 py-3 text-zinc-500 text-xs">{row.departureTime || '—'}</td>
                       <td className="px-4 py-3 text-zinc-500 text-xs">{row.arrivalTime || '—'}</td>
-                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{Number(row.totalHours).toFixed(1)} hrs</td>
+                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{Number(row.movingHours) > 0 ? `${Number(row.movingHours).toFixed(1)} hrs` : ''}</td>
+                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{Number(row.idlingHours) > 0 ? `${Number(row.idlingHours).toFixed(1)} hrs` : ''}</td>
+                      <td className="px-4 py-3 text-right text-zinc-700 tabular-nums font-medium">{Number(row.totalHours) > 0 ? `${Number(row.totalHours).toFixed(1)} hrs` : ''}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1008,23 +1014,35 @@ export function GpsLogsPage() {
                     <span className="text-sm text-zinc-700 truncate">{row.driverName}</span>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Location Update</p>
-                    <p className="text-xs text-zinc-700 truncate" title={row.lastLocation}>{row.lastLocation}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Origin</p>
+                    <p className="text-xs text-zinc-700 truncate" title={row.origin}>{row.origin}</p>
                   </div>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Departure Time</p>
-                      <p className="text-xs text-zinc-700">{row.departureTime || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Arrival Time</p>
-                      <p className="text-xs text-zinc-700">{row.arrivalTime || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Total Hrs</p>
-                      <p className="text-xs font-mono text-zinc-700">{Number(row.totalHours).toFixed(1)} hrs</p>
-                    </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Destination</p>
+                    <p className="text-xs text-zinc-700 truncate" title={row.destination}>{row.destination}</p>
                   </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Departure Time</p>
+                        <p className="text-xs text-zinc-700">{row.departureTime || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Arrival Time</p>
+                        <p className="text-xs text-zinc-700">{row.arrivalTime || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Moving Hrs</p>
+                        <p className="text-xs font-mono text-zinc-700">{Number(row.movingHours) > 0 ? `${Number(row.movingHours).toFixed(1)} hrs` : ''}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Idling Hrs</p>
+                        <p className="text-xs font-mono text-zinc-700">{Number(row.idlingHours) > 0 ? `${Number(row.idlingHours).toFixed(1)} hrs` : ''}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Total Hrs</p>
+                        <p className="text-xs font-mono text-zinc-700 font-medium">{Number(row.totalHours) > 0 ? `${Number(row.totalHours).toFixed(1)} hrs` : ''}</p>
+                      </div>
+                    </div>
                 </div>
               </div>
             ))}

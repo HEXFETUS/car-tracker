@@ -418,6 +418,8 @@ export interface OrderStatusRow {
   ignition: boolean;
   eventType: string;
   totalHours: number;
+  movingHours: number;
+  idlingHours: number;
   departureTime: string | null;
   arrivalTime: string | null;
 }
