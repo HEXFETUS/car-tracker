@@ -27,7 +27,9 @@ type TabKey = 'logs' | 'reports' | 'alerts' | 'telemetry';
 // ── Formatting Helpers ─────────────────────────────────────────
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
+  // Parse YYYY-MM-DD as local time to avoid timezone shift
+  const [year, month, day] = iso.split('-').map(Number);
+  const d = new Date(year, month - 1, day);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
