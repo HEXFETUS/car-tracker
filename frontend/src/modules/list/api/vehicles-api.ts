@@ -1,4 +1,4 @@
-import type { Vehicle, ApiResponse } from '@car-tracker/shared';
+import type { Vehicle, ApiResponse } from '@/shared/types';
 import { API_BASE } from '@/shared/api';
 
 export async function fetchVehicles(): Promise<Vehicle[]> {

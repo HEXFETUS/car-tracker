@@ -1,4 +1,4 @@
-import type { ApiResponse } from '@car-tracker/shared';
+import type { ApiResponse } from '@/shared/types';
 import { API_BASE } from '@/shared/api';
 
 /** Fetch the next available TO sequence number for the current year. */

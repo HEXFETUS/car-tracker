@@ -1,4 +1,4 @@
-import type { Maintenance, ApiResponse } from '@car-tracker/shared';
+import type { Maintenance, ApiResponse } from '@/shared/types';
 import { API_BASE } from '@/shared/api';
 
 export async function fetchMaintenanceRecords(): Promise<Maintenance[]> {

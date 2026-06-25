@@ -1,4 +1,4 @@
-import type { Car, MaintenanceRecord, ActivityEntry, User } from '@car-tracker/shared';
+import type { Car, MaintenanceRecord, ActivityEntry, User } from '@/shared/types';
 
 export const MOCK_USER: User = {
   id: '1',

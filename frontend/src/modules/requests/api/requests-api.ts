@@ -1,4 +1,4 @@
-import type { ApiResponse } from '@car-tracker/shared';
+import type { ApiResponse } from '@/shared/types';
 import { API_BASE } from '@/shared/api';
 
 /** Shape of a pending travel order from the /api/travel-orders/pending endpoint. */
