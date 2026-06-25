@@ -30,7 +30,6 @@ async function checkSchema() {
   `);
   console.log('\nColumns:');
   columns.rows.forEach((col: { column_name: string; data_type: string; is_nullable: string }) => {
-  columns.rows.forEach((col: { column_name: string; data_type: string; is_nullable: string }) => {
     console.log(`  - ${col.column_name} (${col.data_type}, nullable: ${col.is_nullable})`);
   });
   
@@ -54,7 +53,6 @@ async function checkSchema() {
     console.log('  None found');
   } else {
     fks.rows.forEach((fk: { column_name: string; foreign_table_name: string; foreign_column_name: string }) => {
-    fks.rows.forEach((fk: { column_name: string; foreign_table_name: string; foreign_column_name: string }) => {
       console.log(`  - ${fk.column_name} → ${fk.foreign_table_name}.${fk.foreign_column_name}`);
     });
   }
@@ -69,7 +67,6 @@ async function checkSchema() {
   if (policies.rows.length === 0) {
     console.log('  None found');
   } else {
-    policies.rows.forEach((p: { policyname: string; cmd: string; roles: string[] }) => {
     policies.rows.forEach((p: { policyname: string; cmd: string; roles: string[] }) => {
       console.log(`  - ${p.policyname}`);
       console.log(`    Command: ${p.cmd}, Roles: ${p.roles.join(', ')}`);
