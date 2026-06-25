@@ -987,8 +987,12 @@ export function GpsLogsPage() {
                       </td>
                       <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.from}>{row.from}</td>
                       <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.to}>{row.to}</td>
-                      <td className="px-4 py-3 text-zinc-500 text-xs">{row.departureTime || '—'}</td>
-                      <td className="px-4 py-3 text-zinc-500 text-xs">{row.arrivalTime || '—'}</td>
+                      <td className="px-4 py-3 text-zinc-500 text-xs">
+                        {row.legDescription === 'Return' ? (row.departureTime || '—') : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-500 text-xs">
+                        {row.legDescription === 'Outbound' ? (row.arrivalTime || '—') : '—'}
+                      </td>
                       <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{Number(row.movingHours) > 0 ? `${Number(row.movingHours).toFixed(1)} hrs` : ''}</td>
                       <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{Number(row.idlingHours) > 0 ? `${Number(row.idlingHours).toFixed(1)} hrs` : ''}</td>
                       <td className="px-4 py-3 text-right text-zinc-700 tabular-nums font-medium">{Number(row.totalHours) > 0 ? `${Number(row.totalHours).toFixed(1)} hrs` : ''}</td>
@@ -1036,12 +1040,16 @@ export function GpsLogsPage() {
                   </div>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                       <div>
-                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Departure Time</p>
-                        <p className="text-xs text-zinc-700">{row.departureTime || '—'}</p>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Departure</p>
+                        <p className="text-xs text-zinc-700">
+                          {row.legDescription === 'Return' ? (row.departureTime || '—') : '—'}
+                        </p>
                       </div>
                       <div>
-                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Arrival Time</p>
-                        <p className="text-xs text-zinc-700">{row.arrivalTime || '—'}</p>
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Arrival</p>
+                        <p className="text-xs text-zinc-700">
+                          {row.legDescription === 'Outbound' ? (row.arrivalTime || '—') : '—'}
+                        </p>
                       </div>
                       <div>
                         <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Moving Hrs</p>

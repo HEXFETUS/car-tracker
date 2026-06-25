@@ -913,12 +913,12 @@ router.get('/reports', async (req: Request, res: Response) => {
           tl.driver_name,
           tl.to_number,
           tl.leg_description,
-          -- Departure: first movement within 2km of start
+          -- Departure: first movement within 100m of start
           MIN(CASE 
             WHEN gt.speed_kmh > 0 
               AND (
                 SELECT haversine_distance(tl.start_coords, CONCAT(gt.latitude, ',', gt.longitude)) / 1000.0
-              ) <= 2.0
+              ) <= 0.1
             THEN gt.recorded_at 
           END) as departure_time,
           -- Arrival: first point within 100m of end
