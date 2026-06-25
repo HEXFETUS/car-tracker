@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, ClipboardCheck, Eye, CalendarDays, List, ChevronLeft, ChevronRight, Clock, User, Car } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
+import { useAuth } from '@/modules/auth/context/auth-context';
+import { canAccessTab } from '@/shared/config/role-access';
 import {
   fetchForRequestOrders,
   fetchScheduledOrders,
@@ -26,7 +28,21 @@ const MONTHS = [
 
 export function RequestsPage() {
   const { toast } = useNotification();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabKey>('request');
+
+  // Filter tabs based on user role
+  const visibleTabs = useMemo(() => {
+    if (!user) return [];
+    return TABS.filter((tab) => canAccessTab('requests', tab.key, user.userType));
+  }, [user]);
+
+  // Ensure activeTab is always visible; reset to first visible tab if current is hidden
+  const safeActiveTab = useMemo(() => {
+    if (visibleTabs.length === 0) return activeTab;
+    const isVisible = visibleTabs.some((t) => t.key === activeTab);
+    return isVisible ? activeTab : visibleTabs[0].key;
+  }, [activeTab, visibleTabs]);
 
   // Request tab state
   const [forRequestOrders, setForRequestOrders] = useState<PendingTravelOrder[]>([]);
@@ -199,7 +215,7 @@ export function RequestsPage() {
       {/* Tab Bar — scrollable on mobile */}
       <div className="border-b border-zinc-200">
         <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="Travel request tabs">
-          {TABS.map((tab) => {
+          {visibleTabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
@@ -207,12 +223,12 @@ export function RequestsPage() {
                 onClick={() => setActiveTab(tab.key)}
                 className={`
                   inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
-                  ${activeTab === tab.key
+                  ${safeActiveTab === tab.key
                     ? 'border-brand-teal text-brand-teal'
                     : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
                   }
                 `}
-                aria-current={activeTab === tab.key ? 'page' : undefined}
+                aria-current={safeActiveTab === tab.key ? 'page' : undefined}
               >
                 <Icon className="size-4" />
                 {tab.label}

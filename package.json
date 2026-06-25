@@ -2,6 +2,7 @@
   "name": "car-tracker",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@10.25.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -n frontend,backend -c cyan,green \"pnpm run dev:frontend\" \"pnpm run dev:backend\"",

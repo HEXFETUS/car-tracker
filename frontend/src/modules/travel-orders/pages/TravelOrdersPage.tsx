@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useMemo } from 'react';
 import { Plus, Loader2, Eye, Clock, ClipboardCheck, CheckCircle, XCircle } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { NewTravelOrderModal } from '../components/NewTravelOrderModal';
 import { TravelOrderDetailsModal } from '../components/TravelOrderDetailsModal';
+import { useAuth } from '@/modules/auth/context/auth-context';
+import { canAccessTab } from '@/shared/config/role-access';
 import {
   fetchPendingOrders,
   fetchForApprovalOrders,
@@ -36,6 +39,7 @@ const TABS: { key: TabKey; label: string; icon: typeof Clock }[] = [
 
 export function TravelOrdersPage() {
   const { toast, confirm } = useNotification();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabKey>('pending');
   const [orders, setOrders] = useState<TravelOrderData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,15 +47,28 @@ export function TravelOrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<TravelOrderData | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
 
+  // Filter tabs based on user role
+  const visibleTabs = useMemo(() => {
+    if (!user) return [];
+    return TABS.filter((tab) => canAccessTab('travel-orders', tab.key, user.userType));
+  }, [user]);
+
+  // Ensure activeTab is always visible; reset to first visible tab if current is hidden
+  const safeActiveTab = useMemo(() => {
+    if (visibleTabs.length === 0) return activeTab;
+    const isVisible = visibleTabs.some((t) => t.key === activeTab);
+    return isVisible ? activeTab : visibleTabs[0].key;
+  }, [activeTab, visibleTabs]);
+
   const loadOrders = useCallback(async () => {
     try {
       setLoading(true);
       const data =
-        activeTab === 'pending'
+        safeActiveTab === 'pending'
           ? await fetchPendingOrders()
-          : activeTab === 'for-approval'
+          : safeActiveTab === 'for-approval'
             ? await fetchForApprovalOrders()
-            : activeTab === 'approved'
+            : safeActiveTab === 'approved'
               ? await fetchApprovedOrders()
               : await fetchCancelledOrders();
       setOrders(data);
@@ -60,7 +77,7 @@ export function TravelOrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab, toast]);
+  }, [safeActiveTab, toast]);
 
   useEffect(() => {
     loadOrders();
@@ -136,7 +153,7 @@ export function TravelOrdersPage() {
       {/* Tab Bar + New Travel Order button — mobile: separate, desktop: inline */}
       <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between border-b border-zinc-200">
         <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="Travel order tabs">
-          {TABS.map((tab) => {
+          {visibleTabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
@@ -148,12 +165,12 @@ export function TravelOrdersPage() {
                 className={`
                   inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
                   ${
-                    activeTab === tab.key
+                    safeActiveTab === tab.key
                       ? 'border-brand-teal text-brand-teal'
                       : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
                   }
                 `}
-                aria-current={activeTab === tab.key ? 'page' : undefined}
+                aria-current={safeActiveTab === tab.key ? 'page' : undefined}
               >
                 <Icon className="size-4" />
                 {tab.label}
@@ -188,11 +205,11 @@ export function TravelOrdersPage() {
         <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
           <Loader2 className="size-8 text-brand-teal animate-spin mb-3" />
           <p className="text-base font-medium text-zinc-600">
-            {activeTab === 'pending'
+            {safeActiveTab === 'pending'
               ? 'Loading unassigned orders…'
-              : activeTab === 'for-approval'
+              : safeActiveTab === 'for-approval'
                 ? 'Loading for-approval orders…'
-                : activeTab === 'approved'
+                : safeActiveTab === 'approved'
                   ? 'Loading approved orders…'
                   : 'Loading cancelled orders…'}
           </p>
@@ -200,20 +217,20 @@ export function TravelOrdersPage() {
       ) : orders.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
           <p className="text-base font-medium text-zinc-600">
-            {activeTab === 'pending'
+            {safeActiveTab === 'pending'
               ? 'No unassigned travel orders'
-              : activeTab === 'for-approval'
+              : safeActiveTab === 'for-approval'
                 ? 'No orders pending approval'
-                : activeTab === 'approved'
+                : safeActiveTab === 'approved'
                   ? 'No approved travel orders'
                   : 'No cancelled travel orders'}
           </p>
           <p className="mt-1 text-sm text-zinc-400">
-            {activeTab === 'pending'
+            {safeActiveTab === 'pending'
               ? 'Create a new travel order and assign a vehicle & driver to get started.'
-              : activeTab === 'for-approval'
+              : safeActiveTab === 'for-approval'
                 ? 'Assigned orders will appear here once vehicle & driver are set.'
-                : activeTab === 'approved'
+                : safeActiveTab === 'approved'
                   ? 'Approved orders will appear here once they are approved.'
                   : 'Cancelled orders will appear here once they are rejected or cancelled.'}
           </p>

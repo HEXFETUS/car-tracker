@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useMemo } from 'react';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import { NavLink, useLocation } from 'react-router';
 import {
@@ -19,8 +19,9 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { useState } from 'react';
 import { PasswordModal, AccountModal } from './UserModals';
+import { canAccessNav } from '@/shared/config/role-access';
 
-const NAV_ITEMS = [
+const ALL_NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/travel-orders', label: 'Travel Orders', icon: Plane },
   { to: '/travel-requests', label: 'Travel Requests', icon: ClipboardCheck },
@@ -36,6 +37,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [modalType, setModalType] = useState<'password' | 'account' | null>(null);
+
+  // Filter nav items based on user role
+  const NAV_ITEMS = useMemo(() => {
+    if (!user) return [];
+    return ALL_NAV_ITEMS.filter((item) => canAccessNav(item.to, user.userType));
+  }, [user]);
 
   return (
     <div className="flex flex-row min-h-screen bg-brand-pastel text-zinc-900">
@@ -57,11 +64,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
       >
         {/* Logo */}
         <div className="flex h-16 shrink-0 items-center gap-2.5 px-6">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-brand-teal">
-            <Car className="size-4 text-white" />
-          </div>
+          <img src="/LogoOnly.png" alt="HexCar Tracker" className="h-8 w-8 object-contain" />
           <span className="text-lg font-bold tracking-tight text-brand-teal">
-            CarTracker
+            HexCar Tracker
           </span>
         </div>
 
@@ -117,7 +122,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
               <Menu className="size-5" />
             </button>
             <span className="text-base font-bold tracking-tight text-brand-teal">
-              CarTracker
+              HexCar Tracker
             </span>
           </div>
 
