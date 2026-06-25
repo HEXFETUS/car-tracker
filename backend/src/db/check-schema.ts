@@ -4,7 +4,7 @@
  * Run with: npx tsx src/db/check-schema.ts
  */
 
-import { getPool } from './db/db.js';
+import { getPool } from '../db/db.js';
 
 async function checkSchema() {
   const pool = getPool();
@@ -29,7 +29,7 @@ async function checkSchema() {
     ORDER BY ordinal_position;
   `);
   console.log('\nColumns:');
-  columns.rows.forEach(col => {
+  columns.rows.forEach((col: { column_name: string; data_type: string; is_nullable: string }) => {
     console.log(`  - ${col.column_name} (${col.data_type}, nullable: ${col.is_nullable})`);
   });
   
@@ -52,7 +52,7 @@ async function checkSchema() {
   if (fks.rows.length === 0) {
     console.log('  None found');
   } else {
-    fks.rows.forEach(fk => {
+    fks.rows.forEach((fk: { column_name: string; foreign_table_name: string; foreign_column_name: string }) => {
       console.log(`  - ${fk.column_name} → ${fk.foreign_table_name}.${fk.foreign_column_name}`);
     });
   }
@@ -67,7 +67,7 @@ async function checkSchema() {
   if (policies.rows.length === 0) {
     console.log('  None found');
   } else {
-    policies.rows.forEach(p => {
+    policies.rows.forEach((p: { policyname: string; cmd: string; roles: string[] }) => {
       console.log(`  - ${p.policyname}`);
       console.log(`    Command: ${p.cmd}, Roles: ${p.roles.join(', ')}`);
     });
