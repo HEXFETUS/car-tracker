@@ -404,7 +404,7 @@ export async function fetchTravelReports(params: {
 export interface OrderStatusRow {
   id: string;
   toNumber: string;
-  travelDate: string;
+  tripDate: string;
   driverName: string;
   vehiclePlate: string;
   vehicleId: string;
@@ -422,6 +422,10 @@ export interface OrderStatusRow {
   idlingHours: number;
   departureTime: string | null;
   arrivalTime: string | null;
+  legNumber: number;
+  legDescription: string;
+  from: string;
+  to: string;
 }
 
 export interface OrderStatusResult {

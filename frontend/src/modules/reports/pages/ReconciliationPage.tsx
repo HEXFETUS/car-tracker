@@ -193,7 +193,7 @@ export function ReconciliationPage() {
                           </span>
                         )}
                       </td>
-                      <td className="max-w-[200px] px-4 py-4">
+                      <td className="max-w-50 px-4 py-4">
                         {isEditing ? (
                           <div className="flex items-center gap-1">
                             <input

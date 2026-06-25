@@ -817,7 +817,7 @@ router.get('/order-status', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/gps-logs/reports — Travel reports with TO, Driver, Vehicle, Travel Hours
+// GET /api/gps-logs/reports — Travel reports with TO, Driver, Vehicle, Travel Hours (Two-way trips)
 router.get('/reports', async (req: Request, res: Response) => {
   try {
     const pool = getPool();
@@ -841,63 +841,104 @@ router.get('/reports', async (req: Request, res: Response) => {
 
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-    // Count total
+    // Count total (each TO can have 2 legs)
     const countResult = await pool.query<{ total: string }>(
-      `SELECT COUNT(*) AS total FROM travel_orders t ${whereClause}`,
+      `SELECT COUNT(*) * 2 AS total FROM travel_orders t ${whereClause}`,
       params,
     );
     const total = parseInt(countResult.rows[0]?.total || '0', 10);
 
-    // Fetch reports with hour calculations from telemetry
+    // Fetch reports with two-way trip calculations
     const dataParams = [...params, pageSize, offset];
     const dataResult = await pool.query(
-      `WITH departure_times AS (
+      `WITH trip_legs AS (
+        -- Leg 1: Origin → Destination
         SELECT
+          t.id as to_id,
+          t.to_number,
+          t.origin_location as leg_start,
+          t.destination_target as leg_end,
+          t.lat_long_origin as start_coords,
+          t.lat_long_destination as end_coords,
           t.vehicle_id,
-          DATE(t.scheduled_departure) as travel_date,
-          MIN(gt.recorded_at) as departure_time_gps
+          t.driver_id,
+          t.scheduled_departure,
+          v.plate_number,
+          d.full_name as driver_name,
+          1 as leg_number,
+          'Origin → Destination' as leg_description
         FROM travel_orders t
-        JOIN gps_telemetry gt
-          ON gt.vehicle_id = t.vehicle_id
-          AND DATE(gt.recorded_at) = DATE(t.scheduled_departure)
+        LEFT JOIN vehicles v ON v.id = t.vehicle_id
+        LEFT JOIN drivers d ON d.id = t.driver_id
+        WHERE t.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
           AND t.lat_long_origin IS NOT NULL
-          AND t.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
-          AND gt.speed_kmh > 0
-        WHERE (
-          SELECT haversine_distance(t.lat_long_origin, CONCAT(gt.latitude, ',', gt.longitude)) / 1000.0
-        ) <= 2.0
-        GROUP BY t.vehicle_id, DATE(t.scheduled_departure)
-      ),
-      arrival_times AS (
-        SELECT
-          t.vehicle_id,
-          DATE(t.scheduled_departure) as travel_date,
-          MIN(gt.recorded_at) as arrival_time_gps
-        FROM travel_orders t
-        JOIN gps_telemetry gt
-          ON gt.vehicle_id = t.vehicle_id
-          AND DATE(gt.recorded_at) = DATE(t.scheduled_departure)
           AND t.lat_long_destination IS NOT NULL
-          AND t.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
-        WHERE (
-          SELECT haversine_distance(t.lat_long_destination, CONCAT(gt.latitude, ',', gt.longitude)) / 1000.0
-        ) <= 0.1
-        GROUP BY t.vehicle_id, DATE(t.scheduled_departure)
-      ),
-      telemetry_hours AS (
+        
+        UNION ALL
+        
+        -- Leg 2: Destination → Origin (return trip)
         SELECT
+          t.id as to_id,
+          t.to_number,
+          t.destination_target as leg_start,
+          t.origin_location as leg_end,
+          t.lat_long_destination as start_coords,
+          t.lat_long_origin as end_coords,
           t.vehicle_id,
-          DATE(t.scheduled_departure) as travel_date,
-          COALESCE(NULLIF(EXTRACT(EPOCH FROM (MAX(gt.recorded_at) - MIN(gt.recorded_at))) / 3600.0, 'NaN'), 0) as engine_hours,
+          t.driver_id,
+          t.scheduled_departure,
+          v.plate_number,
+          d.full_name as driver_name,
+          2 as leg_number,
+          'Destination → Origin' as leg_description
+        FROM travel_orders t
+        LEFT JOIN vehicles v ON v.id = t.vehicle_id
+        LEFT JOIN drivers d ON d.id = t.driver_id
+        WHERE t.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+          AND t.lat_long_origin IS NOT NULL
+          AND t.lat_long_destination IS NOT NULL
+      ),
+      leg_telemetry AS (
+        SELECT
+          tl.to_id,
+          tl.leg_number,
+          tl.leg_start,
+          tl.leg_end,
+          tl.start_coords,
+          tl.end_coords,
+          tl.vehicle_id,
+          tl.driver_id,
+          tl.scheduled_departure,
+          tl.plate_number,
+          tl.driver_name,
+          tl.to_number,
+          tl.leg_description,
+          -- Departure: first movement within 2km of start
+          MIN(CASE 
+            WHEN gt.speed_kmh > 0 
+              AND (
+                SELECT haversine_distance(tl.start_coords, CONCAT(gt.latitude, ',', gt.longitude)) / 1000.0
+              ) <= 2.0
+            THEN gt.recorded_at 
+          END) as departure_time,
+          -- Arrival: first point within 100m of end
+          MIN(CASE 
+            WHEN (
+              SELECT haversine_distance(tl.end_coords, CONCAT(gt.latitude, ',', gt.longitude)) / 1000.0
+            ) <= 0.1
+            THEN gt.recorded_at 
+          END) as arrival_time,
+          -- Total time
+          EXTRACT(EPOCH FROM (MAX(gt.recorded_at) - MIN(gt.recorded_at))) / 3600.0 as total_hours,
+          -- Moving hours
           COALESCE(NULLIF(SUM(
             CASE WHEN gt.speed_kmh > 0 AND time_diff IS NOT NULL THEN time_diff ELSE 0 END
           ) / 3600.0, 'NaN'), 0) as moving_hours
-        FROM travel_orders t
+        FROM trip_legs tl
         JOIN gps_telemetry gt
-          ON gt.vehicle_id = t.vehicle_id
-          AND DATE(gt.recorded_at) = DATE(t.scheduled_departure)
-          AND t.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
-        JOIN (
+          ON gt.vehicle_id = tl.vehicle_id
+          AND DATE(gt.recorded_at) = DATE(tl.scheduled_departure)
+        LEFT JOIN (
           SELECT
             id,
             vehicle_id,
@@ -912,74 +953,54 @@ router.get('/reports', async (req: Request, res: Response) => {
         ) td ON td.id = gt.id
           AND td.vehicle_id = gt.vehicle_id
           AND td.calc_date = DATE(gt.recorded_at)
-        GROUP BY t.vehicle_id, DATE(t.scheduled_departure)
+        GROUP BY tl.to_id, tl.leg_number, tl.leg_start, tl.leg_end, tl.start_coords, tl.end_coords,
+                 tl.vehicle_id, tl.driver_id, tl.scheduled_departure, tl.plate_number, 
+                 tl.driver_name, tl.to_number, tl.leg_description
       )
       SELECT
-        t.id,
-        t.to_number,
-        DATE(t.scheduled_departure) as travel_date,
-        t.origin_location as origin,
-        t.destination_target as destination,
-        t.status as to_status,
-        t.vehicle_id,
-        v.plate_number,
-        d.full_name as driver_name,
-        dt.departure_time_gps,
-        at.arrival_time_gps,
-        COALESCE(th.engine_hours, 0) as engine_hours,
-        COALESCE(th.moving_hours, 0) as moving_hours
-      FROM travel_orders t
-      LEFT JOIN vehicles v ON v.id = t.vehicle_id
-      LEFT JOIN drivers d ON d.id = t.driver_id
-      LEFT JOIN departure_times dt
-        ON dt.vehicle_id = t.vehicle_id
-        AND dt.travel_date = DATE(t.scheduled_departure)
-      LEFT JOIN arrival_times at
-        ON at.vehicle_id = t.vehicle_id
-        AND at.travel_date = DATE(t.scheduled_departure)
-      LEFT JOIN telemetry_hours th
-        ON th.vehicle_id = t.vehicle_id
-        AND th.travel_date = DATE(t.scheduled_departure)
-      ${whereClause}
-      ORDER BY t.scheduled_departure DESC, t.created_at DESC
+        lt.*,
+        DATE(lt.scheduled_departure) as travel_date
+      FROM leg_telemetry lt
+      ${whereClause.replace(/t\./g, 'lt.')}
+      ORDER BY lt.scheduled_departure DESC, lt.to_id DESC, lt.leg_number ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       dataParams,
     );
 
     const data = dataResult.rows.map((row) => {
-      const engineHours = isNaN(Number(row.engine_hours)) ? 0 : Number(row.engine_hours);
+      const totalHours = isNaN(Number(row.total_hours)) ? 0 : Number(row.total_hours);
       const movingHours = isNaN(Number(row.moving_hours)) ? 0 : Number(row.moving_hours);
-      const idlingHours = Math.max(0, engineHours - movingHours);
-      const totalHours = engineHours;
+      const idlingHours = Math.max(0, totalHours - movingHours);
       
       return {
-        id: row.id,
+        id: `${row.to_id}-leg${row.leg_number}`,
         toNumber: row.to_number || 'N/A',
         driverName: row.driver_name || 'Unknown',
         vehiclePlate: row.plate_number || 'Unknown',
-        travelHours: engineHours.toFixed(1),
+        legNumber: row.leg_number,
+        legDescription: row.leg_description,
+        from: row.leg_start || 'N/A',
+        to: row.leg_end || 'N/A',
+        tripDate: row.travel_date,
+        departureTime: row.departure_time
+          ? new Date(row.departure_time).toLocaleString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })
+          : null,
+        arrivalTime: row.arrival_time
+          ? new Date(row.arrival_time).toLocaleString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })
+          : null,
         movingHours: movingHours.toFixed(1),
         idlingHours: idlingHours.toFixed(1),
         totalHours: totalHours.toFixed(1),
-        from: row.origin || 'N/A',
-        to: row.destination || 'N/A',
-        tripDate: row.travel_date,
-        departureTime: row.departure_time_gps
-          ? new Date(row.departure_time_gps).toLocaleString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            })
-          : null,
-        arrivalTime: row.arrival_time_gps
-          ? new Date(row.arrival_time_gps).toLocaleString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            })
-          : null,
       };
     });
 

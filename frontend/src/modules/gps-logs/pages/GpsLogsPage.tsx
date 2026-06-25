@@ -955,28 +955,34 @@ export function GpsLogsPage() {
                   <tr className="border-b border-zinc-100 bg-brand-cream/50">
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Date</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">TO No.</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Leg</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Driver</th>
                     <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Vehicle</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Origin</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Destination</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Departure Time</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Arrival Time</th>
-                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Moving Hrs</th>
-                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Idling Hrs</th>
-                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Total Hrs</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">From</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">To</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Departure</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Arrival</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Moving</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Idling</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {reportsResult.map((row, idx) => (
                     <tr key={row.id} className={cn('border-b border-zinc-50 transition-colors hover:bg-brand-cream/30', idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50/30')}>
-                      <td className="px-4 py-3 text-zinc-700 text-xs">{formatDate(row.travelDate)}</td>
+                      <td className="px-4 py-3 text-zinc-700 text-xs">{formatDate(row.tripDate)}</td>
                       <td className="px-4 py-3 text-zinc-600 text-xs font-mono">{row.toNumber}</td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium bg-brand-teal/10 text-brand-teal border-brand-teal/20">
+                          Leg {row.legNumber}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-zinc-700">{row.driverName}</td>
                       <td className="px-4 py-3">
                         <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">{row.vehiclePlate}</span>
                       </td>
-                      <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.origin}>{row.origin}</td>
-                      <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.destination}>{row.destination}</td>
+                      <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.from}>{row.from}</td>
+                      <td className="px-4 py-3 text-zinc-600 max-w-60 truncate" title={row.to}>{row.to}</td>
                       <td className="px-4 py-3 text-zinc-500 text-xs">{row.departureTime || '—'}</td>
                       <td className="px-4 py-3 text-zinc-500 text-xs">{row.arrivalTime || '—'}</td>
                       <td className="px-4 py-3 text-right text-zinc-700 tabular-nums">{Number(row.movingHours) > 0 ? `${Number(row.movingHours).toFixed(1)} hrs` : ''}</td>
@@ -999,14 +1005,14 @@ export function GpsLogsPage() {
             </div>
           </div>
 
-          <div className="space-y-3 md:hidden">
-            {reportsResult.map((row) => (
-              <div key={row.id} className="rounded-xl bg-white shadow-brand overflow-hidden">
-                <div className="flex items-center justify-between bg-brand-cream/60 px-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-mono font-bold text-brand-teal truncate">{row.toNumber}</p>
-                    <p className="text-[10px] text-zinc-400 mt-0.5">{formatDate(row.travelDate)}</p>
-                  </div>
+                  <div className="space-y-3 md:hidden">
+                    {reportsResult.map((row) => (
+                      <div key={row.id} className="rounded-xl bg-white shadow-brand overflow-hidden">
+                        <div className="flex items-center justify-between bg-brand-cream/60 px-4 py-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-mono font-bold text-brand-teal truncate">{row.toNumber}</p>
+                            <p className="text-[10px] text-zinc-400 mt-0.5">{formatDate(row.tripDate)}</p>
+                          </div>
                 </div>
                 <div className="px-4 py-3 space-y-2">
                   <div className="flex items-center gap-2">
@@ -1014,12 +1020,16 @@ export function GpsLogsPage() {
                     <span className="text-sm text-zinc-700 truncate">{row.driverName}</span>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Origin</p>
-                    <p className="text-xs text-zinc-700 truncate" title={row.origin}>{row.origin}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Leg {row.legNumber}</p>
+                    <p className="text-xs text-brand-teal font-medium truncate" title={row.legDescription}>{row.legDescription}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Destination</p>
-                    <p className="text-xs text-zinc-700 truncate" title={row.destination}>{row.destination}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">From</p>
+                    <p className="text-xs text-zinc-700 truncate" title={row.from}>{row.from}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">To</p>
+                    <p className="text-xs text-zinc-700 truncate" title={row.to}>{row.to}</p>
                   </div>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                       <div>
