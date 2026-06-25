@@ -1,7 +1,7 @@
 {
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm --filter car-tracker-backend build && pnpm --filter car-tracker-frontend build && node scripts/verify-vercel-output.cjs",
-  "outputDirectory": "dist",
+  "buildCommand": "pnpm --filter car-tracker-backend build && pnpm --filter car-tracker-frontend build",
+  "outputDirectory": "frontend/dist",
   "framework": null,
   "functions": {
     "api/index.ts": {
