@@ -13,6 +13,8 @@ import settingsRouter from './routes/settings.js';
 import reportsRouter from './routes/reports.js';
 import maintenanceRouter from './routes/maintenance.js';
 import adminSyncRouter from './routes/admin-sync.js';
+import dashboardRouter from './routes/dashboard.js';
+import { requireRole } from './middleware/auth.js';
 
 const app: Application = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -30,15 +32,16 @@ app.get(['/api/health', '/health'], (_req, res) => {
 
 app.use(['/api/vehicles', '/vehicles'], vehiclesRouter);
 app.use(['/api/drivers', '/drivers'], driversRouter);
-app.use(['/api/travel-orders', '/travel-orders'], travelOrdersRouter);
+app.use(['/api/travel-orders', '/travel-orders'], requireRole, travelOrdersRouter);
 app.use(['/api/gps-logs', '/gps-logs'], gpsLogsRouter);
 app.use(['/api/cron', '/cron'], cronRouter);
 app.use(['/api/users', '/users'], usersRouter);
 app.use(['/api/auth', '/auth'], authRouter);
-app.use(['/api/settings', '/settings'], settingsRouter);
-app.use(['/api/reports', '/reports'], reportsRouter);
+app.use(['/api/settings', '/settings'], requireRole, settingsRouter);
+app.use(['/api/reports', '/reports'], requireRole, reportsRouter);
 app.use(['/api/maintenance', '/maintenance'], maintenanceRouter);
 app.use(['/api/admin/sync-tracking-history', '/admin/sync-tracking-history'], adminSyncRouter);
+app.use(['/api/dashboard', '/dashboard'], dashboardRouter);
 
 app.all(['/api/debug/routes', '/debug/routes'], (_req, res) => {
   res.json({ ok: true, message: 'debug route reached' });
