@@ -959,7 +959,7 @@ router.get('/reports', async (req: Request, res: Response) => {
       )
       SELECT
         lt.*,
-        DATE(lt.scheduled_departure) as travel_date
+        TO_CHAR(lt.scheduled_departure, 'YYYY-MM-DD') as travel_date
       FROM leg_telemetry lt
       ${whereClause.replace(/t\./g, 'lt.')}
       ORDER BY lt.scheduled_departure DESC, lt.to_id DESC, lt.leg_number ASC
@@ -981,7 +981,7 @@ router.get('/reports', async (req: Request, res: Response) => {
         legDescription: row.leg_description,
         from: row.leg_start || 'N/A',
         to: row.leg_end || 'N/A',
-        tripDate: row.travel_date,
+        tripDate: row.travel_date || new Date().toISOString().split('T')[0],
         departureTime: row.departure_time
           ? new Date(row.departure_time).toLocaleString('en-US', {
               month: 'short',
