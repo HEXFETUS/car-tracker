@@ -9,6 +9,7 @@ function sanitise(row) {
         username: row.username,
         userType: row.user_type,
         department: row.department,
+        picture: row.picture ?? undefined,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
