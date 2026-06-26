@@ -34,6 +34,7 @@ export interface VehicleOption {
   make: string;
   model: string;
   year: number;
+  underRepair?: boolean;
 }
 
 /** Shape of a driver from the /api/drivers endpoint. */
@@ -41,6 +42,7 @@ export interface DriverOption {
   id: string;
   fullName: string;
   phone: string;
+  status?: string;
 }
 
 /** Fetch all pending travel orders (PENDING status). */

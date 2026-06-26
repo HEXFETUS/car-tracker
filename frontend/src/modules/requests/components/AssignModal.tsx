@@ -183,11 +183,13 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
                   className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
                 >
                   <option value="">— Select a vehicle —</option>
-                  {vehicles.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.plateNumber} — {v.make} {v.model} ({v.year})
-                    </option>
-                  ))}
+                  {vehicles
+                    .filter((v) => !v.underRepair)
+                    .map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.plateNumber} — {v.make} {v.model} ({v.year})
+                      </option>
+                    ))}
                 </select>
                 <p className="mt-1 text-xs text-zinc-400">
                   Valid tracking plates: KAR6444, KAR6412, KAR6558
@@ -205,11 +207,13 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
                   className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
                 >
                   <option value="">— Select a driver —</option>
-                  {drivers.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.fullName}
-                    </option>
-                  ))}
+                  {drivers
+                    .filter((d) => d.status === 'active')
+                    .map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.fullName}
+                      </option>
+                    ))}
                 </select>
               </div>
             </>
