@@ -3,6 +3,6 @@ packages:
   - 'backend'
   - 'shared'
   - 'packages/*'
-allowBuilds:
-  bcrypt: true
-  esbuild: true
+onlyBuiltDependencies:
+  - bcrypt
+  - esbuild
