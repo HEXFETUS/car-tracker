@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Loader2, Navigation, AlertTriangle, Calendar, X, Car, History, Pencil } from 'lucide-react';
+import { useSearchParams } from 'react-router';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import { cn } from '@/shared/lib/utils';
@@ -83,7 +84,9 @@ const ALERT_TYPE_COLORS: Record<string, string> = {
 export function GpsLogsPage() {
   const { toast } = useNotification();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabKey>('logs');
+  const highlightedEntityId = searchParams.get('entityId');
 
   // Logs state
   const [result, setResult] = useState<GpsLogsResult | null>(null);
@@ -201,6 +204,19 @@ export function GpsLogsPage() {
   useEffect(() => {
     if (activeTab === 'alerts') loadAlerts();
   }, [activeTab, loadAlerts]);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'logs' || tab === 'reports' || tab === 'alerts' || tab === 'telemetry') {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!highlightedEntityId || activeTab !== 'alerts' || !alertsResult?.length) return;
+    const element = document.getElementById(`gps-alert-${highlightedEntityId}`);
+    element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activeTab, alertsResult, highlightedEntityId]);
 
   // ── Handlers ────────────────────────────────────────────────
   const handleSyncHistory = async () => {
@@ -762,7 +778,15 @@ export function GpsLogsPage() {
                   {alertsResult.map((alert, idx) => {
                     const plate = alert.vehiclePlate ?? 'Unknown';
                     return (
-                      <tr key={alert.id} className={cn('border-b border-zinc-50 transition-colors hover:bg-brand-cream/30', idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50/30')}>
+                      <tr
+                        id={`gps-alert-${alert.id}`}
+                        key={alert.id}
+                        className={cn(
+                          'border-b border-zinc-50 transition-colors hover:bg-brand-cream/30',
+                          idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50/30',
+                          highlightedEntityId === alert.id && 'bg-amber-50 ring-2 ring-inset ring-amber-300',
+                        )}
+                      >
                         <td className="px-4 py-3 text-zinc-600 text-xs">{formatAlertDateTime(alert.created_at)}</td>
                         <td className="px-4 py-3">
                           <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">{plate}</span>
@@ -797,7 +821,14 @@ export function GpsLogsPage() {
             {alertsResult.map((alert) => {
               const plate = alert.vehiclePlate ?? 'Unknown';
               return (
-                <div key={alert.id} className="rounded-xl bg-white shadow-brand overflow-hidden">
+                <div
+                  id={`gps-alert-${alert.id}`}
+                  key={alert.id}
+                  className={cn(
+                    'rounded-xl bg-white shadow-brand overflow-hidden',
+                    highlightedEntityId === alert.id && 'ring-2 ring-amber-300',
+                  )}
+                >
                   <div className="flex items-center justify-between bg-brand-cream/60 px-4 py-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-mono font-bold text-brand-teal truncate">{plate}</p>

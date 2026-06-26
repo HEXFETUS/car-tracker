@@ -3,6 +3,7 @@
 // Database operations for the gps_alerts table.
 
 import { getPool } from '../db/db.js';
+import { createNotificationForRoles } from './notificationService.js';
 
 export interface GpsAlertRow {
   id: string;
@@ -121,13 +122,22 @@ export async function createNoTravelOrderAlert(vehicleId: string, latitude: numb
   const plate = await getVehiclePlate(vehicleId);
   const locationText = locationName || 'Unknown location';
   const message = `Vehicle ${plate ?? 'Unknown'} is traveling without an approved travel order — Location: ${locationText}`;
-  return createGpsAlert({
+  const alert = await createGpsAlert({
     vehicleId,
     alertType: 'NO_APPROVED_TRAVEL_ORDER',
     alertMessage: message,
     latitude,
     longitude,
   });
+  await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER'], {
+    type: 'gps_alert',
+    title: 'GPS Alert',
+    message: `Trip has no linked Travel Order.\nVehicle: ${plate ?? 'Unknown'}`,
+    targetUrl: '/gps-logs',
+    targetTab: 'alerts',
+    entityId: alert.id,
+  });
+  return alert;
 }
 
 /**

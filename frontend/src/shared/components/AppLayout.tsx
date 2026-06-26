@@ -8,7 +8,6 @@ import {
   Settings,
   LogOut,
   Menu,
-  Bell,
   ChevronDown,
   Plane,
   MapPin,
@@ -20,6 +19,7 @@ import { cn } from '@/shared/lib/utils';
 import { useState } from 'react';
 import { PasswordModal, AccountModal } from './UserModals';
 import { canAccessNav } from '@/shared/config/role-access';
+import { NotificationBell } from '@/modules/notifications/components/NotificationBell';
 
 const ALL_NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -139,10 +139,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
           {/* Right: Actions */}
           <div className="flex items-center gap-1.5 lg:gap-3 ml-auto">
-            <button className="relative rounded-full p-2.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 min-h-[44px] min-w-[44px] flex items-center justify-center">
-              <Bell className="size-5" />
-              <span className="absolute right-2 top-2 size-2 rounded-full bg-red-500 ring-2 ring-white" />
-            </button>
+            <NotificationBell />
 
             <div className="relative hidden items-center gap-2 sm:flex">
               <button

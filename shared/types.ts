@@ -188,3 +188,25 @@ export interface AdminSyncResponse {
   message: string;
   elapsed_seconds: number;
 }
+
+// ── Notifications ────────────────────────────────────────────
+
+export type NotificationType =
+  | 'gps_alert'
+  | 'travel_request'
+  | 'announcement'
+  | 'system';
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  targetUrl: string;
+  targetTab?: string;
+  entityId?: string;
+  isRead: boolean;
+  createdAt: string;
+  readAt?: string;
+}

@@ -14,6 +14,7 @@ import reportsRouter from './routes/reports.js';
 import maintenanceRouter from './routes/maintenance.js';
 import adminSyncRouter from './routes/admin-sync.js';
 import dashboardRouter from './routes/dashboard.js';
+import notificationsRouter from './routes/notifications.js';
 import { requireRole } from './middleware/auth.js';
 
 const app: Application = express();
@@ -42,6 +43,7 @@ app.use(['/api/reports', '/reports'], requireRole, reportsRouter);
 app.use(['/api/maintenance', '/maintenance'], maintenanceRouter);
 app.use(['/api/admin/sync-tracking-history', '/admin/sync-tracking-history'], adminSyncRouter);
 app.use(['/api/dashboard', '/dashboard'], dashboardRouter);
+app.use(['/api/notifications', '/notifications'], notificationsRouter);
 
 app.all(['/api/debug/routes', '/debug/routes'], (_req, res) => {
   res.json({ ok: true, message: 'debug route reached' });
