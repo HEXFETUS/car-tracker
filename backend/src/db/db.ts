@@ -8,6 +8,24 @@ import { DATABASE_URL } from '../config/env.js';
 
 const { Pool } = pg;
 
+/**
+ * OID for `timestamp without time zone`.
+ * pg's default parser converts this to a Date object by interpreting
+ * the raw DB value as UTC, which breaks when the column stores
+ * Asia/Manila wall-clock time (see migration 028).
+ *
+ * We override the parser so the raw ISO string is preserved and
+ * suffixed with the +08:00 offset, ensuring the frontend always
+ * receives the correct local time.
+ */
+const TIMESTAMP_OID = 1114;
+
+pg.types.setTypeParser(TIMESTAMP_OID, (val: string) => {
+  if (!val) return null;
+  // Append +08:00 to the raw timestamp so it's treated as Asia/Manila local time
+  return val + '+08:00';
+});
+
 let pool: pg.Pool | null = null;
 
 /**
