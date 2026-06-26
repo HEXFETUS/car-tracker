@@ -294,6 +294,28 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     }
   }
 
+  /** Reset an APPROVED order back to FOR_APPROVAL status (Superadmin only) */
+  async function handleResetToForApproval() {
+    if (!order) return;
+    const confirmed = await confirm({
+      title: 'Reset to For Approval?',
+      message: `Reset ${order.toNumber} back to "For Approval" status? It will need to be approved again.`,
+      type: 'warning',
+    });
+    if (!confirmed) return;
+    setSaving(true);
+    try {
+      await updateTravelOrder(order.id, { status: 'FOR_APPROVAL', approvedBy: undefined });
+      toast('Travel order reset to For Approval!', 'success');
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      toast(err.message || 'Failed to reset travel order', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const statusBadge = (status: string) => {
     const colors: Record<string, string> = {
       PENDING: 'bg-yellow-100 text-yellow-800',
@@ -333,13 +355,13 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {!isEditing && canAssign && (
+            {!isEditing && (canAssign || (order?.status === 'APPROVED' && user?.userType === 'SUPERADMIN')) && (
               <>
                 <button
                   type="button"
                   onClick={() => setIsEditing(true)}
                   className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-brand-teal transition-colors"
-                  title="Edit / Assign"
+                  title={canAssign ? "Edit / Assign" : "Edit"}
                 >
                   <Pencil className="size-4" />
                 </button>
@@ -589,6 +611,19 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
               </span>
             )}
           </div>
+          {order.status === 'APPROVED' && user?.userType === 'SUPERADMIN' && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetToForApproval}
+                disabled={saving}
+                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+              >
+                {saving && <Loader2 className="size-4 animate-spin" />}
+                {saving ? 'Resetting...' : 'Reset to For Approval'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

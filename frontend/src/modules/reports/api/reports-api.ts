@@ -1,4 +1,5 @@
 import { API_BASE } from '@/shared/api';
+import { apiFetch } from '@/shared/api-client';
 import type { ReconciliationRecord } from '../types';
 
 export interface ReconciliationFilters {
@@ -18,7 +19,7 @@ export async function fetchReconciliation(
   if (filters.status) params.set('status', filters.status);
 
   const qs = params.toString();
-  const res = await fetch(`${API_BASE}/api/reports/reconciliation${qs ? `?${qs}` : ''}`);
+  const res = await apiFetch(`${API_BASE}/api/reports/reconciliation${qs ? `?${qs}` : ''}`);
   const body: { success: boolean; data: ReconciliationRecord[]; error?: string } = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch reconciliation data');
   return body.data;

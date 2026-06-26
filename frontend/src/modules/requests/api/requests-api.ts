@@ -1,5 +1,6 @@
 import type { ApiResponse } from '@/shared/types';
 import { API_BASE } from '@/shared/api';
+import { apiFetch } from '@/shared/api-client';
 
 /** Shape of a pending travel order from the /api/travel-orders/pending endpoint. */
 export interface PendingTravelOrder {
@@ -44,7 +45,7 @@ export interface DriverOption {
 
 /** Fetch all pending travel orders (PENDING status). */
 export async function fetchPendingTravelOrders(): Promise<PendingTravelOrder[]> {
-  const res = await fetch(`${API_BASE}/api/travel-orders/pending`);
+  const res = await apiFetch(`${API_BASE}/api/travel-orders/pending`);
   const body: ApiResponse<PendingTravelOrder[]> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch pending travel orders');
   return body.data;
@@ -52,7 +53,7 @@ export async function fetchPendingTravelOrders(): Promise<PendingTravelOrder[]> 
 
 /** Fetch all for-request travel orders (FOR_REQUEST status). */
 export async function fetchForRequestOrders(): Promise<PendingTravelOrder[]> {
-  const res = await fetch(`${API_BASE}/api/travel-orders/for-request`);
+  const res = await apiFetch(`${API_BASE}/api/travel-orders/for-request`);
   const body: ApiResponse<PendingTravelOrder[]> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch for-request travel orders');
   return body.data;
@@ -60,7 +61,7 @@ export async function fetchForRequestOrders(): Promise<PendingTravelOrder[]> {
 
 /** Fetch all scheduled travel orders (FOR_APPROVAL, APPROVED, ACTIVE with departure dates). */
 export async function fetchScheduledOrders(): Promise<PendingTravelOrder[]> {
-  const res = await fetch(`${API_BASE}/api/travel-orders/scheduled`);
+  const res = await apiFetch(`${API_BASE}/api/travel-orders/scheduled`);
   const body: ApiResponse<PendingTravelOrder[]> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch scheduled travel orders');
   return body.data;
@@ -68,7 +69,7 @@ export async function fetchScheduledOrders(): Promise<PendingTravelOrder[]> {
 
 /** Fetch all vehicles (for the dropdown). */
 export async function fetchVehicles(): Promise<VehicleOption[]> {
-  const res = await fetch(`${API_BASE}/api/vehicles`);
+  const res = await apiFetch(`${API_BASE}/api/vehicles`);
   const body: ApiResponse<VehicleOption[]> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch vehicles');
   return body.data;
@@ -76,7 +77,7 @@ export async function fetchVehicles(): Promise<VehicleOption[]> {
 
 /** Fetch all drivers (for the dropdown). */
 export async function fetchDrivers(): Promise<DriverOption[]> {
-  const res = await fetch(`${API_BASE}/api/drivers`);
+  const res = await apiFetch(`${API_BASE}/api/drivers`);
   const body: ApiResponse<DriverOption[]> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch drivers');
   return body.data;
@@ -87,7 +88,7 @@ export async function assignTravelOrder(
   orderId: string,
   payload: { vehicle_id: string; driver_id: string },
 ): Promise<PendingTravelOrder> {
-  const res = await fetch(`${API_BASE}/api/travel-orders/${orderId}/assign`, {
+  const res = await apiFetch(`${API_BASE}/api/travel-orders/${orderId}/assign`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -102,7 +103,7 @@ export async function updateTravelOrder(
   orderId: string,
   payload: Partial<{ status: string }>,
 ): Promise<PendingTravelOrder> {
-  const res = await fetch(`${API_BASE}/api/travel-orders/${orderId}`, {
+  const res = await apiFetch(`${API_BASE}/api/travel-orders/${orderId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
