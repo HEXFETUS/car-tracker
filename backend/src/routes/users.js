@@ -10,6 +10,7 @@ function sanitise(row) {
         username: row.username,
         userType: row.user_type,
         department: row.department,
+        picture: row.picture ?? undefined,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
@@ -75,15 +76,15 @@ router.post('/', async (req, res) => {
         res.status(500).json({ success: false, data: null, error: 'Database error' });
     }
 });
-// PUT /api/users/:id — Update user name, username, userType, or department
+// PUT /api/users/:id — Update user name, username, userType, department, or picture
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
-    const { name, username, userType, department } = req.body;
-    if (!name && !username && !userType && department === undefined) {
+    const { name, username, userType, department, picture } = req.body;
+    if (!name && !username && !userType && department === undefined && picture === undefined) {
         res.status(400).json({
             success: false,
             data: null,
-            error: 'At least one field (name, username, userType, department) must be provided',
+            error: 'At least one field (name, username, userType, department, picture) must be provided',
         });
         return;
     }
@@ -140,6 +141,10 @@ router.put('/:id', async (req, res) => {
         if (department !== undefined) {
             fields.push(`department = $${paramIndex++}`);
             values.push(department);
+        }
+        if (picture !== undefined) {
+            fields.push(`picture = $${paramIndex++}`);
+            values.push(picture);
         }
         fields.push(`updated_at = NOW()`);
         values.push(id);

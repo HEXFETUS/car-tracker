@@ -25,10 +25,10 @@ function sanitise(row: UserRow): AppUser {
     username: row.username,
     userType: row.user_type as AppUser['userType'],
     department: row.department,
+    picture: row.picture ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-  if (row.picture) result.picture = row.picture;
   return result;
 }
 

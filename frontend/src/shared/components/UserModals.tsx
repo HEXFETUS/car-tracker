@@ -14,7 +14,7 @@ interface PasswordModalProps {
 
 interface AccountModalProps {
   open: boolean;
-  currentUser: { id: string; name: string; username: string; department: string } | null;
+  currentUser: { id: string; name: string; username: string; department: string; picture?: string } | null;
   onClose: () => void;
 }
 
@@ -247,6 +247,7 @@ export function AccountModal({ open, currentUser, onClose }: AccountModalProps) 
       setUsername(currentUser.username ?? '');
       setName(currentUser.name ?? '');
       setPosition(currentUser.department ?? '');
+      setPhotoPreview(currentUser.picture ?? null);
     }
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -277,14 +278,12 @@ export function AccountModal({ open, currentUser, onClose }: AccountModalProps) 
 
     setSubmitting(true);
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, string | null> = {
         name: name.trim(),
         username: username.trim(),
         department: position.trim(),
+        picture: photoPreview ?? null,
       };
-      if (photoPreview) {
-        body.picture = photoPreview;
-      }
 
       const response = await fetch(`${API_BASE}/api/users/${currentUser!.id}`, {
         method: 'PUT',
@@ -299,7 +298,8 @@ export function AccountModal({ open, currentUser, onClose }: AccountModalProps) 
         return;
       }
 
-      // Reload page so user info in sidebar/header reflects changes
+      // Save updated user data to localStorage before reloading
+      localStorage.setItem('car-tracker-user', JSON.stringify(json.data));
       window.location.reload();
     } catch (err) {
       setError('Network error. Please try again.');

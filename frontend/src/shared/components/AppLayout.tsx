@@ -97,9 +97,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
         {/* User area at bottom */}
         <div className="shrink-0 p-4">
           <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-full bg-brand-moss/50 text-sm font-semibold text-brand-teal">
-              {user?.name?.charAt(0) ?? 'A'}
-            </div>
+            {user?.picture ? (
+              <img
+                src={user.picture}
+                alt={user.name}
+                className="size-9 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex size-9 items-center justify-center rounded-full bg-brand-moss/50 text-sm font-semibold text-brand-teal">
+                {user?.name?.charAt(0) ?? 'A'}
+              </div>
+            )}
             <div className="flex-1 truncate">
               <p className="text-sm font-medium text-zinc-900">{user?.name}</p>
               <p className="text-xs text-zinc-400">{user?.department}</p>
@@ -145,9 +153,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 aria-label="User menu"
                 aria-expanded={userMenuOpen}
               >
-                <div className="flex size-8 items-center justify-center rounded-full bg-zinc-200 text-sm font-semibold text-zinc-700">
-                  {user?.name?.charAt(0) ?? 'A'}
-                </div>
+                {user?.picture ? (
+                  <img
+                    src={user.picture}
+                    alt={user.name}
+                    className="size-8 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex size-8 items-center justify-center rounded-full bg-zinc-200 text-sm font-semibold text-zinc-700">
+                    {user?.name?.charAt(0) ?? 'A'}
+                  </div>
+                )}
                 <div className="text-right text-sm leading-tight">
                   <p className="font-medium text-zinc-900">{user?.name}</p>
                   <p className="text-xs text-zinc-400">{user?.department}</p>
