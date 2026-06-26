@@ -69,26 +69,6 @@ function fmtCost(n: number): string {
   return '₱' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// ── KPI Card Component ────────────────────────────────────────
-function KpiCard({ icon: Icon, label, value, color, subtitle }: {
-  icon: React.ElementType;
-  label: string;
-  value: string | number;
-  color: string;
-  subtitle?: string;
-}) {
-  return (
-    <div className="rounded-xl bg-white p-4 shadow-brand transition-all hover:shadow-brand-lg">
-      <div className={cn('rounded-lg p-2.5 w-fit', color)}>
-        <Icon className="size-5" />
-      </div>
-      <p className="mt-3 text-2xl font-bold text-zinc-900">{value}</p>
-      <p className="mt-0.5 text-sm text-zinc-500">{label}</p>
-      {subtitle && <p className="text-xs text-zinc-400 mt-0.5">{subtitle}</p>}
-    </div>
-  );
-}
-
 // ── Section Card Wrapper ──────────────────────────────────────
 function SectionCard({ title, icon: Icon, children, className }: {
   title: string;
@@ -106,23 +86,6 @@ function SectionCard({ title, icon: Icon, children, className }: {
       )}
       {children}
     </div>
-  );
-}
-
-// ── KPI Group Section ────────────────────────────────────────
-function KpiGridSection({ title, icon: Icon, items }: {
-  title: string;
-  icon?: React.ElementType;
-  items: { icon: React.ElementType; label: string; value: string | number; color: string }[];
-}) {
-  return (
-    <SectionCard title={title} icon={Icon}>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {items.map((item) => (
-          <KpiCard key={item.label} {...item} />
-        ))}
-      </div>
-    </SectionCard>
   );
 }
 

@@ -31,16 +31,6 @@ function generateToNumber(seq: number): string {
   return `TO-${year}-${String(seq).padStart(4, '0')}`;
 }
 
-function getCurrentDatetimeLocal(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
-
 export function NewTravelOrderModal({
   isOpen,
   onClose,
@@ -52,7 +42,8 @@ export function NewTravelOrderModal({
   const [travelerName, setTravelerName] = useState('');
   const [departureDateTime, setDepartureDateTime] = useState('');
   const [returnDateTime, setReturnDateTime] = useState('');
-  const [boundFrom, setBoundFrom] = useState('VLC Tower 1');
+  const defaultOrigin = 'Trade Street, Zone 1, Pueblo de Oro, Balulang, Cagayan de Oro, Northern Mindanao, 9000, Philippines';
+  const [boundFrom, setBoundFrom] = useState(defaultOrigin);
   const [boundTo, setBoundTo] = useState('');
   const [purpose, setPurpose] = useState('');
   const [requestVehicle, setRequestVehicle] = useState(false);
@@ -90,9 +81,9 @@ export function NewTravelOrderModal({
     if (isOpen) {
       setDepartment('');
       setTravelerName('');
-      setDepartureDateTime(getCurrentDatetimeLocal());
-      setReturnDateTime(getCurrentDatetimeLocal());
-      setBoundFrom('VLC Tower 1');
+      setDepartureDateTime('');
+      setReturnDateTime('');
+      setBoundFrom(defaultOrigin);
       setBoundTo('');
       setPurpose('');
       setRequestVehicle(false);
@@ -125,11 +116,6 @@ export function NewTravelOrderModal({
     if (isOpen) document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
-
-  // Close on backdrop click
-  function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === modalRef.current) onClose();
-  }
 
   function validate(): FormErrors {
     const errs: FormErrors = {};
@@ -235,7 +221,9 @@ export function NewTravelOrderModal({
     <div
       ref={modalRef}
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
-      onClick={handleBackdropClick}
+      onClick={(e) => {
+        if (e.target === modalRef.current) e.stopPropagation();
+      }}
     >
       <div className="relative w-full max-w-2xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl">
         {/* Header */}
@@ -302,10 +290,10 @@ export function NewTravelOrderModal({
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
                 placeholder="e.g. HR Department"
-                  className={cn(
-                    'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                    errors.department ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                  )}
+                className={cn(
+                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
+                  errors.department ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+                )}
               />
               {errors.department && (
                 <p className="mt-1 text-xs text-red-500">{errors.department}</p>
@@ -320,10 +308,10 @@ export function NewTravelOrderModal({
                 value={travelerName}
                 onChange={(e) => setTravelerName(e.target.value)}
                 placeholder="e.g. Juan Dela Cruz"
-                  className={cn(
-                    'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                    errors.travelerName ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                  )}
+                className={cn(
+                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
+                  errors.travelerName ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+                )}
               />
               {errors.travelerName && (
                 <p className="mt-1 text-xs text-red-500">{errors.travelerName}</p>
@@ -341,10 +329,10 @@ export function NewTravelOrderModal({
                 type="datetime-local"
                 value={departureDateTime}
                 onChange={(e) => setDepartureDateTime(e.target.value)}
-                  className={cn(
-                    'w-full rounded-lg border px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                    errors.departureDateTime ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                  )}
+                className={cn(
+                  'w-full rounded-lg border px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
+                  errors.departureDateTime ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+                )}
               />
               {errors.departureDateTime && (
                 <p className="mt-1 text-xs text-red-500">{errors.departureDateTime}</p>
@@ -358,10 +346,10 @@ export function NewTravelOrderModal({
                 type="datetime-local"
                 value={returnDateTime}
                 onChange={(e) => setReturnDateTime(e.target.value)}
-                  className={cn(
-                    'w-full rounded-lg border px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                    errors.returnDateTime ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                  )}
+                className={cn(
+                  'w-full rounded-lg border px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
+                  errors.returnDateTime ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+                )}
               />
               {errors.returnDateTime && (
                 <p className="mt-1 text-xs text-red-500">{errors.returnDateTime}</p>
@@ -423,10 +411,10 @@ export function NewTravelOrderModal({
               onChange={(e) => setPurpose(e.target.value)}
               rows={3}
               placeholder="Briefly describe the purpose of this travel..."
-                  className={cn(
-                    'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow resize-none',
-                    errors.purpose ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                  )}
+              className={cn(
+                'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow resize-none',
+                errors.purpose ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+              )}
             />
             {errors.purpose && (
               <p className="mt-1 text-xs text-red-500">{errors.purpose}</p>
@@ -506,7 +494,7 @@ export function NewTravelOrderModal({
               Attach Picture <span className="text-zinc-400">(optional)</span>
             </label>
             {imageData ? (
-            <div className="relative overflow-hidden rounded-lg ring-1 ring-brand-sage">
+              <div className="relative overflow-hidden rounded-lg ring-1 ring-brand-sage">
                 <img
                   src={imageData}
                   alt={imageName || 'Uploaded preview'}

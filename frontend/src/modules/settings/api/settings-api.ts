@@ -1,4 +1,5 @@
 import { API_BASE } from '@/shared/api';
+import { apiFetch } from '@/shared/api-client';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -56,7 +57,7 @@ interface TelegramTestResponse {
  */
 export async function fetchConnectionStatus(): Promise<ConnectionStatusData> {
   const base = API_BASE || '';
-  const response = await fetch(`${base}/api/settings/connection-status`, {
+  const response = await apiFetch(`${base}/api/settings/connection-status`, {
     credentials: 'include',
   });
 
@@ -78,7 +79,7 @@ export async function fetchConnectionStatus(): Promise<ConnectionStatusData> {
  */
 export async function sendTelegramTest(): Promise<TelegramTestResult> {
   const base = API_BASE || '';
-  const response = await fetch(`${base}/api/settings/telegram-test`, {
+  const response = await apiFetch(`${base}/api/settings/telegram-test`, {
     method: 'POST',
     credentials: 'include',
   });
@@ -102,7 +103,7 @@ export async function sendTelegramTest(): Promise<TelegramTestResult> {
  */
 export async function updateSchedulerInterval(intervalSeconds: number): Promise<SchedulerIntervalData> {
   const base = API_BASE || '';
-  const response = await fetch(`${base}/api/settings/scheduler-interval`, {
+  const response = await apiFetch(`${base}/api/settings/scheduler-interval`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     credentials: 'include',
