@@ -7,7 +7,6 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router';
 import { GpsLogsTabs, type TabKey } from '../components/GpsLogsTabs';
 import { LogsPage } from './LogsPage';
-import { TripHistoryPage } from './TripHistoryPage';
 import { ReportsPage } from './ReportsPage';
 import { AlertsPage } from './AlertsPage';
 import { TelemetryPage } from './TelemetryPage';
@@ -19,7 +18,7 @@ export function GpsLogsPage() {
   // Sync tab from URL search params
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab === 'logs' || tab === 'trip-history' || tab === 'reports' || tab === 'alerts' || tab === 'telemetry') {
+    if (tab === 'logs' || tab === 'reports' || tab === 'alerts' || tab === 'telemetry') {
       setActiveTab(tab);
     }
   }, [searchParams]);
@@ -33,7 +32,6 @@ export function GpsLogsPage() {
       <GpsLogsTabs activeTab={activeTab} onTabChange={handleTabChange} />
 
       {activeTab === 'logs' && <LogsPage />}
-      {activeTab === 'trip-history' && <TripHistoryPage />}
       {activeTab === 'reports' && <ReportsPage />}
       {activeTab === 'alerts' && <AlertsPage />}
       {activeTab === 'telemetry' && <TelemetryPage />}

@@ -1,5 +1,22 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Loader2, Navigation, MapPin, StickyNote } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import {
+  X,
+  Loader2,
+  Navigation,
+  MapPin,
+  StickyNote,
+  CircleDot,
+  Flag,
+  BarChart3,
+  Route,
+  Gauge,
+  Clock3,
+  Timer,
+  Link2,
+  ClipboardCheck,
+  MapPinned,
+  Activity,
+} from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { cn } from '@/shared/lib/utils';
@@ -86,6 +103,7 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
       const result = await fetchTripDetails(logId);
       setData(result.data);
       setNotes(result.data.trip.notes ?? '');
+      console.log('[TripDetailsModal] Trip data:', result.data.trip);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trip details');
     } finally {
@@ -195,6 +213,18 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
 
   const trip = data?.trip;
 
+  // Compute display status for the modal badge
+  const modalStatus =
+    trip?.status === 'completed' ||
+    trip?.status === 'arrived' ||
+    (trip?.startTime && trip?.arrivedTime)
+      ? 'Completed'
+      : trip?.status === 'cancelled'
+        ? 'Cancelled'
+        : trip?.status === 'en-route' || trip?.status === 'departed' || trip?.status === 'ongoing' || trip?.status === 'tracking_started'
+          ? 'Ongoing'
+          : 'Pending';
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 pt-6 pb-6">
       <div className="relative w-[90vw] max-w-5xl rounded-xl bg-white shadow-brand-xl">
@@ -212,7 +242,7 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
             </div>
             {trip && (
               <div className="ml-4">
-                <TripStatusBadge status={trip.status} anomalyFlag={trip.anomalyFlag} />
+                <TripStatusBadge status={modalStatus} anomalyFlag={trip.anomalyFlag} />
               </div>
             )}
           </div>
@@ -273,29 +303,43 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
             {/* Trip Information Grid */}
             {trip && (
               <div>
-                <h3 className="text-sm font-semibold text-zinc-700 mb-3">Trip Information</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <InfoField label="Origin (GPS Start)" value={trip.origin || '—'} />
-                  <InfoField label="Destination (GPS End)" value={trip.destination || '—'} />
-                  <InfoField label="Route / Road Taken" value={trip.routeRoadTaken || 'GPS Route Available'} />
-                  <InfoField label="Distance (km)" value={formatNumber(trip.distance, 1)} />
-                  <InfoField label="Engine Hours" value={formatNumber(trip.engineHours, 1)} />
-                  <InfoField label="Moving Hours" value={formatNumber(trip.movingHours, 1)} />
-                  <InfoField label="Max Speed" value={trip.maxSpeed != null ? `${formatNumber(trip.maxSpeed, 0)} kph` : '—'} />
-                  <InfoField
-                    label="Date"
-                    value={trip.date ? formatDateTime(trip.date) : formatDateTime(trip.departureTime)}
-                  />
-                  <InfoField label="Departed" value={formatDateTime(trip.departureTime)} />
-                  <InfoField label="Arrived" value={formatDateTime(trip.arrivalTime)} />
-                  <InfoField label="Linked TO" value={trip.linkedTO || '—'} />
-                  <InfoField label="TO Status" value={trip.toStatus || '—'} />
-                  {trip.coordinatesOrigin && (
-                    <InfoField label="Start Coordinates" value={trip.coordinatesOrigin} />
-                  )}
-                  {trip.coordinatesDestination && (
-                    <InfoField label="End Coordinates" value={trip.coordinatesDestination} />
-                  )}
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-zinc-800">Trip Information</h3>
+                  <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                    {data.routeCount} GPS points
+                  </span>
+                </div>
+                <div className="space-y-5">
+                  <InfoSection title="Origin" icon={<CircleDot className="size-4 text-emerald-600" />}>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <InfoField label="Address" value={trip.origin || '—'} />
+                      <InfoField label="Start Time" value={formatDateTime(trip.startTime)} />
+                      <InfoField label="Start Coordinates" value={trip.coordinatesOrigin || '—'} />
+                    </div>
+                  </InfoSection>
+
+                  <InfoSection title="Destination / Arrival" icon={<Flag className="size-4 text-red-600" />}>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <InfoField label="Address" value={trip.destination || '—'} />
+                      <InfoField label="Arrived Time" value={formatDateTime(trip.arrivedTime)} />
+                      <InfoField label="Arrived Coordinates" value={trip.arrivedCoordinates || '—'} />
+                      <InfoField label="Arrived Location" value={trip.arrivedLocation || '—'} />
+                    </div>
+                  </InfoSection>
+
+                  <InfoSection title="Trip Summary" icon={<BarChart3 className="size-4 text-brand-teal" />}>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <MetricTile icon={<Route className="size-4" />} label="Route Taken" value={trip.routeRoadTaken || 'GPS Route Available'} />
+                      <MetricTile icon={<MapPinned className="size-4" />} label="Distance" value={trip.distance != null ? `${formatNumber(trip.distance, 1)} km` : '—'} />
+                      <MetricTile icon={<Timer className="size-4" />} label="Engine Hours" value={trip.engineHours != null ? `${formatNumber(trip.engineHours, 1)} hrs` : '—'} />
+                      <MetricTile icon={<Clock3 className="size-4" />} label="Moving Hours" value={trip.movingHours != null ? `${formatNumber(trip.movingHours, 1)} hrs` : '—'} />
+                      <MetricTile icon={<Gauge className="size-4" />} label="Max Speed" value={trip.maxSpeed != null ? `${formatNumber(trip.maxSpeed, 0)} kph` : '—'} />
+                      <MetricTile icon={<Activity className="size-4" />} label="End Time" value={formatDateTime(trip.endTime)} />
+                      <MetricTile icon={<MapPin className="size-4" />} label="End Coordinates" value={trip.coordinatesDestination || '—'} />
+                      <MetricTile icon={<Link2 className="size-4" />} label="Linked TO" value={trip.linkedTO || '—'} />
+                      <MetricTile icon={<ClipboardCheck className="size-4" />} label="TO Status" value={trip.toStatus || '—'} />
+                    </div>
+                  </InfoSection>
                 </div>
 
                 {/* Editable Notes */}
@@ -304,10 +348,10 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
                     <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Notes</h4>
                     <button
                       onClick={handleSaveNotes}
-                      disabled={notesSaving}
+                      disabled={notesSaving || !notes.trim()}
                       className={cn(
                         'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                        notesSaving
+                        notesSaving || !notes.trim()
                           ? 'text-zinc-400 cursor-not-allowed'
                           : 'text-brand-teal hover:bg-brand-teal/5',
                       )}
@@ -346,11 +390,39 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
   );
 }
 
+function InfoSection({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-zinc-200 bg-zinc-50/80 p-5 shadow-md shadow-zinc-200/50">
+      <div className="mb-5 flex items-center gap-3 border-b border-zinc-200 pb-4">
+        <span className="flex size-9 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-zinc-200">
+          {icon}
+        </span>
+        <h4 className="text-base font-semibold text-zinc-800">{title}</h4>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function InfoField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col">
       <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">{label}</span>
-      <span className="text-sm text-zinc-700 mt-0.5 break-words">{value}</span>
+      <span className="mt-1 break-words text-[15px] font-medium leading-snug text-zinc-800">{value}</span>
+    </div>
+  );
+}
+
+function MetricTile({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="min-h-[92px] rounded-xl border border-zinc-200 bg-white p-3.5 shadow-sm">
+      <div className="mb-2 flex items-center gap-2 text-zinc-500">
+        <span className="flex size-7 items-center justify-center rounded-lg bg-zinc-100 text-brand-teal">
+          {icon}
+        </span>
+        <span className="text-[11px] font-semibold uppercase tracking-wider">{label}</span>
+      </div>
+      <div className="break-words text-[15px] font-semibold leading-snug text-zinc-800">{value}</div>
     </div>
   );
 }

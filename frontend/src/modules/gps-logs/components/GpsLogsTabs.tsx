@@ -3,10 +3,10 @@
 // Reusable tab navigation for the GPS Logs module.
 // Each tab maps to its own page component.
 
-import { History, MapPin, Navigation, AlertTriangle, Gauge } from 'lucide-react';
+import { History, Navigation, AlertTriangle, Gauge } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
-export type TabKey = 'logs' | 'trip-history' | 'reports' | 'alerts' | 'telemetry';
+export type TabKey = 'logs' | 'reports' | 'alerts' | 'telemetry';
 
 interface GpsLogsTabsProps {
   activeTab: TabKey;
@@ -15,7 +15,6 @@ interface GpsLogsTabsProps {
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'logs', label: 'Logs', icon: <History className="size-4" /> },
-  { key: 'trip-history', label: 'Trip History', icon: <MapPin className="size-4" /> },
   { key: 'reports', label: 'Reports', icon: <Navigation className="size-4" /> },
   { key: 'alerts', label: 'Alerts', icon: <AlertTriangle className="size-4" /> },
   { key: 'telemetry', label: 'Telemetry', icon: <Gauge className="size-4" /> },

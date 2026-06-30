@@ -14,7 +14,6 @@ import settingsRouter from './routes/settings.js';
 import reportsRouter from './routes/reports.js';
 import maintenanceRouter from './routes/maintenance.js';
 import adminSyncRouter from './routes/admin-sync.js';
-import fleetTripHistoryRouter from './routes/fleet-trip-history.js';
 import dashboardRouter from './routes/dashboard.js';
 import notificationsRouter from './routes/notifications.js';
 import { requireRole } from './middleware/auth.js';
@@ -38,9 +37,6 @@ app.use(['/api/drivers', '/drivers'], driversRouter);
 // Public travel orders — no auth required (for unauthenticated user-to requests)
 app.use(['/api/public/travel-orders', '/public/travel-orders'], publicTravelOrdersRouter);
 app.use(['/api/travel-orders', '/travel-orders'], requireRole, travelOrdersRouter);
-// Fleet trip history must be registered BEFORE the gps-logs router to avoid
-// the gps-logs router's /:id wildcard catching "fleet-trip-history" as an ID.
-app.use(['/api/gps-logs/fleet-trip-history', '/gps-logs/fleet-trip-history'], fleetTripHistoryRouter);
 app.use(['/api/gps-logs', '/gps-logs'], gpsLogsRouter);
 app.use(['/api/cron', '/cron'], cronRouter);
 app.use(['/api/users', '/users'], usersRouter);

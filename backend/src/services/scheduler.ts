@@ -8,9 +8,10 @@
 //
 // The interval can be changed at runtime via updateInterval().
 
+import { randomUUID } from 'node:crypto';
 import { syncFleetAndAlert, getIgnition, sendTelegram } from '@car-tracker/tracker';
 import { findVehicleByPlate, persistGpsTripLogs } from './gpsLogService.js';
-import { insertTelemetry, getLatestTelemetry } from './gpsTelemetryService.js';
+import { insertTelemetry, getLatestTelemetry, telemetryTripEventExists } from './gpsTelemetryService.js';
 import { createNoTravelOrderAlert } from './gpsAlertService.js';
 import { getPool } from '../db/db.js';
 import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
@@ -153,6 +154,37 @@ export function resumeScheduler(): void {
 }
 
 // ── Internal ───────────────────────────────────────────────────
+
+function distanceMeters(
+  aLat: number | null,
+  aLng: number | null,
+  bLat: number | null,
+  bLng: number | null,
+): number | null {
+  if (aLat == null || aLng == null || bLat == null || bLng == null) return null;
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusM = 6371000;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusM * Math.asin(Math.sqrt(h));
+}
+
+function hasMeaningfulLocationChange(
+  last: Awaited<ReturnType<typeof getLatestTelemetry>>,
+  latitude: number | null,
+  longitude: number | null,
+  locationName: string | null,
+): boolean {
+  if (!last) return true;
+  if ((last.locationName ?? null) !== (locationName ?? null)) return true;
+  const movedMeters = distanceMeters(last.latitude, last.longitude, latitude, longitude);
+  return movedMeters !== null && movedMeters >= 75;
+}
 
 async function runCycle(): Promise<void> {
   if (state.paused) {
@@ -318,14 +350,19 @@ async function runCycle(): Promise<void> {
     if (vehicles && vehicles.length > 0) {
       for (const vehicle of vehicles) {
         try {
+          const vehicleId = String(vehicle.id ?? '');
+          if (!vehicleId) {
+            telemetrySkipped += 1;
+            continue;
+          }
+
           const ign = getIgnition(vehicle);
           const spd = Number(vehicle.speed || 0);
-          // Safety override: vehicle cannot move without ignition
+          // Safety override: vehicle cannot move without ignition.
           const effectiveIgnition = spd > 0 ? true : ign;
-          const eventType = effectiveIgnition
-            ? (spd > 0 ? 'LOCATION_UPDATE' : 'IDLING')
-            : 'IGNITION_OFF';
           const coords = vehicle.coordinates as { latitude?: number; longitude?: number } | null | undefined;
+          const latitude = coords?.latitude ?? null;
+          const longitude = coords?.longitude ?? null;
           // Round timestamp to sync interval to enable deduplication
           // This ensures multiple syncs within the same 120s window share the same recordedAt
           const now = Date.now();
@@ -335,43 +372,59 @@ async function runCycle(): Promise<void> {
           const fuelLiters = Number(vehicle.fuel_liters) || null;
           const locationName = String(vehicle.location ?? '') || null;
 
-          // Deduplication: skip if identical state was already recorded
-          // within the current sync interval window
-          const last = await getLatestTelemetry(String(vehicle.id ?? ''));
-          if (last) {
-            const stateUnchanged =
-              last.speedKmh === spd &&
-              last.ignition === effectiveIgnition &&
-              last.eventType === eventType &&
-              last.fuelLiters === fuelLiters &&
-              last.locationName === locationName;
-            // Only skip if the last record was from the same sync interval
-            // (rounded to the same timestamp). This allows periodic snapshots
-            // while preventing duplicate saves within the same cycle.
-            const lastRecordedAt = new Date(last.recordedAt).getTime();
-            const currentRounded = new Date(recordedAt).getTime();
-            const sameInterval = lastRecordedAt === currentRounded;
-            if (stateUnchanged && sameInterval) {
+          const last = await getLatestTelemetry(vehicleId);
+          const wasIgnitionOn = last?.ignition === true;
+          let eventType: 'IGNITION ON' | 'LOCATION_UPDATE' | 'IGNITION OFF' | null = null;
+          let activeTripId = last?.activeTripId ?? null;
+
+          if (effectiveIgnition && !wasIgnitionOn) {
+            activeTripId = randomUUID();
+            eventType = 'IGNITION ON';
+          } else if (effectiveIgnition && wasIgnitionOn) {
+            activeTripId = activeTripId ?? randomUUID();
+            if (hasMeaningfulLocationChange(last, latitude, longitude, locationName)) {
+              eventType = 'LOCATION_UPDATE';
+            }
+          } else if (!effectiveIgnition && wasIgnitionOn && activeTripId) {
+            const alreadySavedOff = await telemetryTripEventExists(vehicleId, activeTripId, 'IGNITION OFF');
+            if (!alreadySavedOff) {
+              eventType = 'IGNITION OFF';
+            }
+          }
+
+          if (!eventType || !activeTripId) {
+            telemetrySkipped += 1;
+            continue;
+          }
+
+          if (eventType === 'IGNITION ON') {
+            const alreadySavedOn = await telemetryTripEventExists(vehicleId, activeTripId, 'IGNITION ON');
+            if (alreadySavedOn) {
               telemetrySkipped += 1;
               continue;
             }
           }
 
-          await insertTelemetry({
-            vehicleId: String(vehicle.id ?? ''),
+          const inserted = await insertTelemetry({
+            vehicleId,
             plateNumber: String(vehicle.name ?? '').split(' (')[0],
             eventType,
-            latitude: coords?.latitude ?? null,
-            longitude: coords?.longitude ?? null,
+            latitude,
+            longitude,
             speedKmh: spd,
             fuelLiters,
             ignition: effectiveIgnition,
             locationName,
-            driverName: null,
-            toNumber: String(vehicle.to_number ?? '') || null,
+            driverName: driverOverrides.get(vehicleId) || null,
+            toNumber: toNumberOverrides.get(vehicleId) || String(vehicle.to_number ?? '') || null,
             recordedAt,
+            activeTripId,
           });
-          telemetrySaved += 1;
+          if (inserted) {
+            telemetrySaved += 1;
+          } else {
+            telemetrySkipped += 1;
+          }
         } catch (err) {
           console.error(`[scheduler] Failed to save telemetry for ${String(vehicle.id)}:`, (err as Error).message);
         }

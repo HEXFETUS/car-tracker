@@ -27,6 +27,26 @@ import {
 
 const router: ExpressRouter = express.Router();
 
+function parseCoordinates(value: string | null | undefined): [number, number] | null {
+  if (!value) return null;
+  const [lat, lng] = value.split(',').map((part) => Number(part.trim()));
+  return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+}
+
+function findDestinationTelemetryPoint(route: any[], destinationCoordinates: [number, number] | null) {
+  if (!destinationCoordinates || route.length === 0) return null;
+
+  const [destLat, destLng] = destinationCoordinates;
+  for (const point of route) {
+    const distanceKm = haversineDistance(`${destLat},${destLng}`, `${point.lat},${point.lng}`) / 1000;
+    if (distanceKm <= 0.2) {
+      return point;
+    }
+  }
+
+  return null;
+}
+
 interface GpsLogRow {
   id: string;
   gps_record_no: string;
@@ -61,6 +81,8 @@ interface GpsLogRow {
   to_origin?: string | null;
   to_destination?: string | null;
   to_status?: string | null;
+  to_lat_long_origin?: string | null;
+  to_lat_long_destination?: string | null;
   // Calculated fields for moving hours and bound-to-bound distance
   moving_hours?: number | null;
   bound_to_bound_distance_km?: number | null;
@@ -68,11 +90,10 @@ interface GpsLogRow {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// GET /api/gps-logs — List one GPS log record per Travel Order
+// GET /api/gps-logs — List GPS log records from gps_trip_logs
 //
-// Shows Travel Orders that have telemetry data, with GPS log info
-// LEFT JOINed. This ensures the list always shows data even if no
-// manual gps_trip_logs records exist yet. One row per Travel Order.
+// Only returns rows that exist in gps_trip_logs. One row per
+// synced GPS trip log.
 // ─────────────────────────────────────────────────────────────────
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -81,8 +102,8 @@ router.get('/', async (req: Request, res: Response) => {
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
     const offset = (page - 1) * pageSize;
 
-    // Build WHERE clause from optional filters
-    const conditions: string[] = ['t_order.status IN (\'APPROVED\', \'ACTIVE\', \'COMPLETED\')'];
+    // Build WHERE clause — only show rows that have a gps_trip_log record
+    const conditions: string[] = ['g.id IS NOT NULL'];
     const params: unknown[] = [];
 
     if (req.query.vehicleId) {
@@ -93,30 +114,33 @@ router.get('/', async (req: Request, res: Response) => {
       conditions.push(`DATE(t_order.scheduled_departure) = $${params.length + 1}`);
       params.push(req.query.tripDate);
     }
-    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    const whereClause = 'WHERE ' + conditions.join(' AND ');
     const tripStatus = req.query.tripStatus as string | undefined;
-    const tripStatusClause = tripStatus ? `AND COALESCE(g.trip_status_gps, 'pending') = $${params.length + 1}` : '';
+    const tripStatusClause = tripStatus ? `AND g.trip_status_gps = $${params.length + 1}` : '';
     const dataParams = tripStatus ? [...params, tripStatus, pageSize, offset] : [...params, pageSize, offset];
     const limitParamIndex = params.length + (tripStatus ? 2 : 1);
     const offsetParamIndex = params.length + (tripStatus ? 3 : 2);
 
-    // Count total (travel orders with telemetry)
+    // Count total (only rows that have a gps_trip_log)
     const countResult = await pool.query<{ total: string }>(
       `SELECT COUNT(*) AS total
-       FROM travel_orders t_order
-       LEFT JOIN gps_trip_logs g ON g.travel_order_id = t_order.id
+       FROM gps_trip_logs g
+       JOIN travel_orders t_order ON t_order.id = g.travel_order_id
+       LEFT JOIN vehicles v ON v.id = t_order.vehicle_id
+       LEFT JOIN drivers d ON d.id = t_order.driver_id
        ${whereClause}
        ${tripStatusClause}`,
       tripStatus ? [...params, tripStatus] : params,
     );
     const total = parseInt(countResult.rows[0]?.total || '0', 10);
 
-    // Fetch paginated data: Travel Orders LEFT JOIN GPS Logs
+    // Fetch paginated data: only rows that have a gps_trip_log record
     const dataResult = await pool.query(
       `SELECT
         g.id AS gps_id,
         g.gps_record_no,
         COALESCE(g.trip_date, DATE(t_order.scheduled_departure)) AS trip_date,
+        DATE(t_order.scheduled_departure) AS scheduled_date,
         t_order.vehicle_id,
         t_order.driver_id,
         COALESCE(g.origin_gps_start_point, '') AS origin_gps_start_point,
@@ -127,13 +151,7 @@ router.get('/', async (req: Request, res: Response) => {
         g.gps_distance_km,
         g.engine_hours,
         g.max_speed_kph,
-        COALESCE(g.trip_status_gps,
-          CASE t_order.status
-            WHEN 'COMPLETED' THEN 'completed'
-            WHEN 'ACTIVE' THEN 'ongoing'
-            ELSE 'pending'
-          END
-        ) AS trip_status_gps,
+        g.trip_status_gps AS trip_status_gps,
         t_order.id AS travel_order_id,
         COALESCE(g.to_status_auto, t_order.status) AS to_status_auto,
         COALESCE(g.anomaly_flag, false) AS anomaly_flag,
@@ -158,10 +176,10 @@ router.get('/', async (req: Request, res: Response) => {
         tel.telemetry_count,
         tel.first_recorded_at,
         tel.last_recorded_at
-      FROM travel_orders t_order
+      FROM gps_trip_logs g
+      JOIN travel_orders t_order ON t_order.id = g.travel_order_id
       LEFT JOIN vehicles v ON v.id = t_order.vehicle_id
       LEFT JOIN drivers d ON d.id = t_order.driver_id
-      LEFT JOIN gps_trip_logs g ON g.travel_order_id = t_order.id
       LEFT JOIN LATERAL (
         SELECT
           COUNT(*)::int AS telemetry_count,
@@ -185,6 +203,7 @@ router.get('/', async (req: Request, res: Response) => {
       id: row.gps_id || `pending-${row.travel_order_id}`,
       gpsRecordNo: row.gps_record_no || `GPS-${row.travel_order_to_number || 'PENDING'}`,
       tripDate: row.trip_date || (row.first_recorded_at ? new Date(row.first_recorded_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+      toDate: row.scheduled_date || row.trip_date,
       vehicleId: row.vehicle_id,
       driverId: row.driver_id,
       originGpsStartPoint: row.origin_gps_start_point || '',
@@ -226,6 +245,15 @@ router.get('/', async (req: Request, res: Response) => {
       pageSize,
       message: 'GPS logs retrieved successfully',
     };
+
+    // Debug log for endpoint source
+    console.log('[LogsPage Source]', {
+      endpoint: 'GET /api/gps-logs',
+      rowsCount: data.length,
+      source: 'gps_trip_logs',
+      firstRow: data.length > 0 ? { id: data[0].id, tripStatusGps: data[0].tripStatusGps, toNumber: data[0].toNumber } : null,
+    });
+
     res.json(response);
   } catch (error) {
     const err = error as Error;
@@ -877,19 +905,19 @@ router.get('/order-status', async (req: Request, res: Response) => {
       totalHours: Number(row.total_hours) || 0,
       departureTime: row.departure_time_gps
         ? new Date(row.departure_time_gps).toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          })
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
         : null,
       arrivalTime: row.arrival_time_gps
         ? new Date(row.arrival_time_gps).toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          })
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
         : null,
     }));
 
@@ -1061,7 +1089,7 @@ router.get('/reports', async (req: Request, res: Response) => {
       const totalHours = isNaN(Number(row.total_hours)) ? 0 : Number(row.total_hours);
       const movingHours = isNaN(Number(row.moving_hours)) ? 0 : Number(row.moving_hours);
       const idlingHours = Math.max(0, totalHours - movingHours);
-      
+
       return {
         id: `${row.to_id}-leg${row.leg_number}`,
         toNumber: row.to_number || 'N/A',
@@ -1074,19 +1102,19 @@ router.get('/reports', async (req: Request, res: Response) => {
         tripDate: row.travel_date || new Date().toISOString().split('T')[0],
         departureTime: row.departure_time
           ? new Date(row.departure_time).toLocaleString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            })
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
           : null,
         arrivalTime: row.arrival_time
           ? new Date(row.arrival_time).toLocaleString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            })
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
           : null,
         movingHours: movingHours.toFixed(1),
         idlingHours: idlingHours.toFixed(1),
@@ -1167,7 +1195,7 @@ router.get('/travel-order/:travelOrderId/details', async (req: Request, res: Res
 
     const trip = tripResult.rows[0];
     const routeResult = await pool.query(
-      `SELECT latitude, longitude, recorded_at, speed_kmh, location_name
+      `SELECT latitude, longitude, recorded_at, speed_kmh, location_name, ignition, event_type
        FROM gps_telemetry
        WHERE vehicle_id = $1
          AND DATE(recorded_at) = DATE($2::timestamp)
@@ -1183,32 +1211,110 @@ router.get('/travel-order/:travelOrderId/details', async (req: Request, res: Res
       timestamp: row.recorded_at,
       speed: Number(row.speed_kmh) || 0,
       locationName: row.location_name || null,
+      ignition: row.ignition,
+      eventType: row.event_type,
     }));
 
     // Calculate statistics from telemetry
     let totalDistance = 0;
     let maxSpeed = 0;
     let totalEngineHours = 0;
+    let movingHours = 0;
 
-    if (route.length > 1) {
-      for (let i = 1; i < route.length; i++) {
-        const p1 = `${route[i-1].lat},${route[i-1].lng}`;
-        const p2 = `${route[i].lat},${route[i].lng}`;
-        const distMeters = haversineDistance(p1, p2);
-        totalDistance += distMeters / 1000;
+    // Compute meaningful timestamps
+    let startTime: string | null = null;
+    let arrivedTime: string | null = null;
+    let endTime: string | null = null;
+    let destinationMatch: any = null;
+
+    if (route.length > 0) {
+      // START TIME = left null (ignition ON not yet available in telemetry)
+      startTime = null;
+      endTime = route[route.length - 1].timestamp;
+      const destCoords = parseCoordinates(trip.lat_long_destination);
+
+      // ARRIVED TIME = first telemetry point within 200m of destination coordinates.
+      if (destCoords) {
+        destinationMatch = findDestinationTelemetryPoint(route, destCoords);
+        if (destinationMatch) arrivedTime = destinationMatch.timestamp;
+      } else {
+        console.log("[TripDetails] destCoords is null or invalid, lat_long_destination=", trip.lat_long_destination ?? 'NULL');
       }
-      maxSpeed = Math.max(...route.map((p: any) => p.speed || 0));
-      const firstPoint = route[0];
-      const lastPoint = route[route.length - 1];
-      if (firstPoint.timestamp && lastPoint.timestamp) {
-        const firstTime = new Date(firstPoint.timestamp).getTime();
-        const lastTime = new Date(lastPoint.timestamp).getTime();
-        totalEngineHours = (lastTime - firstTime) / (1000 * 60 * 60);
+
+      // If no destination match found, try location text matching as fallback
+      if (!destinationMatch && trip.destination_target) {
+        for (const point of route) {
+          if (point.locationName && trip.destination_target) {
+            const destArea = trip.destination_target.toLowerCase();
+            const locationText = point.locationName.toLowerCase();
+            if (locationText.includes(destArea) || destArea.includes(locationText)) {
+              destinationMatch = point;
+              arrivedTime = point.timestamp;
+              break;
+            }
+          }
+        }
+      }
+
+      if (route.length > 1) {
+        for (let i = 1; i < route.length; i++) {
+          const p1 = `${route[i - 1].lat},${route[i - 1].lng}`;
+          const p2 = `${route[i].lat},${route[i].lng}`;
+          const distMeters = haversineDistance(p1, p2);
+          totalDistance += distMeters / 1000;
+        }
+        maxSpeed = Math.max(...route.map((p: any) => p.speed || 0));
+        const firstPoint = route[0];
+        const lastPoint = route[route.length - 1];
+        if (firstPoint.timestamp && lastPoint.timestamp) {
+          const firstTime = new Date(firstPoint.timestamp).getTime();
+          const lastTime = new Date(lastPoint.timestamp).getTime();
+          totalEngineHours = (lastTime - firstTime) / (1000 * 60 * 60);
+        }
+
+        // Calculate moving hours from route segments with speed > 0
+        let totalMovingMs = 0;
+        for (let i = 1; i < route.length; i++) {
+          const prev = route[i - 1];
+          const curr = route[i];
+          if (curr.speed > 0 && prev.timestamp && curr.timestamp) {
+            const prevTime = new Date(prev.timestamp).getTime();
+            const currTime = new Date(curr.timestamp).getTime();
+            const diff = currTime - prevTime;
+            if (diff > 0 && diff < 3600000) {
+              totalMovingMs += diff;
+            }
+          }
+        }
+        movingHours = totalMovingMs / (1000 * 60 * 60);
+
+        // END TIME = last telemetry point
+        endTime = lastPoint.timestamp;
+
+        console.log("[TripDetails FINAL TIMES]", {
+          startTime,
+          arrivedTime,
+          endTime,
+          destinationMatch: destinationMatch ? { lat: destinationMatch.lat, lng: destinationMatch.lng, ts: destinationMatch.timestamp } : null
+        });
       }
     }
 
-    const startPoint = route[0];
     const endPoint = route[route.length - 1];
+
+    // Use telemetry-matched coordinates/location for arrived data, fallback to TO destination if no match
+    const arrivedCoordinates = destinationMatch
+      ? `${destinationMatch.lat},${destinationMatch.lng}`
+      : (trip.lat_long_destination || null);
+
+    const arrivedLocation = destinationMatch?.locationName || null;
+
+    console.log("[Arrival Match]", {
+      arrivedTime,
+      arrivedCoordinates,
+      arrivedLocation,
+      matchedTelemetry: destinationMatch
+    });
 
     res.json({
       success: true,
@@ -1222,7 +1328,7 @@ router.get('/travel-order/:travelOrderId/details', async (req: Request, res: Res
           status: 'pending',
           distance: totalDistance,
           engineHours: totalEngineHours,
-          movingHours: null,
+          movingHours: movingHours > 0 ? movingHours : null,
           maxSpeed: maxSpeed,
           notes: trip.notes || null,
           origin: trip.origin_location || 'N/A',
@@ -1231,11 +1337,14 @@ router.get('/travel-order/:travelOrderId/details', async (req: Request, res: Res
           toOrigin: trip.origin_location || null,
           toDestination: trip.destination_target || null,
           toStatus: trip.status || null,
-          departureTime: startPoint?.timestamp || null,
-          arrivalTime: endPoint?.timestamp || null,
+          startTime: startTime,
+          arrivedTime: arrivedTime,
+          endTime: endTime,
+          arrivedCoordinates: arrivedCoordinates,
+          arrivedLocation: arrivedLocation,
           anomalyFlag: false,
-          coordinatesOrigin: startPoint ? `${startPoint.lat},${startPoint.lng}` : trip.lat_long_origin || null,
-          coordinatesDestination: endPoint ? `${endPoint.lat},${endPoint.lng}` : trip.lat_long_destination || null,
+          coordinatesOrigin: null,
+          coordinatesDestination: endPoint ? `${endPoint.lat},${endPoint.lng}` : null,
         },
         route,
         routeCount: route.length,
@@ -1283,7 +1392,7 @@ router.get('/:id/details', async (req: Request, res: Response) => {
     // Fetch GPS route points from telemetry for the same vehicle on the same trip date
     // gps_telemetry is organized by vehicle_id + recorded_at (no travel_order_id column)
     const routeResult = await pool.query(
-      `SELECT latitude, longitude, recorded_at, speed_kmh, location_name
+      `SELECT latitude, longitude, recorded_at, speed_kmh, location_name, ignition, event_type
        FROM gps_telemetry
        WHERE vehicle_id = $1
          AND DATE(recorded_at) = $2::date
@@ -1299,6 +1408,8 @@ router.get('/:id/details', async (req: Request, res: Response) => {
       timestamp: row.recorded_at,
       speed: Number(row.speed_kmh) || 0,
       locationName: row.location_name || null,
+      ignition: row.ignition,
+      eventType: row.event_type,
     }));
 
     // Calculate statistics from telemetry
@@ -1306,29 +1417,103 @@ router.get('/:id/details', async (req: Request, res: Response) => {
     let maxSpeed = 0;
     let totalEngineHours = 0;
 
-    if (route.length > 1) {
-      // Calculate distance between consecutive points
-      for (let i = 1; i < route.length; i++) {
-        const p1 = `${route[i-1].lat},${route[i-1].lng}`;
-        const p2 = `${route[i].lat},${route[i].lng}`;
-        const distMeters = haversineDistance(p1, p2);
-        totalDistance += distMeters / 1000; // Convert to km
+    // Compute meaningful timestamps
+    let startTime: string | null = null;
+    let arrivedTime: string | null = null;
+    let endTime: string | null = null;
+    let destinationMatch: any = null;
+
+    if (route.length > 0) {
+      // START TIME = left null (ignition ON not yet available in telemetry)
+      startTime = null;
+      endTime = route[route.length - 1].timestamp;
+      const destCoords = parseCoordinates(trip.to_lat_long_destination);
+
+      // ARRIVED TIME = first telemetry point within 200m of destination coordinates.
+      if (destCoords) {
+        destinationMatch = findDestinationTelemetryPoint(route, destCoords);
+        if (destinationMatch) arrivedTime = destinationMatch.timestamp;
       }
 
-      maxSpeed = Math.max(...route.map((p: any) => p.speed || 0));
+      // If no destination match found, try location text matching as fallback
+      if (!destinationMatch && trip.to_destination) {
+        for (const point of route) {
+          if (point.locationName && trip.to_destination) {
+            const destArea = trip.to_destination.toLowerCase();
+            const locationText = point.locationName.toLowerCase();
+            if (locationText.includes(destArea) || destArea.includes(locationText)) {
+              destinationMatch = point;
+              arrivedTime = point.timestamp;
+              break;
+            }
+          }
+        }
+      }
 
-      // Calculate moving hours (time between first movement and last movement)
-      const firstPoint = route[0];
-      const lastPoint = route[route.length - 1];
-      if (firstPoint.timestamp && lastPoint.timestamp) {
-        const firstTime = new Date(firstPoint.timestamp).getTime();
-        const lastTime = new Date(lastPoint.timestamp).getTime();
-        totalEngineHours = (lastTime - firstTime) / (1000 * 60 * 60); // Convert ms to hours
+      if (route.length > 1) {
+        // Calculate distance between consecutive points
+        for (let i = 1; i < route.length; i++) {
+          const p1 = `${route[i - 1].lat},${route[i - 1].lng}`;
+          const p2 = `${route[i].lat},${route[i].lng}`;
+          const distMeters = haversineDistance(p1, p2);
+          totalDistance += distMeters / 1000; // Convert to km
+        }
+
+        maxSpeed = Math.max(...route.map((p: any) => p.speed || 0));
+
+        // Calculate moving hours from route segments with speed > 0 if not available from DB
+        let movingHours = tripData.movingHours;
+        if (movingHours == null) {
+          let totalMovingMs = 0;
+          for (let i = 1; i < route.length; i++) {
+            const prev = route[i - 1];
+            const curr = route[i];
+            if (curr.speed > 0 && prev.timestamp && curr.timestamp) {
+              const prevTime = new Date(prev.timestamp).getTime();
+              const currTime = new Date(curr.timestamp).getTime();
+              const diff = currTime - prevTime;
+              if (diff > 0 && diff < 3600000) { // Only count gaps < 1 hour
+                totalMovingMs += diff;
+              }
+            }
+          }
+          movingHours = totalMovingMs / (1000 * 60 * 60);
+        }
+
+        const firstPoint = route[0];
+        const lastPoint = route[route.length - 1];
+        if (firstPoint.timestamp && lastPoint.timestamp) {
+          const firstTime = new Date(firstPoint.timestamp).getTime();
+          const lastTime = new Date(lastPoint.timestamp).getTime();
+          totalEngineHours = (lastTime - firstTime) / (1000 * 60 * 60); // Convert ms to hours
+        }
+
+        // END TIME = last telemetry point
+        endTime = lastPoint.timestamp;
       }
     }
+    console.log("[TripDetails FINAL TIMES]", {
+      startTime,
+      arrivedTime,
+      endTime,
+      destinationMatch: destinationMatch ? { lat: destinationMatch.lat, lng: destinationMatch.lng, ts: destinationMatch.timestamp } : null
+    });
 
-    const startPoint = route[0];
     const endPoint = route[route.length - 1];
+
+    // Use telemetry-matched coordinates/location for arrived data, fallback to TO destination if no match
+    const arrivedCoordinates = destinationMatch
+      ? `${destinationMatch.lat},${destinationMatch.lng}`
+      : (trip.to_lat_long_destination || null);
+
+    const arrivedLocation = destinationMatch?.locationName || null;
+
+    console.log("[Arrival Match]", {
+      arrivedTime,
+      arrivedCoordinates,
+      arrivedLocation,
+      matchedTelemetry: destinationMatch
+    });
 
     res.json({
       success: true,
@@ -1351,10 +1536,13 @@ router.get('/:id/details', async (req: Request, res: Response) => {
           toOrigin: trip.to_origin || null,
           toDestination: trip.to_destination || null,
           toStatus: trip.to_status || null,
-          departureTime: startPoint?.timestamp || tripData.departureTimeGps,
-          arrivalTime: endPoint?.timestamp || tripData.arrivalTimeGps,
+          startTime: startTime,
+          arrivedTime: arrivedTime,
+          endTime: endTime,
+          arrivedCoordinates: arrivedCoordinates,
+          arrivedLocation: arrivedLocation,
           anomalyFlag: tripData.anomalyFlag,
-          coordinatesOrigin: startPoint ? `${startPoint.lat},${startPoint.lng}` : null,
+          coordinatesOrigin: null,
           coordinatesDestination: endPoint ? `${endPoint.lat},${endPoint.lng}` : null,
         },
         route,
@@ -1399,7 +1587,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 function mapRow(row: GpsLogRow) {
   // For GPS trip logs, calculate distance from origin to destination
   let distance = row.gps_distance_km;
-  
+
   // If coordinates are available, calculate haversine distance
   if (row.coordinates_origin && row.coordinates_destination) {
     const distMeters = haversineDistance(row.coordinates_origin, row.coordinates_destination);

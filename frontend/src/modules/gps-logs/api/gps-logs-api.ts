@@ -8,6 +8,7 @@ export interface EnrichedGpsTripLog {
   id: string;
   gpsRecordNo: string;
   tripDate: string;
+  toDate?: string | null;
   vehicleId: string;
   driverId: string;
   originGpsStartPoint: string;
@@ -486,8 +487,11 @@ export interface TripDetails {
   toOrigin: string | null;
   toDestination: string | null;
   toStatus: string | null;
-  departureTime: string | null;
-  arrivalTime: string | null;
+  startTime: string | null;
+  arrivedTime: string | null;
+  endTime: string | null;
+  arrivedCoordinates: string | null;
+  arrivedLocation: string | null;
   anomalyFlag: boolean;
   coordinatesOrigin: string | null;
   coordinatesDestination: string | null;
@@ -520,13 +524,17 @@ export async function fetchTripDetails(id: string): Promise<TripDetailsResponse>
       // If no GPS log exists yet, fetch details directly from travel order via telemetry
       const res = await fetch(`${API_BASE}/travel-order/${travelOrderId}/details`);
       if (!res.ok) throw new Error('Failed to fetch trip details');
-      return res.json();
+      const json = await res.json();
+      console.log('[fetchTripDetails] Raw API response:', JSON.stringify(json, null, 2));
+      return json;
     }
   }
   
   const res = await fetch(`${API_BASE}/${detailsId}/details`);
   if (!res.ok) throw new Error('Failed to fetch trip details');
-  return res.json();
+  const json = await res.json();
+  console.log('[fetchTripDetails] Raw API response:', JSON.stringify(json, null, 2));
+  return json;
 }
 
 /**
@@ -571,175 +579,3 @@ export async function fetchGpsLogByTravelOrder(travelOrderId: string): Promise<G
   return res.json();
 }
 
-// ── Fleet Trip History Types & API ─────────────────────────────
-
-export interface FleetTripHistoryRow {
-  id: string;
-  travel_order_id: string | null;
-  vehicle_id: string | null;
-  driver_id: string | null;
-  fleet_trip_id: string | null;
-  event_time: string;
-  trip_date: string | null;
-  status: string;
-  event: string | null;
-  road_speed: number | null;
-  location: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  fuel: number | null;
-  created_at: string;
-  updated_at: string;
-  // Joined fields
-  plate_number?: string;
-  driver_full_name?: string;
-  travel_order_to_number?: string | null;
-}
-
-export interface FleetTripHistoryResult {
-  success: boolean;
-  data: FleetTripHistoryRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  message?: string;
-}
-
-export interface FleetTripHistorySyncResponse {
-  success: boolean;
-  fetched: number;
-  saved: number;
-  stationarySkipped: number;
-  duplicateSkipped: number;
-  movingSkippedNoLocationChange: number;
-  idleSkippedNotMilestone: number;
-  invalidData?: number;
-  errors?: number;
-  message: string;
-  timestamp: string;
-}
-
-const FLEET_TRIP_HISTORY_BASE = '/api/gps-logs/fleet-trip-history';
-
-/**
- * Fetch paginated fleet trip history with optional filters.
- */
-export async function fetchFleetTripHistory(params: {
-  page?: number;
-  pageSize?: number;
-  vehicleId?: string;
-  driverId?: string;
-  travelOrderId?: string;
-  status?: string;
-  dateFrom?: string;
-  dateTo?: string;
-  search?: string;
-  sortBy?: string;
-  sortOrder?: 'asc' | 'desc';
-} = {}): Promise<FleetTripHistoryResult> {
-  const qs = new URLSearchParams();
-  if (params.page) qs.set('page', String(params.page));
-  if (params.pageSize) qs.set('pageSize', String(params.pageSize));
-  if (params.vehicleId) qs.set('vehicleId', params.vehicleId);
-  if (params.driverId) qs.set('driverId', params.driverId);
-  if (params.travelOrderId) qs.set('travelOrderId', params.travelOrderId);
-  if (params.status) qs.set('status', params.status);
-  if (params.dateFrom) qs.set('dateFrom', params.dateFrom);
-  if (params.dateTo) qs.set('dateTo', params.dateTo);
-  if (params.search) qs.set('search', params.search);
-  if (params.sortBy) qs.set('sortBy', params.sortBy);
-  if (params.sortOrder) qs.set('sortOrder', params.sortOrder);
-
-  const url = qs.toString() ? `${FLEET_TRIP_HISTORY_BASE}?${qs.toString()}` : FLEET_TRIP_HISTORY_BASE;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Failed to fetch fleet trip history');
-  return res.json();
-}
-
-/**
- * Synchronize fleet trip history for a vehicle on a specific date.
- */
-export async function syncFleetTripHistory(params: {
-  vehicleId?: string;
-  plateNumber?: string;
-  date: string;
-}): Promise<FleetTripHistorySyncResponse> {
-  const res = await fetch(`${FLEET_TRIP_HISTORY_BASE}/sync`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) throw new Error('Fleet trip history sync failed');
-  return res.json();
-}
-
-/**
- * Auto-synchronize today's fleet trip history for all vehicles.
- * Used for automatic background synchronization.
- */
-export interface AutoSyncResponse {
-  success: boolean;
-  totalVehicles: number;
-  totalFetched: number;
-  totalSaved: number;
-  totalStationarySkipped: number;
-  totalDuplicateSkipped: number;
-  totalMovingSkipped: number;
-  totalIdleSkipped: number;
-  totalInvalidData?: number;
-  totalErrors?: number;
-  message: string;
-  timestamp: string;
-}
-
-export async function autoSyncFleetTripHistory(): Promise<AutoSyncResponse> {
-  const res = await fetch(`${FLEET_TRIP_HISTORY_BASE}/auto-sync`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) throw new Error('Fleet trip history auto-sync failed');
-  return res.json();
-}
-
-/**
- * Manually synchronize fleet trip history for all vehicles on a specific date.
- * Used for historical data import/re-import.
- */
-export interface SyncDateResponse {
-  success: boolean;
-  date: string;
-  totalVehicles: number;
-  totalFetched: number;
-  totalSaved: number;
-  totalStationarySkipped: number;
-  totalDuplicateSkipped: number;
-  totalMovingSkipped: number;
-  totalIdleSkipped: number;
-  totalInvalidData?: number;
-  totalErrors?: number;
-  message: string;
-  timestamp: string;
-}
-
-export async function syncFleetTripHistoryByDate(date: string): Promise<SyncDateResponse> {
-  const res = await fetch(`${FLEET_TRIP_HISTORY_BASE}/sync-date`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ date }),
-  });
-  if (!res.ok) throw new Error('Fleet trip history sync by date failed');
-  return res.json();
-}
-
-/**
- * Fetch a single fleet trip history record by ID.
- */
-export async function fetchFleetTripHistoryById(id: string): Promise<{
-  success: boolean;
-  data: FleetTripHistoryRow;
-  message?: string;
-}> {
-  const res = await fetch(`${FLEET_TRIP_HISTORY_BASE}/${id}`);
-  if (!res.ok) throw new Error('Failed to fetch fleet trip history record');
-  return res.json();
-}

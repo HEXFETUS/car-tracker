@@ -49,20 +49,6 @@ export interface CartrackHistoryPoint {
   distance_km?: number;
   fuel_level?: number;
   fuelLevel?: number;
-  // Fleet trip history row fields (returned from trip details endpoint)
-  Time?: string;
-  time?: string;
-  Status?: string;
-  status?: string;
-  Events?: string;
-  events?: string;
-  "Road Speed"?: number;
-  road_speed?: number;
-  roadSpeed?: number;
-  Location?: string;
-  Latitude?: number;
-  Longitude?: number;
-  // Trip record ID for fetching details
   id?: number;
   trip_id?: number;
   tripId?: number | string;
@@ -184,38 +170,6 @@ export function looksLikeTripSummary(point: CartrackHistoryPoint): boolean {
   ));
 }
 
-/**
- * STRICT check: a record is a fleet trip history row ONLY if it contains
- * ALL of: Time, Status, Events, Location (the required columns).
- *
- * Records from /vehicles/{plate}/events (with ignition/speed/clock but NO Time)
- * will NOT match this check.
- */
-export function looksLikeFleetTripHistoryRow(point: CartrackHistoryPoint): boolean {
-  // Must have a time value
-  const timeVal = point.Time ?? point.time;
-  if (timeVal === undefined || timeVal === null || timeVal === '') return false;
-
-  // Must have status
-  const statusVal = point.Status ?? point.status;
-  if (statusVal === undefined || statusVal === null || statusVal === '') return false;
-
-  // Must have events
-  const eventsVal = point.Events ?? point.events;
-  if (eventsVal === undefined || eventsVal === null) return false;
-
-  // Must have location
-  const locVal = point.Location ?? point.location;
-  if (locVal === undefined || locVal === null || locVal === '') return false;
-
-  // Must have valid coordinates
-  const lat = Number(point.Latitude ?? point.latitude);
-  const lon = Number(point.Longitude ?? point.longitude);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
-
-  return true;
-}
-
 // ── Fetch with timeout & retry ────────────────────────────────
 
 async function fetchWithTimeout(
@@ -328,7 +282,6 @@ export async function getFleetVehicles(): Promise<RawVehicle[]> {
         return vehicles;
       }
 
-      // If no vehicles extracted, log a sample for debugging
       const sample = JSON.stringify(data).substring(0, 500);
       console.log('Cartrack fleet response (no vehicles extracted):', sample);
       return [];
@@ -351,12 +304,10 @@ export async function resolveCartrackUnitId(
   const upperPlate = plateNumber.trim().toUpperCase();
   if (!upperPlate) return null;
 
-  // Step 1: Try the fleet API to find the Cartrack unit ID
   const vehicles = await getFleetVehicles();
   for (const vehicle of vehicles) {
     const vPlate = extractPlateNumber(vehicle);
     if (vPlate === upperPlate) {
-      // Extract any ID field that could be the unit identifier
       const rawId = firstKey(vehicle, VEHICLE_ID_KEYS);
       if (rawId !== null && rawId !== undefined) {
         const unitId = String(rawId);
@@ -366,7 +317,6 @@ export async function resolveCartrackUnitId(
     }
   }
 
-  // Step 2: Fallback — query the database for the vehicle UUID
   const pool = getPool();
   const result = await pool.query<{ id: string }>(
     `SELECT id FROM vehicles WHERE UPPER(plate_number) = $1 LIMIT 1`,
@@ -428,531 +378,7 @@ async function fetchVehicleCurrentStatus(
   }
 }
 
-// ── Discovery Mode: Probe all known endpoints for fleet history rows ──
-//
-// For a given vehicle and date, systematically try every known endpoint
-// and log the results to help identify which endpoint returns the detailed
-// fleet trip history rows (Time, Status, Events, Location, Latitude, Longitude).
-
-export async function discoverFleetHistoryEndpoints(
-  unitId: string,
-  plateNumber: string,
-  dateStr: string,
-): Promise<void> {
-  if (!isConfigured()) {
-    console.log('[Discovery] Cartrack not configured — skipping');
-    return;
-  }
-
-  const { fromIso, toIso, startTimestamp, endTimestamp } = dateTimeParams(dateStr);
-  const baseUrl = normalizeBaseUrl(CARTRACK_API_URL);
-  const registration = encodeURIComponent(plateNumber.trim().toUpperCase());
-
-  console.log(`\n${'═'.repeat(70)}`);
-  console.log(`🔍 FLEET HISTORY ENDPOINT DISCOVERY`);
-  console.log(`   Vehicle: ${plateNumber} (unitId=${unitId}, registration=${registration})`);
-  console.log(`   Date: ${dateStr}`);
-  console.log(`   Base URL: ${baseUrl}`);
-  console.log(`   Time window: ${startTimestamp} → ${endTimestamp}`);
-  console.log(`${'═'.repeat(70)}`);
-
-  // All candidate endpoints organized by category
-  const allEndpoints: { url: string; method: string }[] = [
-    // ── Trip summary endpoints (known working) ──
-    { url: appendQuery(`${baseUrl}/trips/${registration}`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/trips/${registration}`, { from: fromIso, to: toIso }), method: 'GET' },
-
-    // ── Trip details (may return fleet history rows) ──
-    { url: appendQuery(`${baseUrl}/trips/${registration}/details`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/trips/${registration}/details`, { from: fromIso, to: toIso }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/trips/${unitId}/details`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/trips/${unitId}/details`, { from: fromIso, to: toIso }), method: 'GET' },
-
-    // ── Vehicle-specific trip endpoints ──
-    { url: appendQuery(`${baseUrl}/vehicles/${registration}/trips`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/vehicles/${registration}/trips`, { from: fromIso, to: toIso }), method: 'GET' },
-    { url: `${baseUrl}/vehicles/${unitId}/trips/${dateStr}`, method: 'GET' },
-    { url: appendQuery(`${baseUrl}/vehicles/${unitId}/trips`, { from: fromIso, to: toIso }), method: 'GET' },
-
-    // ── Reports endpoints ──
-    { url: appendQuery(`${baseUrl}/reports/trip/${registration}`, { from: fromIso, to: toIso }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/reports/trip/${unitId}`, { from: fromIso, to: toIso }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/reports/route/${registration}`, { from: fromIso, to: toIso }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/reports/route/${unitId}`, { from: fromIso, to: toIso }), method: 'GET' },
-
-    // ── History endpoints ──
-    { url: appendQuery(`${baseUrl}/history/${unitId}`, { from: fromIso, to: toIso }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/history/details/${registration}`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/history/details/${unitId}`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }), method: 'GET' },
-
-    // ── Tracking endpoints ──
-    { url: appendQuery(`${baseUrl}/tracking/details/${registration}`, { from: fromIso, to: toIso }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/tracking/details/${unitId}`, { from: fromIso, to: toIso }), method: 'GET' },
-
-    // ── Events endpoints (telemetry, NOT fleet history) ──
-    { url: appendQuery(`${baseUrl}/vehicles/${registration}/events`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }), method: 'GET' },
-    { url: appendQuery(`${baseUrl}/vehicles/${registration}/events`, { from: fromIso, to: toIso }), method: 'GET' },
-
-    // ── Generic trip endpoints ──
-    { url: appendQuery(`${baseUrl}/trips`, { registration: plateNumber, start_timestamp: startTimestamp, end_timestamp: endTimestamp }), method: 'GET' },
-
-    // ── Try fetching details for the first trip summary ──
-    // (we'll get a trip_id from the summary endpoint above first)
-  ];
-
-  // First, get trip summaries to extract trip IDs for detail lookup
-  let firstTripId: string | number | null = null;
-  const summaryEndpoint = appendQuery(`${baseUrl}/trips/${registration}`, { from: fromIso, to: toIso });
-  try {
-    const summaryResp = await fetchWithTimeout(summaryEndpoint, {
-      headers: { authorization: getAuthHeader() },
-    });
-    if (summaryResp.ok) {
-      const summaryData = await summaryResp.json();
-      const summaryPoints = extractArrayPayload(summaryData);
-      if (summaryPoints.length > 0 && summaryPoints[0]) {
-        firstTripId = summaryPoints[0].id ?? summaryPoints[0].trip_id ?? summaryPoints[0].tripId ?? null;
-        console.log(`\n📋 Got ${summaryPoints.length} trip summaries. First trip_id=${firstTripId}`);
-        if (firstTripId) {
-          allEndpoints.push(
-            { url: `${baseUrl}/trips/${registration}/details/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/trips/${unitId}/details/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/trips/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/trips/${firstTripId}/details`, method: 'GET' },
-            { url: `${baseUrl}/trip/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/trip/${firstTripId}/details`, method: 'GET' },
-            { url: `${baseUrl}/vehicles/${registration}/trips/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/vehicles/${registration}/trips/${firstTripId}/details`, method: 'GET' },
-            { url: `${baseUrl}/vehicles/${unitId}/trips/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/vehicles/${unitId}/trips/${firstTripId}/details`, method: 'GET' },
-            { url: `${baseUrl}/reports/trip/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/reports/trip/${firstTripId}/details`, method: 'GET' },
-            { url: `${baseUrl}/reports/route/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/history/trip/${firstTripId}`, method: 'GET' },
-            { url: `${baseUrl}/history/${registration}/trip/${firstTripId}`, method: 'GET' },
-          );
-        }
-      }
-    }
-  } catch (e) {
-    console.log(`   Could not fetch trip summaries for trip_id extraction: ${(e as Error).message}`);
-  }
-
-  // Required fleet history fields
-  const REQUIRED_FIELDS = ['Time', 'Status', 'Events', 'Location', 'Latitude', 'Longitude'];
-
-  let totalEndpoints = allEndpoints.length;
-  let successCount = 0;
-  let fleetHistoryFound = 0;
-
-  console.log(`\n📡 Probing ${totalEndpoints} endpoints...\n`);
-
-  for (let i = 0; i < allEndpoints.length; i++) {
-    const { url, method } = allEndpoints[i];
-    const shortUrl = url.length > 120 ? url.substring(0, 120) + '...' : url;
-
-    try {
-      const response = await fetchWithTimeout(url, {
-        method,
-        headers: { authorization: getAuthHeader() },
-      });
-
-      const statusCode = response.status;
-      const isSuccess = statusCode >= 200 && statusCode < 300;
-
-      console.log(`[${i + 1}/${totalEndpoints}] ${method} ${shortUrl}`);
-      console.log(`   Status: ${statusCode} ${statusCode === 404 ? '❌ Not Found' : statusCode === 200 ? '✅ OK' : '⚠️ Other'}`);
-
-      if (!isSuccess) {
-        if (statusCode === 404) console.log(`   → 404: endpoint does not exist`);
-        else if (statusCode === 400) console.log(`   → 400: bad request`);
-        else if (statusCode === 405) console.log(`   → 405: method not allowed`);
-        else console.log(`   → HTTP ${statusCode}`);
-        continue;
-      }
-
-      const data = await response.json();
-      const points = extractArrayPayload(data);
-      successCount++;
-
-      if (points.length === 0) {
-        console.log(`   Records: 0 (empty array)`);
-        continue;
-      }
-
-      console.log(`   Records: ${points.length}`);
-
-      // Log response keys
-      const allKeys = Object.keys(points[0]);
-      const keyInfo = allKeys.length > 0 ? allKeys.join(', ') : '(no keys)';
-      console.log(`   Response keys (${allKeys.length}): ${keyInfo}`);
-
-      // Log first 3 records
-      console.log(`   ── First ${Math.min(points.length, 3)} record(s) ──`);
-      for (let r = 0; r < Math.min(points.length, 3); r++) {
-        const p = points[r];
-        const timeVal = JSON.stringify(p.Time ?? p.time ?? p.clock ?? p.timestamp);
-        const statusVal = JSON.stringify(p.Status ?? p.status);
-        const eventsVal = JSON.stringify(p.Events ?? p.events);
-        const locationVal = JSON.stringify(p.Location ?? p.location ?? p.location_name);
-        const latVal = JSON.stringify(p.Latitude ?? p.latitude);
-        const lonVal = JSON.stringify(p.Longitude ?? p.longitude);
-        const speedVal = JSON.stringify(p["Road Speed"] ?? p.road_speed ?? p.speed);
-        console.log(`   Row #${r + 1}: Time=${timeVal} | Status=${statusVal} | Events=${eventsVal} | Location=${locationVal} | Lat=${latVal} | Lon=${lonVal} | Speed=${speedVal}`);
-      }
-
-      // Check if this is fleet history data
-      const hasTime = points.some(p => (p.Time ?? p.time) !== undefined && (p.Time ?? p.time) !== null && (p.Time ?? p.time) !== '');
-      const hasStatus = points.some(p => (p.Status ?? p.status) !== undefined && (p.Status ?? p.status) !== null && (p.Status ?? p.status) !== '');
-      const hasEvents = points.some(p => (p.Events ?? p.events) !== undefined && (p.Events ?? p.events) !== null);
-      const hasLocation = points.some(p => (p.Location ?? p.location) !== undefined && (p.Location ?? p.location) !== null && (p.Location ?? p.location) !== '');
-      const hasLat = points.some(p => Number(p.Latitude ?? p.latitude) !== 0 && Number.isFinite(Number(p.Latitude ?? p.latitude)));
-      const hasLon = points.some(p => Number(p.Longitude ?? p.longitude) !== 0 && Number.isFinite(Number(p.Longitude ?? p.longitude)));
-
-      const fieldCheck = `Time=${hasTime}, Status=${hasStatus}, Events=${hasEvents}, Location=${hasLocation}, Lat=${hasLat}, Lon=${hasLon}`;
-      console.log(`   Fleet history check: ${fieldCheck}`);
-
-      if (hasTime && hasStatus && hasEvents && hasLocation && hasLat && hasLon) {
-        console.log(`   🎯✅ FLEET HISTORY ENDPOINT FOUND! This endpoint returns the required fields!`);
-        fleetHistoryFound++;
-      } else if (hasTime && !hasStatus && !hasEvents) {
-        console.log(`   📋 Trip summary endpoint (has Time but no Status/Events/Location)`);
-      } else if (allKeys.some(k => k.toLowerCase().includes('ignition') || k.toLowerCase().includes('speed'))) {
-        console.log(`   📡 Telemetry/events endpoint (has ignition/speed but no fleet history fields)`);
-      } else {
-        console.log(`   ❓ Unknown data shape`);
-      }
-    } catch (error) {
-      const errMsg = (error as Error).message;
-      console.log(`[${i + 1}/${totalEndpoints}] ${method} ${shortUrl}`);
-      console.log(`   Error: ${errMsg}`);
-    }
-
-    console.log('');
-  }
-
-  // ── Summary ──
-  console.log(`\n${'═'.repeat(70)}`);
-  console.log(`📊 DISCOVERY SUMMARY`);
-  console.log(`   Total endpoints probed: ${totalEndpoints}`);
-  console.log(`   Successful (2xx): ${successCount}`);
-  console.log(`   Fleet history endpoints found: ${fleetHistoryFound}`);
-  console.log(`${'═'.repeat(70)}\n`);
-}
-
-// ── Fetch detailed fleet trip history rows for a specific time window ──
-//
-// CRITICAL: /vehicles/{plate}/events does NOT return Time/Status/Events/Location.
-// This function ONLY looks for endpoints that return actual fleet trip history rows.
-
-async function fetchFleetTripHistoryRows(
-  unitId: string,
-  plateNumber: string,
-  fromIso: string,
-  toIso: string,
-  startTimestamp: string,
-  endTimestamp: string,
-): Promise<CartrackHistoryPoint[]> {
-  if (!isConfigured()) return [];
-
-  const baseUrl = normalizeBaseUrl(CARTRACK_API_URL);
-  const registration = encodeURIComponent(plateNumber.trim().toUpperCase());
-
-  // ── Endpoints that MIGHT return fleet trip history rows ──
-  const detailEndpoints: string[] = [
-    // Trip details with registration
-    appendQuery(`${baseUrl}/trips/${registration}/details`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/trips/${registration}/details`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    // Trip details with unit ID
-    appendQuery(`${baseUrl}/trips/${unitId}/details`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/trips/${unitId}/details`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    // Vehicle trip details
-    appendQuery(`${baseUrl}/vehicles/${registration}/trips/details`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/vehicles/${registration}/trips/details`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    // Reports based
-    appendQuery(`${baseUrl}/reports/trip/${registration}`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    appendQuery(`${baseUrl}/reports/trip/${unitId}`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    appendQuery(`${baseUrl}/reports/route/${registration}`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    appendQuery(`${baseUrl}/reports/route/${unitId}`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    // History/details
-    appendQuery(`${baseUrl}/history/details/${registration}`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/history/details/${unitId}`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    // Tracking details
-    appendQuery(`${baseUrl}/tracking/details/${registration}`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    appendQuery(`${baseUrl}/tracking/details/${unitId}`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    // Try /trip/{id}/details patterns with no specific ID
-    `${baseUrl}/trips/${registration}/details`,
-    `${baseUrl}/trips/${unitId}/details`,
-  ];
-
-  for (const endpoint of detailEndpoints) {
-    for (let attempt = 0; attempt <= CARTRACK_RETRIES; attempt += 1) {
-      try {
-        const response = await fetchWithTimeout(endpoint, {
-          headers: { authorization: getAuthHeader() },
-        });
-
-        if (!response.ok) {
-          if (response.status === 404 || response.status === 400 || response.status === 405) break;
-          continue;
-        }
-
-        const data = await response.json();
-        const points = extractArrayPayload(data);
-
-        console.log(`\n🔍 TRIP DETAIL ENDPOINT: ${endpoint}`);
-        console.log(`   Status: ${response.status}, Records: ${points.length}`);
-
-        if (points.length > 0) {
-          const sampleKeys = Object.keys(points[0]).slice(0, 30);
-          console.log(`   First record keys (${sampleKeys.length}): ${JSON.stringify(sampleKeys)}`);
-
-          // Log first 5 rows in detail
-          for (let i = 0; i < Math.min(points.length, 5); i++) {
-            const p = points[i];
-            console.log(`   Row #${i}: Time=${JSON.stringify(p.Time ?? p.time)}, Status=${JSON.stringify(p.Status ?? p.status)}, Events=${JSON.stringify(p.Events ?? p.events)}, Location=${JSON.stringify(p.Location ?? p.location)}, Lat=${JSON.stringify(p.Latitude ?? p.latitude)}, Lon=${JSON.stringify(p.Longitude ?? p.longitude)}`);
-          }
-
-          // CRITICAL: Only accept if it has ALL required fleet history fields
-          const hasTime = points.some(p => (p.Time ?? p.time) !== undefined && (p.Time ?? p.time) !== null && (p.Time ?? p.time) !== '');
-          const hasStatus = points.some(p => (p.Status ?? p.status) !== undefined && (p.Status ?? p.status) !== null && (p.Status ?? p.status) !== '');
-          const hasEvents = points.some(p => (p.Events ?? p.events) !== undefined && (p.Events ?? p.events) !== null);
-          const hasLocation = points.some(p => (p.Location ?? p.location) !== undefined && (p.Location ?? p.location) !== null && (p.Location ?? p.location) !== '');
-          const hasLat = points.some(p => Number(p.Latitude ?? p.latitude) !== 0 && Number.isFinite(Number(p.Latitude ?? p.latitude)));
-          const hasLon = points.some(p => Number(p.Longitude ?? p.longitude) !== 0 && Number.isFinite(Number(p.Longitude ?? p.longitude)));
-
-          console.log(`   Validation: Time=${hasTime}, Status=${hasStatus}, Events=${hasEvents}, Location=${hasLocation}, Lat=${hasLat}, Lon=${hasLon}`);
-
-          if (hasTime && hasStatus && hasEvents && hasLocation && hasLat && hasLon) {
-            console.log(`   ✅ VALID fleet trip history rows found!`);
-            return points;
-          } else {
-            console.log(`   ❌ Missing required fleet history fields — skipping this endpoint`);
-            // Continue to next endpoint
-          }
-        } else {
-          console.log(`   No records returned`);
-        }
-      } catch (error) {
-        if (!isRetriableError(error) || attempt >= CARTRACK_RETRIES) break;
-        await delay(1000 * (attempt + 1));
-      }
-    }
-  }
-
-  console.log(`\n⚠️ No endpoint returned valid fleet trip history rows for this time window`);
-  return [];
-}
-
-/**
- * Given a fleet trip record (from /rest/trips/{plate}), try to fetch
- * the detailed fleet trip history rows for that specific trip.
- *
- * Returns rows with Time, Status, Events, Location, Latitude, Longitude
- * or an empty array if not available.
- */
-export async function fetchDetailedPointsForTrip(
-  unitId: string,
-  plateNumber: string,
-  tripRecord: CartrackHistoryPoint,
-): Promise<CartrackHistoryPoint[]> {
-  const baseUrl = normalizeBaseUrl(CARTRACK_API_URL);
-  const registration = encodeURIComponent(plateNumber.trim().toUpperCase());
-
-  // Log ALL keys from the trip record to identify available fields
-  const allKeys = Object.keys(tripRecord);
-  console.log(`\n📋 TRIP RECORD KEYS (${allKeys.length}):`);
-  console.log(`   ${JSON.stringify(allKeys)}`);
-
-  // Log key fields
-  console.log(`   id=${JSON.stringify(tripRecord.id)}`);
-  console.log(`   trip_id=${JSON.stringify(tripRecord.trip_id)}`);
-  console.log(`   tripId=${JSON.stringify(tripRecord.tripId)}`);
-  console.log(`   start_timestamp=${JSON.stringify(tripRecord.start_timestamp)}`);
-  console.log(`   end_timestamp=${JSON.stringify(tripRecord.end_timestamp)}`);
-  console.log(`   start_time=${JSON.stringify(tripRecord.start_time)}`);
-  console.log(`   end_time=${JSON.stringify(tripRecord.end_time)}`);
-  console.log(`   start_location=${JSON.stringify(tripRecord.start_location)}`);
-  console.log(`   end_location=${JSON.stringify(tripRecord.end_location)}`);
-
-  // Extract the trip ID from the record
-  const tripId = tripRecord.id ?? tripRecord.trip_id ?? tripRecord.tripId;
-
-  if (!tripId) {
-    console.log(`⚠️ No trip ID found in record — cannot fetch trip details`);
-  }
-
-  // Try endpoints that use the specific trip_id
-  if (tripId) {
-    console.log(`\n🔎 Fetching details for trip_id=${tripId}...`);
-
-    const tripSpecificEndpoints: string[] = [
-      // Direct trip detail endpoints
-      `${baseUrl}/trips/${registration}/details/${tripId}`,
-      `${baseUrl}/trips/${unitId}/details/${tripId}`,
-      // Generic trip endpoints
-      `${baseUrl}/trips/${tripId}/details`,
-      `${baseUrl}/trips/${tripId}`,
-      `${baseUrl}/trip/${tripId}`,
-      `${baseUrl}/trip/${tripId}/details`,
-      // Vehicle-specific
-      `${baseUrl}/vehicles/${registration}/trips/${tripId}/details`,
-      `${baseUrl}/vehicles/${registration}/trips/${tripId}`,
-      `${baseUrl}/vehicles/${unitId}/trips/${tripId}/details`,
-      // Reports
-      `${baseUrl}/reports/trip/${tripId}`,
-      `${baseUrl}/reports/trip/${tripId}/details`,
-      `${baseUrl}/reports/route/${tripId}`,
-      // History
-      `${baseUrl}/history/trip/${tripId}`,
-      `${baseUrl}/history/${registration}/trip/${tripId}`,
-      // Generic
-      appendQuery(`${baseUrl}/trips/${tripId}/details`, {}),
-      appendQuery(`${baseUrl}/trip/${tripId}/details`, {}),
-    ];
-
-    for (const endpoint of tripSpecificEndpoints) {
-      try {
-        console.log(`\n   Trying: ${endpoint}`);
-        const response = await fetchWithTimeout(endpoint, {
-          headers: { authorization: getAuthHeader() },
-        });
-
-        console.log(`   Status: ${response.status}`);
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            console.log(`   → 404 Not Found`);
-            continue;
-          }
-          if (response.status === 400 || response.status === 405) {
-            console.log(`   → ${response.status} (bad request/method not allowed)`);
-            continue;
-          }
-          continue;
-        }
-
-        const data = await response.json();
-        const points = extractArrayPayload(data);
-
-        console.log(`   Records: ${points.length}`);
-
-        if (points.length > 0) {
-          const sampleKeys = Object.keys(points[0]).slice(0, 30);
-          console.log(`   First record keys (${sampleKeys.length}): ${JSON.stringify(sampleKeys)}`);
-
-          for (let i = 0; i < Math.min(points.length, 5); i++) {
-            const p = points[i];
-            console.log(`   Row #${i}: Time=${JSON.stringify(p.Time ?? p.time)}, Status=${JSON.stringify(p.Status ?? p.status)}, Events=${JSON.stringify(p.Events ?? p.events)}, Location=${JSON.stringify(p.Location ?? p.location)}, Lat=${JSON.stringify(p.Latitude ?? p.latitude)}, Lon=${JSON.stringify(p.Longitude ?? p.longitude)}`);
-          }
-
-          // Validate
-          const hasTime = points.some(p => (p.Time ?? p.time) !== undefined && (p.Time ?? p.time) !== null && (p.Time ?? p.time) !== '');
-          const hasStatus = points.some(p => (p.Status ?? p.status) !== undefined && (p.Status ?? p.status) !== null && (p.Status ?? p.status) !== '');
-          const hasEvents = points.some(p => (p.Events ?? p.events) !== undefined && (p.Events ?? p.events) !== null);
-          const hasLocation = points.some(p => (p.Location ?? p.location) !== undefined && (p.Location ?? p.location) !== null && (p.Location ?? p.location) !== '');
-          const hasLat = points.some(p => Number(p.Latitude ?? p.latitude) !== 0 && Number.isFinite(Number(p.Latitude ?? p.latitude)));
-          const hasLon = points.some(p => Number(p.Longitude ?? p.longitude) !== 0 && Number.isFinite(Number(p.Longitude ?? p.longitude)));
-
-          console.log(`   Validation: Time=${hasTime}, Status=${hasStatus}, Events=${hasEvents}, Location=${hasLocation}, Lat=${hasLat}, Lon=${hasLon}`);
-
-          if (hasTime && hasStatus && hasEvents && hasLocation && hasLat && hasLon) {
-            console.log(`   ✅ VALID fleet trip history rows found for trip_id=${tripId}!`);
-            return points;
-          } else {
-            console.log(`   ❌ Missing required fleet history fields — continuing search...`);
-          }
-        }
-      } catch (error) {
-        console.log(`   Error: ${(error as Error).message}`);
-      }
-    }
-  }
-
-  // Fallback: try time-window-based fetch using the trip's start/end timestamps
-  const startTs = String(firstPresent(
-    tripRecord.start_timestamp,
-    tripRecord.start_time,
-    tripRecord.startTime,
-    tripRecord.event_time,
-    tripRecord.event_ts,
-    tripRecord.timestamp,
-    '',
-  ) || '');
-
-  const endTs = String(firstPresent(
-    tripRecord.end_timestamp,
-    tripRecord.end_time,
-    tripRecord.endTime,
-    tripRecord.event_time,
-    tripRecord.event_ts,
-    tripRecord.timestamp,
-    '',
-  ) || '');
-
-  if (startTs && endTs) {
-    console.log(`\n📅 Falling back to time-window fetch: ${startTs} → ${endTs}`);
-
-    const fromDate = new Date(startTs);
-    const toDate = new Date(endTs);
-
-    fromDate.setMinutes(fromDate.getMinutes() - 5);
-    toDate.setMinutes(toDate.getMinutes() + 5);
-
-    const fromIso = fromDate.toISOString();
-    const toIso = toDate.toISOString();
-    const startTimestamp = fromDate.toISOString().replace('T', ' ').substring(0, 19);
-    const endTimestamp = toDate.toISOString().replace('T', ' ').substring(0, 19);
-
-    return await fetchFleetTripHistoryRows(
-      unitId, plateNumber, fromIso, toIso, startTimestamp, endTimestamp,
-    );
-  }
-
-  return [];
-}
+// ── Fetch Cartrack History ─────────────────────────────────────
 
 export async function fetchCartrackVehicleHistory(
   unitId: string,
@@ -965,77 +391,24 @@ export async function fetchCartrackVehicleHistory(
   const baseUrl = normalizeBaseUrl(CARTRACK_API_URL);
   const registration = encodeURIComponent((plateNumber || unitId).trim().toUpperCase());
 
-  // CRITICAL ORDER:
-  // 1. /rest/trips/{plate} FIRST — returns fleet trip records with start/end timestamps
-  // 2. Fallback to event endpoints LAST — these have no Time field for TO matching
-
-  const historyEndpoints: string[] = [
-    // ── Priority 1: Fleet trip records (from /rest/trips/{plate}) ──
-    appendQuery(`${baseUrl}/trips/${registration}`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/trips/${registration}`, {
-      from: fromIso,
-      to: toIso,
-    }),
-
-    // ── Priority 2: Trip details (might return actual fleet history rows) ──
-    appendQuery(`${baseUrl}/trips/${registration}/details`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/trips/${registration}/details`, {
-      from: fromIso,
-      to: toIso,
-    }),
-    appendQuery(`${baseUrl}/trips/${unitId}/details`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/trips/${unitId}/details`, {
-      from: fromIso,
-      to: toIso,
-    }),
-
-    // ── Priority 3: Vehicle-specific trip routes ──
-    appendQuery(`${baseUrl}/vehicles/${registration}/trips`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/vehicles/${registration}/trips`, {
-      from: fromIso,
-      to: toIso,
-    }),
+  const endpoints = [
+    appendQuery(`${baseUrl}/trips/${registration}`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }),
+    appendQuery(`${baseUrl}/trips/${registration}`, { from: fromIso, to: toIso }),
+    appendQuery(`${baseUrl}/trips/${unitId}/details`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }),
+    appendQuery(`${baseUrl}/trips/${unitId}/details`, { from: fromIso, to: toIso }),
+    appendQuery(`${baseUrl}/vehicles/${registration}/trips`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }),
+    appendQuery(`${baseUrl}/vehicles/${registration}/trips`, { from: fromIso, to: toIso }),
     `${baseUrl}/vehicles/${unitId}/trips/${dateStr}`,
     appendQuery(`${baseUrl}/vehicles/${unitId}/trips`, { from: fromIso, to: toIso }),
-
-    // ── Priority 4: Reports / history ──
-    appendQuery(`${baseUrl}/trips`, {
-      registration: plateNumber || unitId,
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
+    appendQuery(`${baseUrl}/trips`, { registration: plateNumber || unitId, start_timestamp: startTimestamp, end_timestamp: endTimestamp }),
     appendQuery(`${baseUrl}/history/${unitId}`, { from: fromIso, to: toIso }),
     appendQuery(`${baseUrl}/reports/trip/${registration}`, { from: fromIso, to: toIso }),
     appendQuery(`${baseUrl}/reports/route/${registration}`, { from: fromIso, to: toIso }),
-
-    // ── Priority 5 (LAST RESORT): Event endpoints ──
-    // /vehicles/{plate}/events returns telemetry (ignition/speed/clock) but NO Time/Status/Events/Location
-    // These CANNOT be used for TO matching.
-    appendQuery(`${baseUrl}/vehicles/${registration}/events`, {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp,
-    }),
-    appendQuery(`${baseUrl}/vehicles/${registration}/events`, {
-      from: fromIso,
-      to: toIso,
-    }),
   ];
 
   let lastError: Error | null = null;
 
-  for (const endpoint of historyEndpoints) {
+  for (const endpoint of endpoints) {
     for (let attempt = 0; attempt <= CARTRACK_RETRIES; attempt += 1) {
       try {
         const response = await fetchWithTimeout(endpoint, {
@@ -1052,23 +425,6 @@ export async function fetchCartrackVehicleHistory(
         if (points.length > 0) {
           console.log(`\n📡 CARTRACK ENDPOINT: ${endpoint}`);
           console.log(`   Status: ${response.status}, Records: ${points.length}`);
-
-          // Log the shape
-          const sampleKeys = Object.keys(points[0]).slice(0, 25);
-          const allKeys = Object.keys(points[0]);
-          const isSummary = looksLikeTripSummary(points[0]);
-          const hasFleetHistoryFields = looksLikeFleetTripHistoryRow(points[0]);
-          const hasTimeField = points.some(p => (p.Time ?? p.time) !== undefined && (p.Time ?? p.time) !== null && (p.Time ?? p.time) !== '');
-
-          console.log(`   Keys (${allKeys.length}): ${JSON.stringify(sampleKeys)}...`);
-          console.log(`   Classification: tripSummary=${isSummary}, hasTimeField=${hasTimeField}, hasFleetHistoryRow=${hasFleetHistoryFields}`);
-
-          // Log first 3 records' key fields
-          for (let i = 0; i < Math.min(points.length, 3); i++) {
-            const p = points[i];
-            console.log(`   Record #${i + 1}: id=${JSON.stringify(p.id)}, trip_id=${JSON.stringify(p.trip_id)}, Time=${JSON.stringify(p.Time ?? p.time)}, clock=${JSON.stringify(p.clock)}, start_time=${JSON.stringify(p.start_time)}, end_time=${JSON.stringify(p.end_time)}, ignition=${JSON.stringify(p.ignition)}, speed=${JSON.stringify(p.speed)}, lat=${JSON.stringify(p.latitude)}, lon=${JSON.stringify(p.longitude)}, location=${JSON.stringify(p.location)}, start_location=${JSON.stringify(p.start_location)}, end_location=${JSON.stringify(p.end_location)}`);
-          }
-
           return points;
         }
 
@@ -1081,7 +437,6 @@ export async function fetchCartrackVehicleHistory(
     }
   }
 
-  // Fallback
   console.log(`History API unavailable for unit ${unitId}, falling back to current fleet status`);
   const currentStatus = await fetchVehicleCurrentStatus(unitId);
   if (currentStatus) {

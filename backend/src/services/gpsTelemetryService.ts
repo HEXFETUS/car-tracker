@@ -19,6 +19,7 @@ export interface TelemetryInsert {
   driverName: string | null;
   toNumber: string | null;
   recordedAt: string;
+  activeTripId?: string | null;
 }
 
 export interface TelemetryRow {
@@ -36,6 +37,7 @@ export interface TelemetryRow {
   toNumber: string | null;
   recordedAt: string;
   createdAt: string;
+  activeTripId: string | null;
   // Active travel order info
   activeToNumber?: string | null;
   activeToStatus?: string | null;
@@ -57,6 +59,7 @@ interface TelemetryDbRow {
   to_number: string | null;
   recorded_at: string;
   created_at: string;
+  active_trip_id: string | null;
   active_to_number: string | null;
   active_to_status: string | null;
   active_driver_name: string | null;
@@ -75,10 +78,11 @@ export async function getLatestTelemetry(vehicleId: string): Promise<{
   recordedAt: string;
   latitude: number | null;
   longitude: number | null;
+  activeTripId: string | null;
 } | null> {
   const pool = getPool();
-  const result = await pool.query<{ speed_kmh: number; fuel_liters: number | null; ignition: boolean; location_name: string | null; event_type: string; recorded_at: string; latitude: number | null; longitude: number | null }>(
-    `SELECT speed_kmh, fuel_liters, ignition, location_name, event_type, recorded_at, latitude, longitude
+  const result = await pool.query<{ speed_kmh: number; fuel_liters: number | null; ignition: boolean; location_name: string | null; event_type: string; recorded_at: string; latitude: number | null; longitude: number | null; active_trip_id: string | null }>(
+    `SELECT speed_kmh, fuel_liters, ignition, location_name, event_type, recorded_at, latitude, longitude, active_trip_id
      FROM gps_telemetry
      WHERE vehicle_id = $1
      ORDER BY recorded_at DESC
@@ -95,7 +99,29 @@ export async function getLatestTelemetry(vehicleId: string): Promise<{
     recordedAt: result.rows[0].recorded_at,
     latitude: result.rows[0].latitude,
     longitude: result.rows[0].longitude,
+    activeTripId: result.rows[0].active_trip_id,
   };
+}
+
+/**
+ * Check whether an ignition boundary event already exists for a trip cycle.
+ */
+export async function telemetryTripEventExists(
+  vehicleId: string,
+  activeTripId: string,
+  eventType: 'IGNITION ON' | 'IGNITION OFF',
+): Promise<boolean> {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT 1
+       FROM gps_telemetry
+      WHERE vehicle_id = $1
+        AND active_trip_id = $2
+        AND event_type = $3
+      LIMIT 1`,
+    [vehicleId, activeTripId, eventType],
+  );
+  return result.rows.length > 0;
 }
 
 /**
@@ -129,14 +155,15 @@ export async function telemetryExists(
 /**
  * Insert a single telemetry data point.
  */
-export async function insertTelemetry(data: TelemetryInsert): Promise<void> {
+export async function insertTelemetry(data: TelemetryInsert): Promise<boolean> {
   const pool = getPool();
-  await pool.query(
+  const result = await pool.query(
     `INSERT INTO gps_telemetry
        (vehicle_id, plate_number, event_type, latitude, longitude,
         speed_kmh, fuel_liters, ignition, location_name,
-        driver_name, to_number, recorded_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        driver_name, to_number, recorded_at, active_trip_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     ON CONFLICT DO NOTHING`,
     [
       data.vehicleId,
       data.plateNumber,
@@ -150,8 +177,10 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<void> {
       data.driverName,
       data.toNumber,
       data.recordedAt,
+      data.activeTripId ?? null,
     ],
   );
+  return (result.rowCount ?? 0) > 0;
 }
 
 export interface FetchTelemetryParams {
@@ -302,6 +331,7 @@ export async function fetchTelemetry(
     toNumber: row.to_number,
     recordedAt: row.recorded_at,
     createdAt: row.created_at,
+    activeTripId: row.active_trip_id ?? null,
     activeToNumber: row.active_to_number ?? null,
     activeToStatus: row.active_to_status ?? null,
     activeDriverName: row.active_driver_name ?? null,

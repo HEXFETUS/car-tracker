@@ -21,13 +21,14 @@ import { TripDetailsModal } from '../components/TripDetailsModal';
 
 function formatDate(iso: string | undefined | null): string {
   if (!iso) return '—';
-  const [year, month, day] = iso.split('-').map(Number);
-  if (isNaN(year) || isNaN(month) || isNaN(day)) return '—';
-  const d = new Date(year, month - 1, day);
+  // Handle full ISO timestamp (e.g. "2026-06-30T00:00:00.000Z") or date-only (e.g. "2026-06-30")
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 const STATUS_COLORS: Record<string, string> = {
+  not_synced: 'bg-zinc-50 text-zinc-500 border-zinc-200',
   pending: 'bg-zinc-50 text-zinc-500 border-zinc-200',
   tracking_started: 'bg-blue-50 text-blue-700 border-blue-200',
   ongoing: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -97,6 +98,13 @@ export function LogsPage() {
   useEffect(() => {
     loadLogs();
   }, [loadLogs]);
+
+  // Debug: log first row when data loads
+  useEffect(() => {
+    if (result && result.data.length > 0) {
+      console.log('[LogsPage] First row data:', result.data[0]);
+    }
+  }, [result]);
 
   // Handlers
   const handleSyncHistory = async () => {
@@ -306,18 +314,20 @@ export function LogsPage() {
                 <tbody>
                   {result.data.map((log, idx) => {
                     const hasAnomaly = log.anomalyFlag && !log.toNumber;
-                    const tripStatus = log.tripStatusGps === 'completed' || log.tripStatusGps === 'arrived'
+                    const isCompleted = log.tripStatusGps === 'completed' || log.tripStatusGps === 'arrived' || (log.departureTimeGps && log.arrivalTimeGps);
+                    const isOngoing = log.tripStatusGps === 'en-route' || log.tripStatusGps === 'departed' || log.tripStatusGps === 'ongoing' || log.tripStatusGps === 'tracking_started';
+                    const tripStatus = isCompleted
                       ? 'Completed'
-                      : log.tripStatusGps === 'en-route' || log.tripStatusGps === 'departed' || log.tripStatusGps === 'ongoing' || log.tripStatusGps === 'tracking_started'
+                      : isOngoing
                         ? 'Ongoing'
                         : log.tripStatusGps === 'cancelled'
                           ? 'Cancelled'
                           : log.tripStatusGps === 'pending'
-                            ? 'Pending'
+                            ? 'Not Synced'
                             : 'No GPS';
                     return (
                       <tr key={log.id} className={cn('border-b border-zinc-50 transition-colors hover:bg-brand-cream/30', idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50/30', hasAnomaly && 'bg-red-50/40 hover:bg-red-50/60')}>
-                        <td className="px-4 py-3 text-zinc-600 text-xs">{formatDate(log.tripDate)}</td>
+                        <td className="px-4 py-3 text-zinc-600 text-xs">{formatDate(log.toDate || log.tripDate || log.createdAt || log.departureTimeGps)}</td>
                         <td className="px-4 py-3">
                           {log.toStatusAuto ? <span className="text-xs text-zinc-500">{log.toStatusAuto}</span> : <span className="text-zinc-300">—</span>}
                         </td>
@@ -376,20 +386,22 @@ export function LogsPage() {
           <div className="space-y-3 md:hidden">
             {result.data.map((log) => {
               const hasAnomaly = log.anomalyFlag && !log.toNumber;
-              const tripStatus = log.tripStatusGps === 'completed' || log.tripStatusGps === 'arrived'
+              const isCompleted = log.tripStatusGps === 'completed' || log.tripStatusGps === 'arrived' || (log.departureTimeGps && log.arrivalTimeGps);
+              const isOngoing = log.tripStatusGps === 'en-route' || log.tripStatusGps === 'departed' || log.tripStatusGps === 'ongoing' || log.tripStatusGps === 'tracking_started';
+              const tripStatus = isCompleted
                 ? 'Completed'
-                : log.tripStatusGps === 'en-route' || log.tripStatusGps === 'departed' || log.tripStatusGps === 'ongoing' || log.tripStatusGps === 'tracking_started'
+                : isOngoing
                   ? 'Ongoing'
                   : log.tripStatusGps === 'cancelled'
                     ? 'Cancelled'
                     : log.tripStatusGps === 'pending'
-                      ? 'Pending'
+                      ? 'Not Synced'
                       : 'No GPS';
               return (
                 <div key={log.id} className={cn('rounded-xl bg-white shadow-brand overflow-hidden', hasAnomaly && 'ring-1 ring-red-200')}>
                   <div className="flex items-center justify-between bg-brand-cream/60 px-4 py-3">
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs text-zinc-500">{formatDate(log.tripDate)}</p>
+                      <p className="text-xs text-zinc-500">{formatDate(log.toDate || log.tripDate || log.createdAt || log.departureTimeGps)}</p>
                       {log.toNumber && (
                         <p className="text-xs font-mono text-brand-teal font-medium mt-0.5">{log.toNumber}</p>
                       )}
