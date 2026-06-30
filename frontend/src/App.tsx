@@ -16,6 +16,7 @@ const TravelOrdersPage = lazy(() => import('@/modules/travel-orders/pages/Travel
 const GpsLogsPage = lazy(() => import('@/modules/gps-logs/pages/GpsLogsPage').then(m => ({ default: m.GpsLogsPage })));
 const SettingsPage = lazy(() => import('@/modules/settings/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const RequestsPage = lazy(() => import('@/modules/requests/pages/RequestsPage').then(m => ({ default: m.RequestsPage })));
+const RequestTravelOrderPage = lazy(() => import('@/modules/user-to/pages/RequestTravelOrderPage').then(m => ({ default: m.RequestTravelOrderPage })));
 
 const queryClient = new QueryClient();
 
@@ -23,6 +24,8 @@ function AppRoutes() {
   return (
     <Suspense fallback={<div className="flex items-center justify-center h-screen text-muted-foreground">Loading...</div>}>
       <Routes>
+      {/* Public: user-to request page — no auth required, standalone layout */}
+      <Route path="/user-to/request" element={<RequestTravelOrderPage />} />
       <Route
         path="/login"
         element={

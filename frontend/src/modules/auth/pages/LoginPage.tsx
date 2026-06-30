@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import { ShieldCheck } from 'lucide-react';
 
 export function LoginPage() {
+  const navigate = useNavigate();
   const { login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -119,6 +121,25 @@ export function LoginPage() {
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
+
+          <div className="mt-6">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-zinc-200" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-2 text-zinc-400">or</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => navigate('/user-to/request')}
+              className="mt-6 w-full rounded-lg border border-brand-sage px-4 py-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-brand-cream"
+            >
+              Request Travel Order
+            </button>
+          </div>
 
         </div>
       </div>
