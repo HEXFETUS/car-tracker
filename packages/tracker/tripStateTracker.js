@@ -1,15 +1,37 @@
 // ── GPS Trip State Tracker ──────────────────────────────────────
 //
 // Per-vehicle state manager that tracks trip origins, destinations,
-// and idling duration. Generates structured alerts for ingestion by
-// the fleet sync pipeline.
+// and arrival state. Generates structured trip lifecycle alerts for
+// ingestion by the fleet sync pipeline.
+//
+// SCOPE:
+//   - Trip start/end (IGNITION_ON, IGNITION_OFF)
+//   - Origin saving
+//   - TO-based arrival detection (DESTINATION_ARRIVED)
+//   - Return trip management (RETURN_TRIP_STARTED)
+//
+// NOT IN SCOPE (handled by tracker.js):
+//   - Idling alerts (IDLING, IDLING_TOO_LONG)
+//   - Motion alerts
+//   - Speed/fuel alerts
+//
+// IMPORTANT:
+//   - Arrival is ONLY determined by matching GPS coordinates against
+//     a Travel Order (TO) destination. Idle time is NEVER used to
+//     infer arrival.
+//   - Ignition OFF is ONLY triggered by explicit ignition=false or
+//     engine=false telemetry fields. Speed=0 is NEVER treated as
+//     ignition OFF.
 
 import { getJson, setJson } from './state.js';
+import { getLatestTelemetry } from '../backend/src/services/gpsTelemetryService.js';
 
 // ── Constants ────────────────────────────────────────────────────
 
-const ARRIVAL_IDLE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
-const DESTINATION_RADIUS_METERS = 100; // Configurable radius for destination verification
+// Destination radius in meters for TO-based arrival detection.
+// Can be overridden via DESTINATION_RADIUS_METERS env variable.
+// Default: 100 meters
+const DESTINATION_RADIUS_METERS = Number(process.env.DESTINATION_RADIUS_METERS) || 100;
 
 // ── State Keys ───────────────────────────────────────────────────
 
@@ -33,9 +55,7 @@ function defaultState() {
     destinationSaved: false,
     destinationCoordinate: null,
     arrivalTime: null,
-    idleStartTime: null,
-    lastIdleAlertTime: null,
-    continuousIdleDurationMs: 0,
+    toDestinationCoordinate: null, // Destination from Travel Order
   };
 }
 
@@ -45,9 +65,6 @@ function defaultReturnState() {
     returnTripId: null,
     originSaved: false,
     originCoordinate: null,
-    idleStartTime: null,
-    continuousIdleDurationMs: 0,
-    lastIdleAlertTime: null,
   };
 }
 
@@ -102,29 +119,59 @@ export function isWithinRadius(coord1, coord2, radiusMeters = DESTINATION_RADIUS
   return haversineDistance(coord1, coord2) <= radiusMeters;
 }
 
+// ── Ignition Helpers ─────────────────────────────────────────────
+
+/**
+ * Extract the raw ignition value from the vehicle payload.
+ * Returns the first non-null/non-undefined value found, or null
+ * if no ignition fields exist in the payload at all.
+ */
+function getIgnitionRaw(vehicle) {
+  return vehicle.ignition ??
+    vehicle.engine ??
+    vehicle.engine_on ??
+    vehicle.engine_status ??
+    vehicle.ignition_status ??
+    vehicle.acc ??
+    null;
+}
+
+/**
+ * Convert a raw ignition value to a boolean.
+ */
+function rawToBool(raw) {
+  if (raw === null || raw === undefined) return false;
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw === 'string') {
+    const normalized = raw.trim().toLowerCase();
+    if (['true', 'on', '1', 'yes', 'y', 'running'].includes(normalized)) return true;
+    if (['false', 'off', '0', 'no', 'n', 'stopped'].includes(normalized)) return false;
+  }
+  return Boolean(raw);
+}
+
 // ── State Transitions ────────────────────────────────────────────
 
 /**
- * Given a vehicle's current telemetry and optional explicit trigger
- * flags, process state transitions and return any generated alerts.
+ * Given a vehicle's current telemetry and optional Travel Order
+ * destination, process state transitions and return any generated
+ * alerts.
+ *
+ * Trip lifecycle only: IGNITION_ON, IGNITION_OFF, DESTINATION_ARRIVED,
+ * RETURN_TRIP_STARTED.
+ *
+ * Idling alerts are NOT emitted here — they are handled by tracker.js's
+ * getIdleStatus() which runs independently.
  *
  * @param {object} vehicle - Raw Cartrack vehicle payload.
  * @param {string} vehicleId - Resolved database vehicle UUID.
  * @param {number|null} latitude
  * @param {number|null} longitude
+ * @param {string|null} toDestinationCoordinate - TO destination "lat,lng" or null
  * @returns {Array<{ type: string, message: string, latitude, longitude }>}
  */
-export function processTripState(vehicle, vehicleId, latitude = null, longitude = null) {
+export async function processTripState(vehicle, vehicleId, latitude = null, longitude = null, toDestinationCoordinate = null) {
   const alerts = [];
-
-  const ignition = Boolean(
-    vehicle.ignition ||
-    vehicle.engine ||
-    vehicle.engine_on ||
-    vehicle.engine_status ||
-    vehicle.ignition_status ||
-    vehicle.acc,
-  );
 
   const speed = Number(
     vehicle.speed ??
@@ -137,134 +184,157 @@ export function processTripState(vehicle, vehicleId, latitude = null, longitude 
     0,
   );
 
-  const status = inferStatus(ignition, speed);
   const now = Date.now();
   const currentCoord = formatCoordinate(latitude, longitude);
 
-  const state = loadState(vehicleId);
+  // ── Initialize state from DB on restart ──────────────────────
+  // On backend restart, in-memory state is lost. We initialize from
+  // the latest telemetry record to avoid false IGNITION ON alerts.
+  let state = loadState(vehicleId);
+  if (!state.tripStarted && !state.arrived) {
+    // No in-memory state — check if we have a last known state from telemetry
+    const lastTelemetry = await getLatestTelemetry(vehicleId);
+    if (lastTelemetry) {
+      const lastEventType = lastTelemetry.eventType;
+      const wasIgnitionOn = lastTelemetry.ignition === true;
+      
+      // If last event was IGNITION ON or the vehicle was moving, restore state
+      if (lastEventType === 'IGNITION ON' || (wasIgnitionOn && lastTelemetry.speedKmh > 0)) {
+        state.tripStarted = true;
+        state.currentTripId = lastTelemetry.activeTripId;
+        if (lastEventType === 'DESTINATION_ARRIVED') {
+          state.arrived = true;
+        }
+        saveState(vehicleId, state);
+      }
+    }
+  }
 
-  // Ignition ON – start trip if not already started
+  // ── Ignition Detection ──────────────────────────────────────
+  // Extract raw ignition from telemetry. If no ignition fields
+  // exist at all, preserve the previous ignition state so that
+  // trip processing (origin capture, arrival detection, return
+  // trip) continues uninterrupted.
+  //
+  // IGNITION_ON and IGNITION_OFF alerts are ONLY emitted when
+  // the ignition value came from explicit telemetry fields.
+  const ignitionRaw = getIgnitionRaw(vehicle);
+  const hasExplicitIgnition = ignitionRaw !== null;
+  const ignition = hasExplicitIgnition ? rawToBool(ignitionRaw) : state.tripStarted;
+
+  // ── Diagnostic: Log ignition field selection for KAR6558 ──
+  if (vehicle.registration === 'KAR6558' || vehicle.vehicle_id === 'KAR6558' || vehicle.plate === 'KAR6558') {
+    console.log('[DIAGNOSTIC] Ignition field selection for KAR6558:', JSON.stringify({
+      raw_fields: {
+        ignition: vehicle.ignition,
+        engine: vehicle.engine,
+        engine_on: vehicle.engine_on,
+        engine_status: vehicle.engine_status,
+        ignition_status: vehicle.ignition_status,
+        acc: vehicle.acc,
+      },
+      selected_raw: ignitionRaw,
+      selected_fields: getIgnitionRaw.toString(),
+      resolved_bool: ignition,
+      has_explicit: hasExplicitIgnition,
+      speed,
+      timestamp: new Date().toISOString(),
+    }, null, 2));
+  }
+
+  const status = inferStatus(ignition, speed);
+
+  // ── Ignition ON – start trip ────────────────────────────────
+  // Only emit IGNITION_ON when the value came from telemetry.
   if (ignition && !state.tripStarted && !state.arrived) {
-    state.tripStarted = true;
-    state.arrived = false;
-    state.currentTripId = `trip-${vehicleId}-${now}`;
-    state.originSaved = false;
-    state.originCoordinate = null;
-    state.destinationSaved = false;
-    state.destinationCoordinate = null;
-    state.arrivalTime = null;
-    state.idleStartTime = null;
-    state.lastIdleAlertTime = null;
-    state.continuousIdleDurationMs = 0;
-    saveState(vehicleId, state);
+    if (hasExplicitIgnition) {
+      state.tripStarted = true;
+      state.arrived = false;
+      state.currentTripId = `trip-${vehicleId}-${now}`;
+      state.originSaved = false;
+      state.originCoordinate = null;
+      state.destinationSaved = false;
+      state.destinationCoordinate = null;
+      state.arrivalTime = null;
+      state.toDestinationCoordinate = toDestinationCoordinate;
+      saveState(vehicleId, state);
 
-    alerts.push({
-      type: 'IGNITION_ON',
-      message: 'Vehicle ignition turned ON',
-      latitude,
-      longitude,
-      vehicleId,
-      tripId: state.currentTripId,
-      timestamp: new Date(now).toISOString(),
-    });
+      console.log('[trip] START', {
+        vehicle: vehicleId,
+        tripId: state.currentTripId,
+        reason: 'explicit_ignition_on',
+        coordinate: currentCoord,
+        timestamp: new Date(now).toISOString(),
+      });
+
+      alerts.push({
+        type: 'IGNITION_ON',
+        message: 'Vehicle ignition turned ON',
+        latitude,
+        longitude,
+        vehicleId,
+        tripId: state.currentTripId,
+        timestamp: new Date(now).toISOString(),
+      });
+    }
     return alerts;
   }
 
-  // Ignition OFF – end trip and reset
+  // ── Ignition OFF – end trip ─────────────────────────────────
+  // Only end the trip when explicitly reported. When the ignition
+  // field is missing, we preserve state.tripStarted so the trip
+  // continues in a subsequent cycle.
   if (!ignition && state.tripStarted) {
-    const wasArrived = state.arrived;
-    state.tripStarted = false;
-    state.arrived = false;
-    state.currentTripId = null;
-    state.originSaved = false;
-    state.originCoordinate = null;
-    state.destinationSaved = false;
-    state.destinationCoordinate = null;
-    state.arrivalTime = null;
-    state.idleStartTime = null;
-    state.lastIdleAlertTime = null;
-    state.continuousIdleDurationMs = 0;
-    saveState(vehicleId, state);
+    if (hasExplicitIgnition) {
+      state.tripStarted = false;
+      state.arrived = false;
+      state.currentTripId = null;
+      state.originSaved = false;
+      state.originCoordinate = null;
+      state.destinationSaved = false;
+      state.destinationCoordinate = null;
+      state.arrivalTime = null;
+      state.toDestinationCoordinate = null;
+      saveState(vehicleId, state);
 
-    // Also clear return trip state since vehicle is off
-    const returnState = loadReturnState(vehicleId);
-    returnState.returnTripStarted = false;
-    returnState.returnTripId = null;
-    returnState.originSaved = false;
-    returnState.originCoordinate = null;
-    returnState.idleStartTime = null;
-    returnState.continuousIdleDurationMs = 0;
-    returnState.lastIdleAlertTime = null;
-    saveReturnState(vehicleId, returnState);
+      // Also clear return trip state since vehicle is off
+      const returnState = loadReturnState(vehicleId);
+      returnState.returnTripStarted = false;
+      returnState.returnTripId = null;
+      returnState.originSaved = false;
+      returnState.originCoordinate = null;
+      saveReturnState(vehicleId, returnState);
 
-    alerts.push({
-      type: 'IGNITION_OFF',
-      message: 'Vehicle ignition turned OFF',
-      latitude,
-      longitude,
-      vehicleId,
-      tripId: null,
-      timestamp: new Date(now).toISOString(),
-    });
+      console.log('[trip] END', {
+        vehicle: vehicleId,
+        tripId: state.currentTripId,
+        reason: 'explicit_ignition_off',
+        coordinate: currentCoord,
+        timestamp: new Date(now).toISOString(),
+      });
+
+      alerts.push({
+        type: 'IGNITION_OFF',
+        message: 'Vehicle ignition turned OFF',
+        latitude,
+        longitude,
+        vehicleId,
+        tripId: null,
+        timestamp: new Date(now).toISOString(),
+      });
+    }
     return alerts;
   }
 
+  // Engine is off — no further processing this cycle
   if (!ignition) {
     return alerts;
   }
 
   // ── ARRIVED state: vehicle has completed outbound trip ────
-  // Vehicle is still running (idling) at destination
+  // Vehicle is still running at destination or just left.
   if (state.arrived && state.tripStarted) {
-    // Continue tracking idle duration for additional idling alerts
-    if (status === 'idling') {
-      if (state.idleStartTime === null) {
-        state.idleStartTime = now;
-        state.continuousIdleDurationMs = 0;
-        state.lastIdleAlertTime = null;
-      } else {
-        state.continuousIdleDurationMs = now - state.idleStartTime;
-      }
-
-      const continuousMs = state.continuousIdleDurationMs;
-      const repeatIntervalMs = 30 * 60 * 1000; // 30-minute repeat
-
-      if (state.lastIdleAlertTime === null) {
-        // First idle alert at 10 min after arrival
-        if (continuousMs >= ARRIVAL_IDLE_THRESHOLD_MS) {
-          alerts.push({
-            type: 'IDLING',
-            message: `Vehicle arrived and idling for ${ARRIVAL_IDLE_THRESHOLD_MS / 60000} minutes`,
-            latitude,
-            longitude,
-            vehicleId,
-            tripId: state.currentTripId,
-            idleMinutes: ARRIVAL_IDLE_THRESHOLD_MS / 60000,
-            timestamp: new Date(now).toISOString(),
-          });
-          state.lastIdleAlertTime = now;
-          saveState(vehicleId, state);
-        } else {
-          saveState(vehicleId, state);
-        }
-      } else if (now - state.lastIdleAlertTime >= repeatIntervalMs) {
-        const totalMinutes = Math.floor(continuousMs / 60000);
-        alerts.push({
-          type: 'IDLING',
-          message: `Vehicle arrived and idling for ${totalMinutes} minutes`,
-          latitude,
-          longitude,
-          vehicleId,
-          tripId: state.currentTripId,
-          idleMinutes: totalMinutes,
-          timestamp: new Date(now).toISOString(),
-        });
-        state.lastIdleAlertTime = now;
-        saveState(vehicleId, state);
-      } else {
-        saveState(vehicleId, state);
-      }
-    } else if (status === 'driving') {
+    if (status === 'driving') {
       // Vehicle left destination — initiate return trip
       state.tripStarted = false;
       state.arrived = false;
@@ -275,10 +345,16 @@ export function processTripState(vehicle, vehicleId, latitude = null, longitude 
       returnState.returnTripId = `return-${vehicleId}-${now}`;
       returnState.originSaved = false;
       returnState.originCoordinate = currentCoord || state.destinationCoordinate;
-      returnState.idleStartTime = null;
-      returnState.continuousIdleDurationMs = 0;
-      returnState.lastIdleAlertTime = null;
       saveReturnState(vehicleId, returnState);
+
+      console.log('[trip] RETURN_START', {
+        vehicle: vehicleId,
+        tripId: state.currentTripId,
+        returnTripId: returnState.returnTripId,
+        speed,
+        coordinate: currentCoord,
+        timestamp: new Date(now).toISOString(),
+      });
 
       alerts.push({
         type: 'RETURN_TRIP_STARTED',
@@ -303,81 +379,55 @@ export function processTripState(vehicle, vehicleId, latitude = null, longitude 
       }
       state.originSaved = true;
       saveState(vehicleId, state);
+
+      console.log('[trip] ORIGIN', {
+        vehicle: vehicleId,
+        tripId: state.currentTripId,
+        coordinate: state.originCoordinate,
+        timestamp: new Date(now).toISOString(),
+      });
+
       return alerts; // origin is returned via state, not as alert
     }
-
-    // Driving resets idle timer
-    if (state.idleStartTime !== null) {
-      state.idleStartTime = null;
-      state.continuousIdleDurationMs = 0;
-      state.lastIdleAlertTime = null;
-      saveState(vehicleId, state);
-    }
   }
 
-  if (status === 'idling') {
-    if (state.idleStartTime === null) {
-      state.idleStartTime = now;
-      state.continuousIdleDurationMs = 0;
-      state.lastIdleAlertTime = null;
-    } else {
-      state.continuousIdleDurationMs = now - state.idleStartTime;
-    }
-
-    const continuousMs = state.continuousIdleDurationMs;
-    const firstThresholdMs = ARRIVAL_IDLE_THRESHOLD_MS;
-
-    if (continuousMs >= firstThresholdMs) {
-      // Arrival detected!
-      if (!state.arrived && !state.destinationSaved) {
-        state.arrived = true;
-        state.destinationSaved = true;
-        state.destinationCoordinate = currentCoord || state.originCoordinate;
-        state.arrivalTime = new Date(now).toISOString();
-        state.lastIdleAlertTime = now;
-        saveState(vehicleId, state);
-
-        alerts.push({
-          type: 'DESTINATION_ARRIVED',
-          message: 'Vehicle arrived at destination',
-          latitude,
-          longitude,
-          vehicleId,
-          tripId: state.currentTripId,
-          destinationCoordinate: state.destinationCoordinate,
-          arrivalTime: state.arrivalTime,
-          timestamp: new Date(now).toISOString(),
-        });
-        return alerts;
-      }
-
-      // Already arrived - repeating idling alert every 30 min
-      const repeatIntervalMs = 30 * 60 * 1000;
-      if (state.lastIdleAlertTime === null || now - state.lastIdleAlertTime >= repeatIntervalMs) {
-        const totalMinutes = Math.floor(continuousMs / 60000);
-        alerts.push({
-          type: 'IDLING',
-          message: `Vehicle idling at destination for ${totalMinutes} minutes`,
-          latitude,
-          longitude,
-          vehicleId,
-          tripId: state.currentTripId,
-          idleMinutes: totalMinutes,
-          timestamp: new Date(now).toISOString(),
-        });
-        state.lastIdleAlertTime = now;
-        saveState(vehicleId, state);
-      }
-    } else {
+  // ── TO-Based Arrival Detection ─────────────────────────────
+  // A vehicle has only arrived if:
+  // 1. There is an active Travel Order linked to the vehicle
+  //    (toDestinationCoordinate is provided)
+  // 2. The current GPS location is within the allowed destination radius
+  if (!state.arrived && toDestinationCoordinate && currentCoord) {
+    if (isWithinRadius(currentCoord, toDestinationCoordinate)) {
+      state.arrived = true;
+      state.destinationSaved = true;
+      state.destinationCoordinate = currentCoord;
+      state.arrivalTime = new Date(now).toISOString();
+      state.toDestinationCoordinate = toDestinationCoordinate;
       saveState(vehicleId, state);
-    }
-  }
 
-  if (status === 'stationary') {
-    state.idleStartTime = null;
-    state.continuousIdleDurationMs = 0;
-    state.lastIdleAlertTime = null;
-    saveState(vehicleId, state);
+      alerts.push({
+        type: 'DESTINATION_ARRIVED',
+        message: 'Vehicle arrived at destination',
+        latitude,
+        longitude,
+        vehicleId,
+        tripId: state.currentTripId,
+        destinationCoordinate: state.destinationCoordinate,
+        arrivalTime: state.arrivalTime,
+        timestamp: new Date(now).toISOString(),
+      });
+
+      console.log('[trip] ARRIVED', {
+        vehicle: vehicleId,
+        tripId: state.currentTripId,
+        distance: `${Math.round(haversineDistance(currentCoord, toDestinationCoordinate))}m`,
+        destination: toDestinationCoordinate,
+        coordinate: currentCoord,
+        timestamp: new Date(now).toISOString(),
+      });
+
+      return alerts;
+    }
   }
 
   return alerts;
@@ -398,16 +448,15 @@ export function consumeOrigin(vehicleId) {
 
 /**
  * Consume the saved destination for a trip. Returns null if not available.
+ *
+ * Destination is only saved when TO-based arrival is confirmed.
  */
 export function consumeDestination(vehicleId) {
   const state = loadState(vehicleId);
   if (!state.tripStarted || !state.currentTripId) return null;
   if (!state.destinationSaved) return null;
 
-  const continuousMs = state.continuousIdleDurationMs;
-  const thresholdMs = ARRIVAL_IDLE_THRESHOLD_MS;
-
-  if (continuousMs >= thresholdMs || state.arrived) {
+  if (state.arrived) {
     state.destinationSaved = false;
     saveState(vehicleId, state);
     return {

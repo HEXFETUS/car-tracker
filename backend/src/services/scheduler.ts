@@ -200,17 +200,19 @@ async function runCycle(): Promise<void> {
   try {
     const pool = getPool();
 
-    // ── Fetch driver & TO number from approved travel orders ───
-    // Single query to get all vehicle-to-driver mappings
+    // ── Fetch driver, TO number & destination coordinates from approved travel orders ───
+    // Single query to get all vehicle-to-driver mappings and TO destination coordinates
     const driverOverrides = new Map<string, string>();
     const toNumberOverrides = new Map<string, string>();
+    const toDestinationOverrides = new Map<string, string>();
     const noToVehicleIds = new Set<string>();
     try {
-      const allTOData = await pool.query<{ vehicle_id: string; driver_name: string | null; to_number: string }>(
+      const allTOData = await pool.query<{ vehicle_id: string; driver_name: string | null; to_number: string; lat_long_destination: string | null }>(
         `SELECT DISTINCT ON (to_table.vehicle_id) 
            to_table.vehicle_id, 
            d.full_name AS driver_name,
-           to_table.to_number
+           to_table.to_number,
+           to_table.lat_long_destination
          FROM travel_orders to_table
          LEFT JOIN drivers d ON d.id = to_table.driver_id
          WHERE to_table.status = 'APPROVED'
@@ -220,6 +222,7 @@ async function runCycle(): Promise<void> {
       for (const row of allTOData.rows) {
         if (row.driver_name) driverOverrides.set(row.vehicle_id, row.driver_name);
         if (row.to_number) toNumberOverrides.set(row.vehicle_id, row.to_number);
+        if (row.lat_long_destination) toDestinationOverrides.set(row.vehicle_id, row.lat_long_destination);
       }
       // Track vehicles with NO approved TO for today (for warning suffix)
       const allVehicleResult = await pool.query<{ vehicle_id: string }>(
@@ -230,7 +233,7 @@ async function runCycle(): Promise<void> {
           noToVehicleIds.add(v.vehicle_id);
         }
       }
-      console.log(`[scheduler] Fetched ${driverOverrides.size} driver, ${toNumberOverrides.size} TO overrides, ${noToVehicleIds.size} vehicles with no TO`);
+      console.log(`[scheduler] Fetched ${driverOverrides.size} driver, ${toNumberOverrides.size} TO overrides, ${toDestinationOverrides.size} TO destinations, ${noToVehicleIds.size} vehicles with no TO`);
     } catch (err) {
       console.error('[scheduler] Failed to fetch overrides:', (err as Error).message);
     }
@@ -240,6 +243,7 @@ async function runCycle(): Promise<void> {
       resolveVehicleId: (plateNumber: string) => findVehicleByPlate(plateNumber),
       driverOverrides: Object.fromEntries(driverOverrides),
       toNumberOverrides: Object.fromEntries(toNumberOverrides),
+      toDestinationOverrides: Object.fromEntries(toDestinationOverrides),
       noToVehicleIds: Array.from(noToVehicleIds),
     });
 
@@ -373,31 +377,63 @@ async function runCycle(): Promise<void> {
           const locationName = String(vehicle.location ?? '') || null;
 
           const last = await getLatestTelemetry(vehicleId);
+          const lastSpeed = last?.speedKmh ?? null;
+          const lastRecordedAt = last?.recordedAt ?? null;
           const wasIgnitionOn = last?.ignition === true;
-          let eventType: 'IGNITION ON' | 'LOCATION_UPDATE' | 'IGNITION OFF' | null = null;
+          const lastEventType = (last?.eventType as string | null | undefined) ?? null;
+          let eventType: string | null = null;
           let activeTripId = last?.activeTripId ?? null;
 
-          if (effectiveIgnition && !wasIgnitionOn) {
-            activeTripId = randomUUID();
-            eventType = 'IGNITION ON';
-          } else if (effectiveIgnition && wasIgnitionOn) {
-            activeTripId = activeTripId ?? randomUUID();
-            if (hasMeaningfulLocationChange(last, latitude, longitude, locationName)) {
+          // ── Event Classification ────────────────────────────────
+          // Only save explicit events: IGNITION ON, IGNITION OFF, LOCATION_UPDATE, IDLING, MOVING.
+          // When speed is 0, don't save immediately as IDLING - wait for > 10 minutes.
+          // This prevents false idling alerts from temporary stops.
+          
+          const isMoving = spd > 0;
+          const IDLE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+          // Calculate how long vehicle has been at speed 0
+          let idleDurationMs = 0;
+          if (!isMoving && lastRecordedAt && lastSpeed !== null && lastSpeed === 0) {
+            // Vehicle was already idle in last record - calculate duration
+            idleDurationMs = Date.now() - new Date(lastRecordedAt).getTime();
+          }
+
+          // ── Moving / Driving events ────────────────────────────
+          if (isMoving) {
+            // Vehicle is moving
+            // Only send IGNITION ON if vehicle was NOT already on (prevents restart spam)
+            if (!wasIgnitionOn || lastEventType === 'IGNITION OFF') {
+              // Vehicle started moving — new trip
+              activeTripId = randomUUID();
+              eventType = 'IGNITION ON';
+            } else if (lastEventType === 'IDLING') {
+              // Started moving after idling
+              eventType = 'MOVING';
+            } else if (last && lastEventType !== 'IGNITION ON' && hasMeaningfulLocationChange(last, latitude, longitude, locationName)) {
+              // Continuous movement with location change (but not on the same cycle as IGNITION ON)
               eventType = 'LOCATION_UPDATE';
             }
-          } else if (!effectiveIgnition && wasIgnitionOn && activeTripId) {
+          } else if (!isMoving && idleDurationMs > IDLE_THRESHOLD_MS && lastEventType !== 'IDLING' && lastEventType !== 'IGNITION OFF') {
+            // Speed has been 0 for > 10 minutes — save IDLING event
+            eventType = 'IDLING';
+            activeTripId = activeTripId ?? randomUUID();
+          } else if (!isMoving && ign === false && wasIgnitionOn && lastEventType !== 'IGNITION OFF' && activeTripId) {
+            // Explicit IGNITION OFF from telemetry (speed=0 AND ignition=false)
             const alreadySavedOff = await telemetryTripEventExists(vehicleId, activeTripId, 'IGNITION OFF');
             if (!alreadySavedOff) {
               eventType = 'IGNITION OFF';
             }
           }
 
+          // Skip if no event to record
           if (!eventType || !activeTripId) {
             telemetrySkipped += 1;
             continue;
           }
 
-          if (eventType === 'IGNITION ON') {
+          // Deduplication for explicit trip boundary events
+          if (eventType === 'IGNITION ON' as const) {
             const alreadySavedOn = await telemetryTripEventExists(vehicleId, activeTripId, 'IGNITION ON');
             if (alreadySavedOn) {
               telemetrySkipped += 1;

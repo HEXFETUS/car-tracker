@@ -468,10 +468,33 @@ router.post('/sync', async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
+    const pool = getPool();
+
+    // Fetch TO destination coordinates for vehicles with active travel orders
+    const toDestinations = new Map<string, string>();
+    try {
+      const toDestResult = await pool.query<{ vehicle_id: string; lat_long_destination: string | null }>(
+        `SELECT DISTINCT ON (vehicle_id) vehicle_id, lat_long_destination
+         FROM travel_orders
+         WHERE status = 'APPROVED'
+           AND vehicle_id IS NOT NULL
+           AND DATE(scheduled_departure) = CURRENT_DATE
+           AND lat_long_destination IS NOT NULL`,
+      );
+      for (const row of toDestResult.rows) {
+        if (row.lat_long_destination) {
+          toDestinations.set(row.vehicle_id, row.lat_long_destination);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch TO destinations for sync:', (err as Error).message);
+    }
+
     // Use the backend's direct PostgreSQL pool for plate validation
     // instead of Supabase REST API (which may not be configured).
     const result = await syncFleetAndAlert({
       resolveVehicleId: (plateNumber: string) => findVehicleByPlate(plateNumber),
+      toDestinationOverrides: Object.fromEntries(toDestinations),
     });
 
     // ── GPS Trip Log Persistence ─────────────────────────────

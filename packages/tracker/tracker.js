@@ -18,6 +18,7 @@
 import { alreadySentRecently, getJson, setJson } from './state.js';
 import { insertAlertsToSupabase, isSupabaseConfigured, findVehicleIdByPlate } from './supabase.js';
 import { buildTripLogRecord } from './tripLogTransformer.js';
+import { getLatestTelemetry } from '../backend/src/services/gpsTelemetryService.js';
 import {
   processTripState,
   consumeOrigin,
@@ -661,7 +662,7 @@ export async function buildVehicleStatus(vehicle) {
  *   When provided, this is used instead of the built-in Supabase lookup.
  */
 export async function syncFleetAndAlert(options = {}) {
-  const { resolveVehicleId: resolveFn, driverOverrides = {}, toNumberOverrides = {}, noToVehicleIds = [] } = options;
+  const { resolveVehicleId: resolveFn, driverOverrides = {}, toNumberOverrides = {}, noToVehicleIds = [], toDestinationOverrides = {} } = options;
   const data = await getFleetDataCached();
   const vehicles = extractVehicles(data);
   const vehicleStatuses = [];
@@ -677,6 +678,25 @@ export async function syncFleetAndAlert(options = {}) {
     if (!plateNumber) {
       console.log('Skipping vehicle with no plate number in payload');
       continue;
+    }
+
+    // ── Diagnostic: Capture raw telemetry for KAR6558 ────────
+    if (plateNumber === 'KAR6558') {
+      console.log('[DIAGNOSTIC] Raw telemetry payload for KAR6558:', JSON.stringify({
+        plate: plateNumber,
+        speed: vehicle.speed,
+        ignition: vehicle.ignition,
+        engine: vehicle.engine,
+        engineStatus: vehicle.engine_status,
+        status: vehicle.status,
+        engine_on: vehicle.engine_on,
+        ignition_status: vehicle.ignition_status,
+        acc: vehicle.acc,
+        vehicle_id: vehicle.vehicle_id,
+        unit_id: vehicle.unit_id,
+        timestamp: vehicle.positionTime || vehicle.event_time || vehicle.gps_time || vehicle.server_time,
+        raw_keys: Object.keys(vehicle),
+      }, null, 2));
     }
 
     const resolvedVehicleId = resolveFn
@@ -730,7 +750,8 @@ export async function syncFleetAndAlert(options = {}) {
 
     // ── Trip State Alerts (origin/destination tracking, ignition/idling) ──
     const coordinates = getVehicleCoordinates(vehicle);
-    const tripStateAlerts = processTripState(vehicle, vid, coordinates?.latitude ?? null, coordinates?.longitude ?? null);
+    const toDestCoord = toDestinationOverrides[vid] || null;
+    const tripStateAlerts = processTripState(vehicle, vid, coordinates?.latitude ?? null, coordinates?.longitude ?? null, toDestCoord);
     let tripStateFiredIgnition = false;
     tripStateAlerts.forEach((a) => {
       // Replace generic trip state ignition messages with properly formatted ones
