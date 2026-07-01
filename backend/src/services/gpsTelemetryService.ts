@@ -109,7 +109,7 @@ export async function getLatestTelemetry(vehicleId: string): Promise<{
 export async function telemetryTripEventExists(
   vehicleId: string,
   activeTripId: string,
-  eventType: 'IGNITION ON' | 'IGNITION OFF',
+  eventType: string,
 ): Promise<boolean> {
   const pool = getPool();
   const result = await pool.query(

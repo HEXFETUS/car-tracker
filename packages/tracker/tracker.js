@@ -6,8 +6,8 @@
 //
 // Environment Variables (loaded automatically via process.env):
 //   CARTRACK_API_URL, CARTRACK_USERNAME, CARTRACK_PASSWORD
-//   SPEED_LIMIT_KMH (default 120)
-//   LOW_FUEL_LITERS (default 4)
+//   SPEED_LIMIT_KMH (default 80)
+//   LOW_FUEL_LITERS (default 5)
 //   ALERT_DEDUPE_SECONDS (default 300)
 //   CARTRACK_TIMEOUT_MS (default 15000)
 //   CARTRACK_RETRIES (default 1)
@@ -18,7 +18,7 @@
 import { alreadySentRecently, getJson, setJson } from './state.js';
 import { insertAlertsToSupabase, isSupabaseConfigured, findVehicleIdByPlate } from './supabase.js';
 import { buildTripLogRecord } from './tripLogTransformer.js';
-import { getLatestTelemetry } from '../backend/src/services/gpsTelemetryService.js';
+import { getLatestTelemetry } from '../../backend/src/services/gpsTelemetryService.js';
 import {
   processTripState,
   consumeOrigin,
@@ -30,9 +30,9 @@ import {
 
 // ── Configuration from Environment ────────────────────────────
 
-export const SPEED_LIMIT_KMH = Number(process.env.SPEED_LIMIT_KMH || 120);
-export const LOW_FUEL_LITERS = Number(process.env.LOW_FUEL_LITERS || 4);
-export const IDLE_ALERT_THRESHOLDS_MINUTES = [10, 30, 60];
+export const SPEED_LIMIT_KMH = Number(process.env.SPEED_LIMIT_KMH || 80);
+export const LOW_FUEL_LITERS = Number(process.env.LOW_FUEL_LITERS || 5);
+export const IDLE_ALERT_THRESHOLDS_MINUTES = [10, 15, 30];
 export const IDLE_LIMIT_MINUTES = IDLE_ALERT_THRESHOLDS_MINUTES[0];
 export const ALERT_DEDUPE_SECONDS = Number(process.env.ALERT_DEDUPE_SECONDS || process.env.SYNC_INTERVAL_SECONDS || 300);
 export const CARTRACK_TIMEOUT_MS = Number(process.env.CARTRACK_TIMEOUT_MS || 15000);
@@ -49,6 +49,25 @@ export const FLEET_STALE_CACHE_SECONDS = Number(process.env.FLEET_STALE_CACHE_SE
 const VEHICLE_ID_KEYS = ['vehicle_id', 'vehicleId', 'id', 'unit_id', 'unitId', 'asset_id', 'assetId', 'device_id', 'deviceId', 'registration'];
 const PLATE_NUMBER_KEYS = ['registration', 'plate_number', 'plate', 'reg', 'license_plate', 'vehicle_name', 'vehicleName', 'name', 'label'];
 const VEHICLE_LIST_KEYS = ['data', 'vehicles', 'vehicle', 'items', 'results', 'fleet', 'assets', 'units'];
+
+// ── Canonical Alert Type → Event Type Mapping ─────────────────
+//
+// Maps internal alert types (used for Telegram dedup and routing)
+// to the canonical event_type string saved in gps_telemetry.
+// This ensures the database always records the same event type
+// that was sent to Telegram, never a re-classified guess.
+
+export const ALERT_TYPE_TO_EVENT_TYPE = {
+  trip_state_IGNITION_ON: 'IGNITION ON ALERT',
+  trip_state_IGNITION_OFF: 'IGNITION OFF ALERT',
+  ignition_ON: 'IGNITION ON ALERT',
+  ignition_OFF: 'IGNITION OFF ALERT',
+  speeding: 'SPEEDING ALERT',
+  low_fuel: 'LOW FUEL ALERT',
+  idling_too_long: 'IDLING ALERT',
+  motion: 'MOVING ALERT',
+  location_update: 'LOCATION UPDATE ALERT',
+};
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -303,6 +322,13 @@ function normalizeAlert(entry) {
     location: entry.location ?? null,
     speed: entry.speed ?? null,
     fuel: entry.fuel ?? null,
+    eventType: entry.eventType ?? null,
+    coordinates: entry.coordinates ?? null,
+    ignition: entry.ignition ?? null,
+    driver: entry.driver ?? null,
+    to_number: entry.to_number ?? null,
+    timestamp: entry.timestamp ?? null,
+    plate: entry.plate ?? null,
   };
 }
 
@@ -589,7 +615,7 @@ export async function getVehicleLocation(vehicle) {
   }
   if (!location || typeof location !== 'object') location = {};
   const latitude = firstPresent(vehicle.latitude, vehicle.lat, location.latitude, location.lat);
-  const longitude = firstPresent(vehicle.longitude, vehicle.lng, location.lon, location.longitude, location.lng, location.lon);
+  const longitude = firstPresent(vehicle.longitude, vehicle.lng, vehicle.lon, location.longitude, location.lng, vehicle.lon);
   const locationName = firstPresent(vehicle.location_name, vehicle.position_description, vehicle.location_description, vehicle.area, location.location_name, location.position_description, location.location_description, location.area, location.name, location.label, location.description, location.address);
   if (locationName) return String(locationName);
   if (latitude !== undefined && longitude !== undefined) {
@@ -653,7 +679,7 @@ export async function buildVehicleStatus(vehicle) {
  * telemetry state, generates and dispatches alerts, and returns
  * a structured summary of the cycle.
  *
- * @returns {Promise<{ status: string, vehicles: number, alerts: { queued: number, sent: number, skipped: number, failed: number, persisted: number }, data: Array<object> }>}
+ * @returns {Promise<{ status: string, vehicles: number, alerts: { queued: number, sent: number, skipped: number, failed: number, persisted: number }, data: Array<object>, emittedAlerts: Array<object> }>}
  */
 /**
  * @param {Object} [options]
@@ -669,6 +695,7 @@ export async function syncFleetAndAlert(options = {}) {
     const tripLogRecords = [];
     const alertSummary = { queued: 0, sent: 0, skipped: 0, failed: 0, persisted: 0 };
     const tripAlerts = [];
+    const allEmittedAlerts = [];
 
   for (const vehicle of vehicles) {
     // ── Strict plate number resolution ────────────────────────
@@ -742,28 +769,54 @@ export async function syncFleetAndAlert(options = {}) {
     const idle = getIdleStatus(ignition, moving, prev, getVehicleIdleMinutes(vehicle));
     const toNumber = getTravelOrderNumber(vehicle);
     const driver = driverOverrides[vid] || getDriver(vehicle);
+    const coordinates = getVehicleCoordinates(vehicle);
 
     const alerts = [];
-    function pushAlert(type, message) {
-      alerts.push({ type, message, vehicle_id: vid, location, speed, fuel });
+    const vehicleEmittedAlerts = [];
+    function pushAlert(type, message, eventType = null) {
+      if (!eventType) {
+        eventType = ALERT_TYPE_TO_EVENT_TYPE[type] || null;
+      }
+      const alert = {
+        type,
+        message,
+        vehicle_id: vid,
+        location,
+        speed,
+        fuel,
+        ignition,
+        eventType,
+        coordinates,
+        driver,
+        to_number: toNumber,
+        timestamp: eventTime,
+        plate: plateNumber,
+      };
+      alerts.push(alert);
+      if (eventType) {
+        vehicleEmittedAlerts.push(alert);
+      }
     }
 
     // ── Trip State Alerts (origin/destination tracking, ignition/idling) ──
-    const coordinates = getVehicleCoordinates(vehicle);
+    const coordinates_ = getVehicleCoordinates(vehicle);
     const toDestCoord = toDestinationOverrides[vid] || null;
-    const tripStateAlerts = processTripState(vehicle, vid, coordinates?.latitude ?? null, coordinates?.longitude ?? null, toDestCoord);
+    const tripStateAlerts = await processTripState(vehicle, vid, coordinates_?.latitude ?? null, coordinates_?.longitude ?? null, toDestCoord);
     let tripStateFiredIgnition = false;
+    const tripStateIgnitionOn = tripStateAlerts.some((a) => a.type === 'IGNITION_ON');
+    const tripStateIgnitionOff = tripStateAlerts.some((a) => a.type === 'IGNITION_OFF');
     tripStateAlerts.forEach((a) => {
       // Replace generic trip state ignition messages with properly formatted ones
       let message = a.message;
       if (a.type === 'IGNITION_ON') {
         message = formatIgnitionAlert(name, true, location, eventTime, toNumber, driver);
         tripStateFiredIgnition = true;
+        pushAlert('trip_state', message, 'IGNITION ON ALERT');
       } else if (a.type === 'IGNITION_OFF') {
         message = formatIgnitionAlert(name, false, location, eventTime, toNumber, driver);
         tripStateFiredIgnition = true;
+        pushAlert('trip_state', message, 'IGNITION OFF ALERT');
       }
-      pushAlert('trip_state', message);
       tripAlerts.push({ ...a, vehicle_id: vid, message });
     });
 
@@ -771,7 +824,10 @@ export async function syncFleetAndAlert(options = {}) {
     const destinationData = consumeDestination(vid);
 
     if (hasPreviousState) {
-      if (ignition !== prevIgnition && !tripStateFiredIgnition) pushAlert('ignition', formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver));
+      if (ignition !== prevIgnition && !tripStateFiredIgnition) {
+        const eventType = ignition ? 'IGNITION ON ALERT' : 'IGNITION OFF ALERT';
+        pushAlert('ignition', formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver), eventType);
+      }
       if (ignition && speeding && !prevSpeeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
       if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
       if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
@@ -856,6 +912,29 @@ export async function syncFleetAndAlert(options = {}) {
       destinationGpsEndPoint: destinationCoord || tripLogRecord.destinationGpsEndPoint,
       arrivalTimeGps: arrivalTimeGps || tripLogRecord.arrivalTimeGps,
     });
+
+    // Collect emitted alerts for this vehicle (with canonical event types)
+    for (const ea of vehicleEmittedAlerts) {
+      allEmittedAlerts.push({
+        vehicleId: vid,
+        vehicleName: name,
+        plateNumber: plateNumber,
+        eventType: ea.eventType,
+        latitude: coordinates?.latitude ?? null,
+        longitude: coordinates?.longitude ?? null,
+        location: ea.location,
+        speed: ea.speed,
+        fuel: ea.fuel,
+        ignition: ea.ignition,
+        driver: ea.driver,
+        toNumber: ea.to_number,
+        timestamp: ea.timestamp,
+        message: ea.message,
+        // Include idling milestone info for deduplication
+        idleAlertCount: ea.eventType === 'IDLING ALERT' ? idle.idleAlertCount : undefined,
+        idlingThresholdReached: ea.eventType === 'IDLING ALERT' ? IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] || null : undefined,
+      });
+    }
   }
 
   // Persist trip-state alerts via the existing alert pipeline
@@ -868,5 +947,5 @@ export async function syncFleetAndAlert(options = {}) {
     alertSummary.persisted += tripAlertResult.persisted || 0;
   }
 
-  return { status: 'ok', vehicles: vehicles.length, alerts: alertSummary, data: vehicleStatuses, tripLogs: tripLogRecords };
+  return { status: 'ok', vehicles: vehicles.length, alerts: alertSummary, data: vehicleStatuses, tripLogs: tripLogRecords, emittedAlerts: allEmittedAlerts };
 }

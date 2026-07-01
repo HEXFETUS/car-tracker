@@ -24,7 +24,7 @@
 //     ignition OFF.
 
 import { getJson, setJson } from './state.js';
-import { getLatestTelemetry } from '../backend/src/services/gpsTelemetryService.js';
+import { getLatestTelemetry } from '../../backend/src/services/gpsTelemetryService.js';
 
 // ── Constants ────────────────────────────────────────────────────
 

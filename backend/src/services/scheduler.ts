@@ -153,6 +153,12 @@ export function resumeScheduler(): void {
   console.log('[scheduler] Resumed');
 }
 
+/**
+ * Export runCycle so it can be called directly by the Vercel Cron
+ * endpoint (/api/cron/sync-tracker) without duplicating logic.
+ */
+export { runCycle };
+
 // ── Internal ───────────────────────────────────────────────────
 
 function distanceMeters(
@@ -174,16 +180,33 @@ function distanceMeters(
   return 2 * earthRadiusM * Math.asin(Math.sqrt(h));
 }
 
-function hasMeaningfulLocationChange(
-  last: Awaited<ReturnType<typeof getLatestTelemetry>>,
-  latitude: number | null,
-  longitude: number | null,
-  locationName: string | null,
-): boolean {
-  if (!last) return true;
-  if ((last.locationName ?? null) !== (locationName ?? null)) return true;
-  const movedMeters = distanceMeters(last.latitude, last.longitude, latitude, longitude);
-  return movedMeters !== null && movedMeters >= 75;
+// ── Cross-cycle idling milestone deduplication (DB-backed) ────
+// Tracks which idling milestones have been persisted per vehicle
+// across scheduler runs. Persisted milestones are stored in a
+// dedicated database table (gps_idling_dedup) so they survive
+// restarts and are shared across cycles.
+// Composite key: vehicle_id + active_trip_id + threshold_minutes
+async function isIdlingMilestonePersistedDb(vehicleId: string, activeTripId: string, thresholdMinutes: number): Promise<boolean> {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT 1 FROM gps_idling_dedup
+     WHERE vehicle_id = $1
+       AND active_trip_id = $2
+       AND threshold_minutes = $3
+     LIMIT 1`,
+    [vehicleId, activeTripId, thresholdMinutes],
+  );
+  return result.rows.length > 0;
+}
+
+async function markIdlingMilestonePersistedDb(vehicleId: string, activeTripId: string, thresholdMinutes: number): Promise<void> {
+  const pool = getPool();
+  await pool.query(
+    `INSERT INTO gps_idling_dedup (vehicle_id, active_trip_id, threshold_minutes)
+     VALUES ($1, $2, $3)
+     ON CONFLICT DO NOTHING`,
+    [vehicleId, activeTripId, thresholdMinutes],
+  );
 }
 
 async function runCycle(): Promise<void> {
@@ -247,7 +270,7 @@ async function runCycle(): Promise<void> {
       noToVehicleIds: Array.from(noToVehicleIds),
     });
 
-    console.log(`[scheduler] Sync result: ${result.vehicles} vehicles, ${result.data.length} statuses, ${result.tripLogs.length} trip logs`);
+    console.log(`[scheduler] Sync result: ${result.vehicles} vehicles, ${result.data.length} statuses, ${result.tripLogs.length} trip logs, ${result.emittedAlerts?.length || 0} emitted alerts`);
     if (result.data.length > 0) {
       console.log('[scheduler] Sample vehicle:', JSON.stringify(result.data[0], null, 2));
     }
@@ -272,19 +295,39 @@ async function runCycle(): Promise<void> {
     // See trackingHistorySyncService.ts for the proper sync flow.
 
     // ── GPS Telemetry Persistence ──────────────────────────────
-    // Save raw telemetry snapshots for each vehicle to the
-    // gps_telemetry table. This provides a historical record of
-    // vehicle location, speed, fuel, and ignition state over time.
-    // Uses deduplication to skip records with identical key fields.
+    // Save the actual emitted alerts (from tracker.js) directly into
+    // gps_telemetry. This ensures the database event_type always matches
+    // the alert that was sent to Telegram, rather than a re-classified guess.
+    //
+    // The emittedAlerts array from syncFleetAndAlert() contains the canonical
+    // eventType for each alert that was actually dispatched to Telegram.
     let telemetrySaved = 0;
     let telemetrySkipped = 0;
-    const vehicles = result.data as unknown as Array<Record<string, unknown>> | undefined;
+    const emittedAlerts = result.emittedAlerts as unknown as Array<{
+      vehicleId: string;
+      vehicleName: string;
+      plateNumber: string;
+      eventType: string;
+      latitude: number | null;
+      longitude: number | null;
+      location: string;
+      speed: number;
+      fuel: number | null;
+      ignition: boolean;
+      driver: string | null;
+      toNumber: string | null;
+      timestamp: string;
+      message: string;
+      idleAlertCount?: number;
+      idlingThresholdReached?: number | null;
+    }> | undefined;
 
     // ── Unauthorized Travel Alert Detection ────────────────────
     // After telemetry is saved, check for vehicles traveling without
     // an approved travel order and create alerts if needed.
     // Uses direct DB lookup to ensure accuracy (not Cartrack's to_number).
     let unauthorizedTravelAlertsCreated = 0;
+    const vehicles = result.data as unknown as Array<Record<string, unknown>> | undefined;
     if (vehicles && vehicles.length > 0) {
       for (const vehicle of vehicles) {
         try {
@@ -350,92 +393,116 @@ async function runCycle(): Promise<void> {
         }
       }
     }
-    console.log(`[scheduler] Processing ${vehicles?.length || 0} vehicles for telemetry`);
-    if (vehicles && vehicles.length > 0) {
-      for (const vehicle of vehicles) {
+
+    // ── Persist Emitted Alerts as GPS Telemetry ────────────────
+    // This is the core fix: instead of re-classifying events independently,
+    // we save the actual alert types that were sent to Telegram.
+    // The eventType comes directly from tracker.js's canonical mapping.
+    if (emittedAlerts && emittedAlerts.length > 0) {
+      console.log(`[scheduler] Processing ${emittedAlerts.length} emitted alerts for telemetry persistence`);
+
+      
+      for (const alert of emittedAlerts) {
         try {
-          const vehicleId = String(vehicle.id ?? '');
+          const vehicleId = alert.vehicleId;
           if (!vehicleId) {
             telemetrySkipped += 1;
             continue;
           }
 
-          const ign = getIgnition(vehicle);
-          const spd = Number(vehicle.speed || 0);
-          // Safety override: vehicle cannot move without ignition.
-          const effectiveIgnition = spd > 0 ? true : ign;
-          const coords = vehicle.coordinates as { latitude?: number; longitude?: number } | null | undefined;
-          const latitude = coords?.latitude ?? null;
-          const longitude = coords?.longitude ?? null;
-          // Round timestamp to sync interval to enable deduplication
-          // This ensures multiple syncs within the same 120s window share the same recordedAt
-          const now = Date.now();
-          const intervalMs = SYNC_INTERVAL_SECONDS * 1000;
-          const rounded = new Date(Math.floor(now / intervalMs) * intervalMs).toISOString();
-          const recordedAt = rounded;
-          const fuelLiters = Number(vehicle.fuel_liters) || null;
-          const locationName = String(vehicle.location ?? '') || null;
-
-          const last = await getLatestTelemetry(vehicleId);
-          const lastSpeed = last?.speedKmh ?? null;
-          const lastRecordedAt = last?.recordedAt ?? null;
-          const wasIgnitionOn = last?.ignition === true;
-          const lastEventType = (last?.eventType as string | null | undefined) ?? null;
-          let eventType: string | null = null;
-          let activeTripId = last?.activeTripId ?? null;
-
-          // ── Event Classification ────────────────────────────────
-          // Only save explicit events: IGNITION ON, IGNITION OFF, LOCATION_UPDATE, IDLING, MOVING.
-          // When speed is 0, don't save immediately as IDLING - wait for > 10 minutes.
-          // This prevents false idling alerts from temporary stops.
-          
-          const isMoving = spd > 0;
-          const IDLE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
-
-          // Calculate how long vehicle has been at speed 0
-          let idleDurationMs = 0;
-          if (!isMoving && lastRecordedAt && lastSpeed !== null && lastSpeed === 0) {
-            // Vehicle was already idle in last record - calculate duration
-            idleDurationMs = Date.now() - new Date(lastRecordedAt).getTime();
-          }
-
-          // ── Moving / Driving events ────────────────────────────
-          if (isMoving) {
-            // Vehicle is moving
-            // Only send IGNITION ON if vehicle was NOT already on (prevents restart spam)
-            if (!wasIgnitionOn || lastEventType === 'IGNITION OFF') {
-              // Vehicle started moving — new trip
-              activeTripId = randomUUID();
-              eventType = 'IGNITION ON';
-            } else if (lastEventType === 'IDLING') {
-              // Started moving after idling
-              eventType = 'MOVING';
-            } else if (last && lastEventType !== 'IGNITION ON' && hasMeaningfulLocationChange(last, latitude, longitude, locationName)) {
-              // Continuous movement with location change (but not on the same cycle as IGNITION ON)
-              eventType = 'LOCATION_UPDATE';
-            }
-          } else if (!isMoving && idleDurationMs > IDLE_THRESHOLD_MS && lastEventType !== 'IDLING' && lastEventType !== 'IGNITION OFF') {
-            // Speed has been 0 for > 10 minutes — save IDLING event
-            eventType = 'IDLING';
-            activeTripId = activeTripId ?? randomUUID();
-          } else if (!isMoving && ign === false && wasIgnitionOn && lastEventType !== 'IGNITION OFF' && activeTripId) {
-            // Explicit IGNITION OFF from telemetry (speed=0 AND ignition=false)
-            const alreadySavedOff = await telemetryTripEventExists(vehicleId, activeTripId, 'IGNITION OFF');
-            if (!alreadySavedOff) {
-              eventType = 'IGNITION OFF';
-            }
-          }
-
-          // Skip if no event to record
-          if (!eventType || !activeTripId) {
+          const eventType = alert.eventType;
+          if (!eventType) {
             telemetrySkipped += 1;
             continue;
           }
 
+          const spd = Number(alert.speed || 0);
+          const ign = alert.ignition;
+          const effectiveIgnition = spd > 0 ? true : ign;
+          const latitude = alert.latitude ?? null;
+          const longitude = alert.longitude ?? null;
+          const fuelLiters = alert.fuel ?? null;
+          const locationName = alert.location || null;
+          const driverName = alert.driver || null;
+          const toNumber = alert.toNumber || null;
+          const plateNumber = alert.plateNumber || '';
+
+          // Round timestamp to sync interval to enable deduplication
+          const now = Date.now();
+          const intervalMs = SYNC_INTERVAL_SECONDS * 1000;
+          const rounded = new Date(Math.floor(now / intervalMs) * intervalMs).toISOString();
+          const recordedAt = rounded;
+
+          // ── active_trip_id management ──────────────────────────
+          // Get the latest telemetry to determine the current active trip
+          const last = await getLatestTelemetry(vehicleId);
+          let activeTripId = last?.activeTripId ?? null;
+
+          // ── Event-specific active_trip_id logic ────────────────
+          // CRITICAL: Only IGNITION ON ALERT is allowed to create a new
+          // active_trip_id. All other events (IDLING, MOVING, LOCATION
+          // UPDATE, SPEEDING, LOW FUEL, IGNITION OFF) MUST reuse an
+          // existing active_trip_id from the database. If no active trip
+          // exists, the event is skipped to preserve trip integrity.
+          if (eventType === 'IGNITION ON ALERT') {
+            // Start a new trip
+            activeTripId = randomUUID();
+          } else if (eventType === 'IGNITION OFF ALERT') {
+            // Keep the existing trip ID (it will be the last record for this trip)
+            // Only save if there's no active idling alert for this vehicle
+            const hasActiveIdling = emittedAlerts.some(
+              (ea) => ea.vehicleId === vehicleId && ea.eventType === 'IDLING ALERT',
+            );
+            if (hasActiveIdling) {
+              console.log(`[scheduler] Skipping IGNITION OFF for ${vehicleId} — active idling alert exists for this cycle`);
+              telemetrySkipped += 1;
+              continue;
+            }
+            // Verify an active trip exists before saving IGNITION OFF
+            if (!activeTripId) {
+              console.log(`[scheduler] Skipping IGNITION OFF for ${vehicleId} — no active trip found`);
+              telemetrySkipped += 1;
+              continue;
+            }
+          } else if (eventType === 'IDLING ALERT') {
+            // IDLING ALERT requires an existing active trip
+            if (!activeTripId) {
+              console.log(`[scheduler] Skipping IDLING ALERT for ${vehicleId} — no active trip found`);
+              telemetrySkipped += 1;
+              continue;
+            }
+
+            // Deduplication: check if this idling milestone was already persisted
+            // Uses DB-backed dedup key: vehicle_id + active_trip_id + threshold_minutes
+            const thresholdMinutes = alert.idlingThresholdReached;
+            if (thresholdMinutes !== undefined && thresholdMinutes !== null) {
+              const alreadyPersisted = await isIdlingMilestonePersistedDb(vehicleId, activeTripId, thresholdMinutes);
+              if (alreadyPersisted) {
+                console.log(`[scheduler] Skipping duplicate idling milestone ${thresholdMinutes}min for ${vehicleId} trip ${activeTripId}`);
+                telemetrySkipped += 1;
+                continue;
+              }
+            }
+          } else {
+            // MOVING, LOCATION UPDATE, SPEEDING, LOW FUEL — all require existing trip
+            if (!activeTripId) {
+              console.log(`[scheduler] Skipping ${eventType} for ${vehicleId} — no active trip found`);
+              telemetrySkipped += 1;
+              continue;
+            }
+          }
+
           // Deduplication for explicit trip boundary events
-          if (eventType === 'IGNITION ON' as const) {
-            const alreadySavedOn = await telemetryTripEventExists(vehicleId, activeTripId, 'IGNITION ON');
+          if (eventType === 'IGNITION ON ALERT') {
+            const alreadySavedOn = await telemetryTripEventExists(vehicleId, activeTripId, 'IGNITION ON ALERT');
             if (alreadySavedOn) {
+              telemetrySkipped += 1;
+              continue;
+            }
+          }
+          if (eventType === 'IGNITION OFF ALERT') {
+            const alreadySavedOff = await telemetryTripEventExists(vehicleId, activeTripId, 'IGNITION OFF ALERT');
+            if (alreadySavedOff) {
               telemetrySkipped += 1;
               continue;
             }
@@ -443,7 +510,7 @@ async function runCycle(): Promise<void> {
 
           const inserted = await insertTelemetry({
             vehicleId,
-            plateNumber: String(vehicle.name ?? '').split(' (')[0],
+            plateNumber,
             eventType,
             latitude,
             longitude,
@@ -451,22 +518,31 @@ async function runCycle(): Promise<void> {
             fuelLiters,
             ignition: effectiveIgnition,
             locationName,
-            driverName: driverOverrides.get(vehicleId) || null,
-            toNumber: toNumberOverrides.get(vehicleId) || String(vehicle.to_number ?? '') || null,
+            driverName,
+            toNumber,
             recordedAt,
             activeTripId,
           });
           if (inserted) {
             telemetrySaved += 1;
+
+            // After successful telemetry insert, mark idling milestone as persisted
+            // (dedup record is written AFTER the telemetry record to avoid FK issues)
+            if (eventType === 'IDLING ALERT') {
+              const thresholdMinutes = alert.idlingThresholdReached;
+              if (thresholdMinutes !== undefined && thresholdMinutes !== null && activeTripId) {
+                await markIdlingMilestonePersistedDb(vehicleId, activeTripId, thresholdMinutes);
+              }
+            }
           } else {
             telemetrySkipped += 1;
           }
         } catch (err) {
-          console.error(`[scheduler] Failed to save telemetry for ${String(vehicle.id)}:`, (err as Error).message);
+          console.error(`[scheduler] Failed to save telemetry for ${alert.vehicleId}:`, (err as Error).message);
         }
       }
     } else {
-      console.log('[scheduler] No vehicles in result.data - check Cartrack API response');
+      console.log('[scheduler] No emitted alerts to persist');
     }
 
     const duration = (Date.now() - cycleStart) / 1000;

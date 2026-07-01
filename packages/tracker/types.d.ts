@@ -56,6 +56,26 @@ export interface TripLogRecord {
   vehicleId?: string;
 }
 
+/** Structure of an emitted alert with canonical event type. */
+export interface EmittedAlert {
+  vehicleId: string;
+  vehicleName: string;
+  plateNumber: string;
+  eventType: string;
+  latitude: number | null;
+  longitude: number | null;
+  location: string;
+  speed: number;
+  fuel: number | null;
+  ignition: boolean;
+  driver: string | null;
+  toNumber: string | null;
+  timestamp: string;
+  message: string;
+  idleAlertCount?: number;
+  idlingThresholdReached?: number | null;
+}
+
 /** Result returned by syncFleetAndAlert(). */
 export interface SyncResult {
   status: string;
@@ -63,6 +83,7 @@ export interface SyncResult {
   alerts: AlertSummary;
   data: VehicleStatus[];
   tripLogs: TripLogRecord[];
+  emittedAlerts: EmittedAlert[];
 }
 
 /**

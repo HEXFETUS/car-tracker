@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
-import { fetchConnectionStatus, updateSchedulerInterval, sendTelegramTest, type ConnectionCheck } from '../api/settings-api';
+import { fetchConnectionStatus, updateSchedulerInterval, sendTelegramTest, runTelemetryTests, fetchSchedulerRuns, triggerSchedulerRunOnce, type ConnectionCheck, type TelemetryTestResult, type SchedulerRunData } from '../api/settings-api';
 import {
   Wifi,
   WifiOff,
@@ -14,6 +14,11 @@ import {
   MapPin,
   MessageSquare,
   Timer,
+  Bug,
+  CheckCircle2,
+  XCircle,
+  Play,
+  History,
 } from 'lucide-react';
 
 // ── Icons per connection type ──────────────────────────────────
@@ -154,6 +159,19 @@ const DETAIL_LABELS: Record<string, string> = {
   startedAt: 'Started At',
   lastRunAt: 'Last Run At',
   lastResult: 'Last Result',
+  // DB-backed scheduler metrics
+  cronMode: 'Cron Mode',
+  inMemorySchedulerRunning: 'In-Memory Scheduler Running',
+  inMemoryCyclesCompleted: 'In-Memory Cycles Completed',
+  inMemoryErrors: 'In-Memory Errors',
+  dbLastRunAt: 'Last Cron Run',
+  dbLastStatus: 'Last Cron Status',
+  dbLastErrorMessage: 'Last Cron Error',
+  dbCyclesCompleted: 'Total Cycles (DB)',
+  dbTotalRuns: 'Total Runs (DB)',
+  dbTotalErrors: 'Total Errors (DB)',
+  lastCronStatus: 'Last Cron Status',
+  nextSchedule: 'Next Schedule',
 };
 
 // ── Scheduler Interval Editor ──────────────────────────────────
@@ -297,6 +315,153 @@ function TelegramTestButton() {
   );
 }
 
+// ── Scheduler Run Once Button ──────────────────────────────────
+
+function SchedulerRunOnceButton({ onComplete }: { onComplete?: () => void }) {
+  const { toast } = useNotification();
+  const [running, setRunning] = useState(false);
+
+  const handleRun = async () => {
+    setRunning(true);
+    try {
+      const result = await triggerSchedulerRunOnce();
+      toast('Scheduler run completed successfully!', 'success');
+      onComplete?.();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to run scheduler', 'error');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-zinc-100 p-3 space-y-3">
+      <p className="text-xs font-medium text-zinc-500">Run Once</p>
+      <p className="text-xs text-zinc-400">
+        Manually trigger a single fleet sync cycle. This calls the same cron endpoint
+        that Vercel Cron uses.
+      </p>
+      <button
+        onClick={handleRun}
+        disabled={running}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60"
+      >
+        {running && <Loader2 className="size-3 animate-spin" />}
+        <Play className="size-3" />
+        {running ? 'Running…' : 'Run Once'}
+      </button>
+    </div>
+  );
+}
+
+// ── Scheduler Run History ──────────────────────────────────────
+
+function SchedulerRunHistory() {
+  const [data, setData] = useState<SchedulerRunData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const loadHistory = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await fetchSchedulerRuns();
+      setData(result);
+    } catch {
+      // Silently fail — the table may not exist yet
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (expanded && !data) {
+      loadHistory();
+    }
+  }, [expanded, data, loadHistory]);
+
+  return (
+    <div className="rounded-xl border border-zinc-100 overflow-hidden">
+      <button
+        onClick={() => {
+          setExpanded(!expanded);
+          if (!expanded && !data) loadHistory();
+        }}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-zinc-500 hover:bg-zinc-50 transition-colors"
+      >
+        <History className="size-3.5" />
+        Run History
+        {loading && <Loader2 className="size-3 animate-spin ml-auto" />}
+        <ChevronDown className={cn('size-3 ml-auto transition-transform', expanded && 'rotate-180')} />
+      </button>
+
+      {expanded && data && (
+        <div className="border-t border-zinc-100">
+          {/* Summary */}
+          <div className="px-3 py-2 bg-brand-cream/50 text-xs text-zinc-600 space-y-0.5">
+            <p>Total runs: {data.summary.totalRuns}</p>
+            <p>Total cycles: {data.summary.cyclesCompleted}</p>
+            <p>Total errors: {data.summary.totalErrors}</p>
+            {data.summary.lastRunAt && (
+              <p>Last run: {new Date(data.summary.lastRunAt).toLocaleString()}</p>
+            )}
+            {data.summary.lastStatus && (
+              <p>Last status: {data.summary.lastStatus}</p>
+            )}
+            {data.summary.lastErrorMessage && (
+              <p className="text-red-500">Last error: {data.summary.lastErrorMessage}</p>
+            )}
+          </div>
+
+          {/* Recent runs table */}
+          {data.runs.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-zinc-50">
+                    <th className="px-3 py-1.5 font-medium text-zinc-500">Started</th>
+                    <th className="px-3 py-1.5 font-medium text-zinc-500">Status</th>
+                    <th className="px-3 py-1.5 font-medium text-zinc-500">Cycles</th>
+                    <th className="px-3 py-1.5 font-medium text-zinc-500">Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.runs.slice(0, 10).map((run) => (
+                    <tr key={run.id} className="border-t border-zinc-100">
+                      <td className="px-3 py-1.5 text-zinc-600 whitespace-nowrap">
+                        {new Date(run.started_at).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <span className={cn(
+                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                          run.status === 'success' ? 'bg-emerald-100 text-emerald-700' :
+                          run.status === 'error' ? 'bg-red-100 text-red-700' :
+                          'bg-amber-100 text-amber-700',
+                        )}>
+                          {run.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-1.5 text-zinc-600">{run.cycles_completed}</td>
+                      <td className="px-3 py-1.5 text-red-500 max-w-[200px] truncate" title={run.error_message ?? ''}>
+                        {run.error_message || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {data.runs.length === 0 && (
+            <p className="px-3 py-3 text-xs text-zinc-400 text-center">
+              No runs recorded yet. The scheduler will record a run when triggered by Vercel Cron or the "Run Once" button.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConnectionCard({ connection, defaultExpanded = false, onReload }: ConnectionCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const Icon = CONNECTION_ICONS[connection.name] ?? Activity;
@@ -397,9 +562,155 @@ function ConnectionCard({ connection, defaultExpanded = false, onReload }: Conne
             />
           )}
 
+          {/* Scheduler Run Once button – only shown for the scheduler card */}
+          {connection.name === 'scheduler' && (
+            <SchedulerRunOnceButton onComplete={onReload} />
+          )}
+
+          {/* Scheduler Run History – only shown for the scheduler card */}
+          {connection.name === 'scheduler' && (
+            <SchedulerRunHistory />
+          )}
+
           {/* Telegram Send Test button – only shown for the telegram card */}
           {connection.name === 'telegram' && (
             <TelegramTestButton />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Telemetry Regression Test Runner ────────────────────────────
+
+function TelemetryTestSection() {
+  const { toast } = useNotification();
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<TelemetryTestResult | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  const handleRun = async () => {
+    setRunning(true);
+    setResult(null);
+    try {
+      const data = await runTelemetryTests();
+      setResult(data);
+      setExpanded(true);
+      if (data.overall === 'passed') {
+        toast(`✅ All ${data.total} telemetry tests passed!`, 'success');
+      } else {
+        toast(`❌ ${data.failed}/${data.total} telemetry tests failed`, 'error');
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to run telemetry tests', 'error');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl bg-white shadow-brand overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-brand-cream/50"
+      >
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-100">
+          <Bug className="size-5 text-blue-600" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-zinc-900">
+              Telemetry Regression Tests
+            </span>
+            {result && (
+              <span className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium',
+                result.overall === 'passed' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700',
+              )}>
+                {result.overall === 'passed'
+                  ? <><CheckCircle2 className="size-3" /> {result.passed}/{result.total} passed</>
+                  : <><XCircle className="size-3" /> {result.failed}/{result.total} failed</>
+                }
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-zinc-400">
+            {result
+              ? `Last run: ${new Date(result.timestamp).toLocaleString()}`
+              : 'Verify telemetry alert persistence (creates & cleans up test data)'}
+          </p>
+        </div>
+        <div className="shrink-0 text-zinc-300">
+          {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-zinc-100 px-5 py-4 space-y-4">
+          <button
+            onClick={handleRun}
+            disabled={running}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60"
+          >
+            {running && <Loader2 className="size-4 animate-spin" />}
+            <Bug className="size-4" />
+            {running ? 'Running Tests…' : 'Run Tests'}
+          </button>
+
+          {result && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-zinc-500">
+                {result.passed} passed, {result.failed} failed, {result.total} total
+              </p>
+              <div className="overflow-hidden rounded-xl border border-zinc-100">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-brand-cream">
+                      <th className="px-3 py-2 font-medium text-zinc-600 w-8">#</th>
+                      <th className="px-3 py-2 font-medium text-zinc-600">Test</th>
+                      <th className="px-3 py-2 font-medium text-zinc-600 w-20">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.results.map((test, i) => (
+                      <tr key={i} className="border-t border-zinc-100">
+                        <td className="px-3 py-2 text-zinc-400">{i + 1}</td>
+                        <td className="px-3 py-2 text-zinc-700">{test.name}</td>
+                        <td className="px-3 py-2">
+                          {test.passed ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-600">
+                              <CheckCircle2 className="size-3" /> Pass
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-red-600" title={test.error}>
+                              <XCircle className="size-3" /> Fail
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {result.results.filter((t) => !t.passed).length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-red-600">Errors:</p>
+                  {result.results.filter((t) => !t.passed).map((test, i) => (
+                    <p key={i} className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">
+                      <span className="font-medium">{test.name}:</span> {test.error}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!result && !running && (
+            <p className="text-xs text-zinc-400">
+              Click "Run Tests" to execute 8 regression tests against the database.
+              Test data will be created and cleaned up automatically.
+            </p>
           )}
         </div>
       )}
@@ -514,6 +825,9 @@ export const ConnectionPage = forwardRef<ConnectionPageHandle, object>(function 
               Last updated: {new Date(timestamp).toLocaleString()}
             </p>
           )}
+
+          {/* Telemetry regression tests */}
+          <TelemetryTestSection />
         </div>
       )}
     </div>
