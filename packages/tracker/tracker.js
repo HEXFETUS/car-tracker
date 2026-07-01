@@ -211,7 +211,7 @@ export function formatIgnitionAlert(name, ignition, location, eventTime, toNumbe
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   return formatAlert(
-    `${ignition ? '🔑 IGNITION ON' : '🔒 IGNITION OFF'} - ${name}`,
+    `${ignition ? '🔑 IGNITION ON' : '🔒 IGNITION OFF'} - 🛻 ${name}`,
     ...extraLines,
     ...formatLocationTime(location, eventTime),
   );
@@ -403,7 +403,7 @@ export function getVehicleDisplayName(vehicle) {
   if (vehicle.to_display_name) return vehicle.to_display_name;
   const plate = extractPlateNumber(vehicle);
   const toNumber = getTravelOrderNumber(vehicle);
-  return toNumber ? `${plate} (TO-${toNumber})` : plate;
+  return toNumber ? `${plate} (TO-${toNumber})` : `${plate} ()`;
 }
 
 /**
@@ -731,16 +731,26 @@ export async function syncFleetAndAlert(options = {}) {
     // ── Trip State Alerts (origin/destination tracking, ignition/idling) ──
     const coordinates = getVehicleCoordinates(vehicle);
     const tripStateAlerts = processTripState(vehicle, vid, coordinates?.latitude ?? null, coordinates?.longitude ?? null);
+    let tripStateFiredIgnition = false;
     tripStateAlerts.forEach((a) => {
-      pushAlert('trip_state', a.message);
-      tripAlerts.push({ ...a, vehicle_id: vid });
+      // Replace generic trip state ignition messages with properly formatted ones
+      let message = a.message;
+      if (a.type === 'IGNITION_ON') {
+        message = formatIgnitionAlert(name, true, location, eventTime, toNumber, driver);
+        tripStateFiredIgnition = true;
+      } else if (a.type === 'IGNITION_OFF') {
+        message = formatIgnitionAlert(name, false, location, eventTime, toNumber, driver);
+        tripStateFiredIgnition = true;
+      }
+      pushAlert('trip_state', message);
+      tripAlerts.push({ ...a, vehicle_id: vid, message });
     });
 
     const originData = consumeOrigin(vid);
     const destinationData = consumeDestination(vid);
 
     if (hasPreviousState) {
-      if (ignition !== prevIgnition) pushAlert('ignition', formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver));
+      if (ignition !== prevIgnition && !tripStateFiredIgnition) pushAlert('ignition', formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver));
       if (ignition && speeding && !prevSpeeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
       if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
       if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));

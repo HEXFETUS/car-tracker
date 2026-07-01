@@ -87,8 +87,11 @@ export function TelemetryPage() {
     }
   }, [page, telemetryPageSize, vehicleFilter, eventFilter, dateFrom, dateTo, toast]);
 
+  // Auto-refresh telemetry data every 120 seconds to match the scheduler sync interval
   useEffect(() => {
     loadTelemetry();
+    const interval = setInterval(loadTelemetry, 120000);
+    return () => clearInterval(interval);
   }, [loadTelemetry]);
 
   const today = new Date().toISOString().split('T')[0];
