@@ -6,7 +6,7 @@ export interface ReconciliationFilters {
   vehiclePlate?: string;
   tripDate?: string;
   toNumber?: string;
-  status?: 'Matched' | 'Flagged' | '';
+  status?: ReconciliationRecord['status'] | '';
 }
 
 export async function fetchReconciliation(

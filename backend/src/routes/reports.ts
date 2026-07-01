@@ -5,103 +5,90 @@ import { haversineDistance } from '../services/gpsLogService.js';
 
 const router: ExpressRouter = express.Router();
 
-interface ReconciliationRow {
-  id: string;
-  to_number: string;
-  gps_record_no: string;
-  plate_number: string;
-  trip_date: string;
-  to_status: string;
-  to_origin: string | null;
-  to_destination: string | null;
-  gps_origin: string | null;
-  gps_destination: string | null;
-  gps_distance_km: number | null;
-  lat_long_origin: string | null;
-  lat_long_destination: string | null;
-}
-
-// GET /api/reports/reconciliation — Match GPS trip logs with travel orders
-router.get('/reconciliation', async (_req: Request, res: Response) => {
+// GET /api/reports/reconciliation — Match Travel Orders with GPS trip history
+// Starts from travel_orders so that ALL relevant orders appear, even without GPS logs.
+// Only APPROVED, ACTIVE, and COMPLETED orders are included.
+router.get('/reconciliation', async (req: Request, res: Response) => {
   try {
     const pool = getPool();
+    const statusFilter = req.query.status as string | undefined;
 
-    const result = await pool.query(`
-      WITH arrival_times AS (
-        SELECT
-          g.id as log_id,
-          MIN(t.recorded_at) as arrival_time_gps
-        FROM gps_trip_logs g
-        JOIN travel_orders t_o ON t_o.id = g.travel_order_id
-        JOIN gps_telemetry t
-          ON t.vehicle_id = g.vehicle_id
-          AND DATE(t.recorded_at) = g.trip_date
-          AND t_o.lat_long_destination IS NOT NULL
-        WHERE g.departure_time_gps IS NOT NULL
-          AND g.travel_order_id IS NOT NULL
-          AND t_o.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
-          AND (
-            SELECT haversine_distance(t_o.lat_long_destination, CONCAT(t.latitude, ',', t.longitude)) / 1000.0
-          ) <= 0.2
-        GROUP BY g.id
-      )
+    // Query: start from travel_orders, LEFT JOIN GPS trip logs
+    const sql = `
       SELECT
-        g.id,
-        t_o.to_number,
-        t_o.status AS to_status,
-        g.gps_record_no,
+        to_.id                                                       AS travel_order_id,
+        to_.to_number,
+        to_.status                                                   AS to_status,
+        to_.origin_location,
+        to_.destination_target,
+        to_.lat_long_origin,
+        to_.lat_long_destination,
         v.plate_number,
+        g.id                                                         AS gps_log_id,
+        g.gps_record_no,
         g.trip_date,
-        t_o.origin_location AS to_origin,
-        t_o.destination_target AS to_destination,
-        g.origin_gps_start_point AS gps_origin,
-        g.destination_gps_end_point AS gps_destination,
+        g.origin_gps_start_point                                     AS gps_origin,
+        g.destination_gps_end_point                                  AS gps_destination,
         g.gps_distance_km,
-        t_o.lat_long_origin,
-        t_o.lat_long_destination,
-        COALESCE(at.arrival_time_gps, g.arrival_time_gps) as arrival_time_gps
-      FROM gps_trip_logs g
-      LEFT JOIN travel_orders t_o ON t_o.id = g.travel_order_id
-      LEFT JOIN vehicles v ON v.id = g.vehicle_id
-      LEFT JOIN arrival_times at ON at.log_id = g.id
-      WHERE g.departure_time_gps IS NOT NULL
-        AND g.travel_order_id IS NOT NULL
-        AND t_o.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
-      ORDER BY g.trip_date DESC, g.created_at DESC
-    `);
+        g.departure_time_gps,
+        g.arrival_time_gps
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN gps_trip_logs g ON g.travel_order_id = to_.id
+      WHERE to_.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+      ORDER BY to_.updated_at DESC, g.trip_date DESC NULLS LAST
+    `;
 
+    const result = await pool.query(sql);
+
+    // ── Transform rows with variance calculation ──────────────────
     const data = result.rows.map((row: any) => {
-      const gpsActualMileageKm = parseFloat(String(row.gps_distance_km ?? 0));
-
-      // Calculate TO estimated mileage from origin/destination coordinates
+      // TO estimated mileage: from origin/destination coordinates via haversine
       let toEstMileageKm = 0;
       if (row.lat_long_origin && row.lat_long_destination) {
         const distMeters = haversineDistance(row.lat_long_origin, row.lat_long_destination);
-        toEstMileageKm = distMeters / 1000; // Convert meters to kilometers
-      } else if (row.to_origin && row.to_destination) {
-        // Fallback: if no coordinates, use a rough estimate based on GPS distance
-        // In production, you'd want to integrate a routing service here
-        toEstMileageKm = gpsActualMileageKm;
+        toEstMileageKm = parseFloat((distMeters / 1000).toFixed(1));
       }
 
-      const varianceKm = toEstMileageKm - gpsActualMileageKm;
-      const variancePct = toEstMileageKm > 0 ? (varianceKm / toEstMileageKm) * 100 : 0;
-      const status: 'Matched' | 'Flagged' = Math.abs(variancePct) <= 20 ? 'Matched' : 'Flagged';
+      const gpsActualMileageKm = row.gps_distance_km != null
+        ? parseFloat(String(row.gps_distance_km))
+        : 0;
+
+      const varianceKm = parseFloat((gpsActualMileageKm - toEstMileageKm).toFixed(1));
+      const variancePct = toEstMileageKm > 0
+        ? parseFloat(((Math.abs(varianceKm) / toEstMileageKm) * 100).toFixed(1))
+        : 0;
+
+      // Determine match status per specification rules
+      // Order is important: MISSING TO DISTANCE takes priority, then NO GPS RECORD
+      let status: 'Matched' | 'Flagged' | 'NO GPS RECORD' | 'MISSING TO DISTANCE';
+      if (toEstMileageKm === 0) {
+        status = 'MISSING TO DISTANCE';
+      } else if (row.gps_log_id == null) {
+        status = 'NO GPS RECORD';
+      } else if (variancePct <= 20) {
+        status = 'Matched';
+      } else {
+        status = 'Flagged';
+      }
 
       return {
-        id: row.id,
+        id: row.travel_order_id,
         toNo: row.to_number || '—',
-        gpsRecordNo: row.gps_record_no,
+        gpsRecordNo: row.gps_record_no || (row.gps_log_id ? `GPS-${row.to_number ?? 'UNKNOWN'}` : '—'),
         vehiclePlate: row.plate_number || 'Unknown',
-        tripDate: row.trip_date,
-        origin: row.gps_origin || row.to_origin || '—',
-        destination: row.gps_destination || row.to_destination || '—',
+        tripDate: row.trip_date
+          ? new Date(row.trip_date).toISOString().split('T')[0]
+          : '—',
+        origin: row.gps_origin || row.origin_location || '—',
+        destination: row.gps_destination || row.destination_target || '—',
         toEstMileageKm,
         gpsActualMileageKm,
         varianceKm,
         variancePct,
         status,
         explanationRemarks: '',
+        toStatus: row.to_status || '',
         arrivalTime: row.arrival_time_gps
           ? new Date(row.arrival_time_gps).toLocaleString('en-US', {
               month: 'short',
@@ -113,7 +100,13 @@ router.get('/reconciliation', async (_req: Request, res: Response) => {
       };
     });
 
-    res.json({ success: true, data, message: 'Reconciliation data retrieved successfully' });
+    // ── Apply status filter if provided ───────────────────────────
+    let filtered = data;
+    if (statusFilter) {
+      filtered = data.filter((r: any) => r.status === statusFilter);
+    }
+
+    res.json({ success: true, data: filtered, message: 'Reconciliation data retrieved successfully' });
   } catch (error) {
     console.error('GET /api/reports/reconciliation error:', (error as Error).message);
     res.status(500).json({ success: false, data: null, error: 'Database error' });

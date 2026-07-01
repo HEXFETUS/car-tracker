@@ -11,7 +11,53 @@ import {
   Save,
   X,
   Filter,
+  Frown,
+  SatelliteDish,
+  MapPinOff,
 } from 'lucide-react';
+
+type StatusFilterValue = ReconciliationRecord['status'] | '';
+
+const STATUS_OPTIONS: { value: StatusFilterValue; label: string }[] = [
+  { value: '', label: 'All Statuses' },
+  { value: 'Matched', label: 'Matched' },
+  { value: 'Flagged', label: 'Flagged' },
+  { value: 'NO GPS RECORD', label: 'No GPS Record' },
+  { value: 'MISSING TO DISTANCE', label: 'Missing TO Distance' },
+];
+
+function MatchStatusBadge({ status }: { status: ReconciliationRecord['status'] }) {
+  switch (status) {
+    case 'Matched':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-brand-sage/20 px-3 py-0.5 text-xs font-medium text-brand-sage">
+          <CheckCircle2 className="size-3.5" />
+          Matched
+        </span>
+      );
+    case 'Flagged':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-0.5 text-xs font-medium text-red-600">
+          <AlertTriangle className="size-3.5" />
+          Flagged
+        </span>
+      );
+    case 'NO GPS RECORD':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-0.5 text-xs font-medium text-amber-700">
+          <SatelliteDish className="size-3.5" />
+          No GPS Record
+        </span>
+      );
+    case 'MISSING TO DISTANCE':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-0.5 text-xs font-medium text-purple-700">
+          <MapPinOff className="size-3.5" />
+          Missing TO Dist.
+        </span>
+      );
+  }
+}
 
 export function ReconciliationPage() {
   const { toast } = useNotification();
@@ -19,17 +65,22 @@ export function ReconciliationPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editRemarks, setEditRemarks] = useState('');
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<'Matched' | 'Flagged' | ''>('');
+  const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>('');
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     fetchReconciliation({ status: statusFilter || undefined })
       .then((data) => {
         if (!cancelled) setRecords(data);
       })
-      .catch(() => {
-        if (!cancelled) toast('Failed to load reconciliation data', 'error');
+      .catch((err: Error) => {
+        if (!cancelled) {
+          setError(err.message || 'Failed to load reconciliation data');
+          toast('Failed to load reconciliation data', 'error');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -64,7 +115,7 @@ export function ReconciliationPage() {
       <div className="flex items-start gap-3 rounded-xl bg-brand-moss/30 p-4 shadow-brand">
         <AlertTriangle className="mt-0.5 size-5 shrink-0 text-brand-teal" />
         <p className="text-sm leading-relaxed text-zinc-700">
-          Reconciliation compares GPS actual mileage against Travel Order estimated distance. Variance {">"} 20% is automatically flagged. Only APPROVED, ACTIVE, and COMPLETED travel orders are shown.
+          Reconciliation compares GPS actual mileage against Travel Order estimated distance. Variance {'>'} 20% is automatically flagged. Only APPROVED, ACTIVE, and COMPLETED travel orders are shown.
         </p>
       </div>
 
@@ -73,24 +124,67 @@ export function ReconciliationPage() {
         <Filter className="size-4 text-zinc-500" />
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as 'Matched' | 'Flagged' | '')}
+          onChange={(e) => setStatusFilter(e.target.value as StatusFilterValue)}
           className="rounded-lg border border-brand-sage/40 bg-white px-3 py-1.5 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
         >
-          <option value="">All Statuses</option>
-          <option value="Matched">Matched</option>
-          <option value="Flagged">Flagged</option>
+          {STATUS_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
         </select>
       </div>
 
+      {/* Loading state */}
       {loading && (
         <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
-          <Loader2 className="size-8 text-brand-teal animate-spin mb-3" />
+          <Loader2 className="mb-3 size-8 animate-spin text-brand-teal" />
           <p className="text-base font-medium text-zinc-600">Loading reconciliation data…</p>
         </div>
       )}
 
+      {/* Error state */}
+      {!loading && error && (
+        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
+          <AlertTriangle className="mb-3 size-10 text-red-400" />
+          <p className="text-base font-medium text-red-600">Failed to load data</p>
+          <p className="mt-1 text-sm text-zinc-500">{error}</p>
+          <button
+            onClick={() => {
+              setStatusFilter(''); // trigger re-fetch via effect
+              // Force re-fetch by toggling a dummy state
+              setLoading(true);
+              setError(null);
+              fetchReconciliation()
+                .then((data) => setRecords(data))
+                .catch((err: Error) => {
+                  setError(err.message || 'Failed to load reconciliation data');
+                  toast('Failed to load reconciliation data', 'error');
+                })
+                .finally(() => setLoading(false));
+            }}
+            className="mt-4 rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/90"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && records.length === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
+          <Frown className="mb-3 size-10 text-zinc-300" />
+          <p className="text-base font-medium text-zinc-600">No reconciliation records found</p>
+          <p className="mt-1 text-sm text-zinc-400">
+            {statusFilter
+              ? `No travel orders with status "${statusFilter}" match the current criteria.`
+              : 'There are no APPROVED, ACTIVE, or COMPLETED travel orders to reconcile.'}
+          </p>
+        </div>
+      )}
+
       {/* Desktop data table */}
-      {!loading && (
+      {!loading && !error && records.length > 0 && (
         <div className="hidden overflow-hidden rounded-xl bg-white shadow-brand md:block">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -158,8 +252,9 @@ export function ReconciliationPage() {
                           rec.status === 'Flagged' ? 'text-red-600' : 'text-zinc-900'
                         )}
                       >
-                        {rec.varianceKm >= 0 ? '+' : ''}
-                        {rec.varianceKm.toFixed(1)}
+                        {rec.status === 'NO GPS RECORD' || rec.status === 'MISSING TO DISTANCE'
+                          ? '—'
+                          : `${rec.varianceKm >= 0 ? '+' : ''}${rec.varianceKm.toFixed(1)}`}
                       </td>
                       <td
                         className={cn(
@@ -167,7 +262,9 @@ export function ReconciliationPage() {
                           rec.status === 'Flagged' ? 'text-red-600' : 'text-zinc-900'
                         )}
                       >
-                        {rec.variancePct.toFixed(1)}%
+                        {rec.status === 'NO GPS RECORD' || rec.status === 'MISSING TO DISTANCE'
+                          ? '—'
+                          : `${rec.variancePct.toFixed(1)}%`}
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">
                         <span className={cn(
@@ -181,17 +278,7 @@ export function ReconciliationPage() {
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">
-                        {rec.status === 'Matched' ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-brand-sage/20 px-3 py-0.5 text-xs font-medium text-brand-sage">
-                            <CheckCircle2 className="size-3.5" />
-                            Matched
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-0.5 text-xs font-medium text-red-600">
-                            <AlertTriangle className="size-3.5" />
-                            Flagged
-                          </span>
-                        )}
+                        <MatchStatusBadge status={rec.status} />
                       </td>
                       <td className="max-w-50 px-4 py-4">
                         {isEditing ? (
@@ -241,9 +328,9 @@ export function ReconciliationPage() {
       )}
 
       {/* Mobile cards */}
-      {!loading && (
+      {!loading && !error && records.length > 0 && (
         <div className="space-y-4 md:hidden">
-                {records.map((rec) => (
+          {records.map((rec) => (
             <div key={rec.id} className="rounded-xl bg-white p-5 shadow-brand">
               <div className="mb-3 flex items-center justify-between">
                 <div>
@@ -262,17 +349,7 @@ export function ReconciliationPage() {
                   )}>
                     {rec.toStatus || 'Unknown'}
                   </span>
-                  {rec.status === 'Matched' ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-sage/20 px-3 py-0.5 text-xs font-medium text-brand-sage">
-                      <CheckCircle2 className="size-3.5" />
-                      Matched
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-0.5 text-xs font-medium text-red-600">
-                      <AlertTriangle className="size-3.5" />
-                      Flagged
-                    </span>
-                  )}
+                  <MatchStatusBadge status={rec.status} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
@@ -298,10 +375,14 @@ export function ReconciliationPage() {
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">Variance</p>
-                  <p className={cn('font-mono font-medium', rec.status === 'Flagged' ? 'text-red-600' : 'text-zinc-900')}>
-                    {rec.varianceKm >= 0 ? '+' : ''}
-                    {rec.varianceKm.toFixed(1)} km ({rec.variancePct.toFixed(1)}%)
-                  </p>
+                  {rec.status === 'NO GPS RECORD' || rec.status === 'MISSING TO DISTANCE' ? (
+                    <p className="font-mono text-zinc-400">—</p>
+                  ) : (
+                    <p className={cn('font-mono font-medium', rec.status === 'Flagged' ? 'text-red-600' : 'text-zinc-900')}>
+                      {rec.varianceKm >= 0 ? '+' : ''}
+                      {rec.varianceKm.toFixed(1)} km ({rec.variancePct.toFixed(1)}%)
+                    </p>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">Remarks</p>

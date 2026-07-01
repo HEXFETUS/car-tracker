@@ -9,12 +9,12 @@ export interface ReconciliationRecord {
   destination: string;
   toEstMileageKm: number;
   gpsActualMileageKm: number;
-  /** Derived: toEstMileageKm - gpsActualMileageKm */
+  /** Derived: gpsActualMileageKm - toEstMileageKm */
   varianceKm: number;
-  /** Derived: (varianceKm / toEstMileageKm) * 100 */
+  /** Derived: (|varianceKm| / toEstMileageKm) * 100 */
   variancePct: number;
-  /** Derived: 'Matched' if |variancePct| <= 20, else 'Flagged' */
-  status: 'Matched' | 'Flagged';
+  /** Derived match status */
+  status: 'Matched' | 'Flagged' | 'NO GPS RECORD' | 'MISSING TO DISTANCE';
   explanationRemarks: string;
   /** Travel order status: APPROVED, ACTIVE, COMPLETED, etc. */
   toStatus?: string;
