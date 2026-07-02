@@ -16,6 +16,7 @@
     "start": "node run-sync.js"
   },
   "dependencies": {
-    "@car-tracker/shared": "workspace:*"
+    "@car-tracker/shared": "workspace:*",
+    "pg": "^8.13.1"
   }
 }

@@ -19,7 +19,7 @@ export interface GpsAlertRow {
 export interface CreateGpsAlertInput {
   vehicleId: string;
   gpsLogId?: string | null;
-  alertType: 'IGNITION_ON' | 'IGNITION_OFF' | 'IDLING' | 'NO_APPROVED_TRAVEL_ORDER';
+  alertType: string;
   alertMessage: string;
   latitude?: number | null;
   longitude?: number | null;
@@ -30,21 +30,30 @@ export interface CreateGpsAlertInput {
  */
 export async function createGpsAlert(input: CreateGpsAlertInput): Promise<{ id: string }> {
   const pool = getPool();
-  const result = await pool.query<{ id: string }>(
-    `INSERT INTO gps_alerts
-       (vehicle_id, gps_log_id, alert_type, alert_message, latitude, longitude)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id`,
-    [
-      input.vehicleId,
-      input.gpsLogId ?? null,
-      input.alertType,
-      input.alertMessage,
-      input.latitude ?? null,
-      input.longitude ?? null,
-    ],
-  );
-  return result.rows[0];
+  console.log(`[gps-alerts] Before INSERT gps_alerts vehicle=${input.vehicleId} type=${input.alertType}`);
+  try {
+    const result = await pool.query<{ id: string }>(
+      `INSERT INTO gps_alerts
+         (vehicle_id, gps_log_id, alert_type, alert_message, latitude, longitude)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [
+        input.vehicleId,
+        input.gpsLogId ?? null,
+        input.alertType,
+        input.alertMessage,
+        input.latitude ?? null,
+        input.longitude ?? null,
+      ],
+    );
+    const id = result.rows[0]?.id;
+    console.log(`[gps-alerts] INSERT gps_alerts succeeded id=${id}`);
+    return result.rows[0];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[gps-alerts] INSERT gps_alerts failed: ${message}`);
+    throw error;
+  }
 }
 
 export interface FetchAlertsParams {

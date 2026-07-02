@@ -160,6 +160,9 @@ importers:
       '@car-tracker/shared':
         specifier: workspace:*
         version: link:../../shared
+      pg:
+        specifier: ^8.13.1
+        version: 8.21.0
 
   shared: {}
 

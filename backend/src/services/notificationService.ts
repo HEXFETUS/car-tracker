@@ -44,22 +44,30 @@ function mapNotification(row: NotificationRow) {
 
 export async function createNotification(input: CreateNotificationInput) {
   const pool = getPool();
-  const result = await pool.query<NotificationRow>(
-    `INSERT INTO notifications
-       (user_id, type, title, message, target_url, target_tab, entity_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING *`,
-    [
-      input.userId,
-      input.type,
-      input.title,
-      input.message,
-      input.targetUrl,
-      input.targetTab ?? null,
-      input.entityId ?? null,
-    ],
-  );
-  return mapNotification(result.rows[0]);
+  console.log(`[notifications] Before INSERT notification user=${input.userId} type=${input.type} entity=${input.entityId ?? 'null'}`);
+  try {
+    const result = await pool.query<NotificationRow>(
+      `INSERT INTO notifications
+         (user_id, type, title, message, target_url, target_tab, entity_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        input.userId,
+        input.type,
+        input.title,
+        input.message,
+        input.targetUrl,
+        input.targetTab ?? null,
+        input.entityId ?? null,
+      ],
+    );
+    console.log(`[notifications] INSERT notification succeeded id=${result.rows[0]?.id}`);
+    return mapNotification(result.rows[0]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[notifications] INSERT notification failed: ${message}`);
+    throw error;
+  }
 }
 
 export async function createNotificationForRoles(

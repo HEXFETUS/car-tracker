@@ -16,10 +16,11 @@ export interface TelemetryInsert {
   fuelLiters: number | null;
   ignition: boolean;
   locationName: string | null;
-  driverName: string | null;
+  driverId?: string | null;
   toNumber: string | null;
   recordedAt: string;
   activeTripId?: string | null;
+  telegramMessage?: string | null;
 }
 
 export interface TelemetryRow {
@@ -33,11 +34,12 @@ export interface TelemetryRow {
   fuelLiters: number | null;
   ignition: boolean;
   locationName: string | null;
-  driverName: string | null;
+  driverId: string | null;
   toNumber: string | null;
   recordedAt: string;
   createdAt: string;
   activeTripId: string | null;
+  telegramMessage: string | null;
   // Active travel order info
   activeToNumber?: string | null;
   activeToStatus?: string | null;
@@ -55,11 +57,12 @@ interface TelemetryDbRow {
   fuel_liters: number | null;
   ignition: boolean;
   location_name: string | null;
-  driver_name: string | null;
+  driver_id: string | null;
   to_number: string | null;
   recorded_at: string;
   created_at: string;
   active_trip_id: string | null;
+  telegram_message: string | null;
   active_to_number: string | null;
   active_to_status: string | null;
   active_driver_name: string | null;
@@ -155,15 +158,20 @@ export async function telemetryExists(
 /**
  * Insert a single telemetry data point.
  */
-export async function insertTelemetry(data: TelemetryInsert): Promise<boolean> {
+export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted: boolean; id: string | null }> {
   const pool = getPool();
-  const result = await pool.query(
+  console.log(
+    `[telemetry] Before INSERT gps_telemetry vehicle=${data.vehicleId} plate=${data.plateNumber} event=${data.eventType} recorded_at=${data.recordedAt}`,
+  );
+  try {
+    const result = await pool.query<{ id: string }>(
     `INSERT INTO gps_telemetry
        (vehicle_id, plate_number, event_type, latitude, longitude,
         speed_kmh, fuel_liters, ignition, location_name,
-        driver_name, to_number, recorded_at, active_trip_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-     ON CONFLICT DO NOTHING`,
+        driver_id, to_number, recorded_at, active_trip_id, telegram_message)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     ON CONFLICT DO NOTHING
+     RETURNING id`,
     [
       data.vehicleId,
       data.plateNumber,
@@ -174,13 +182,27 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<boolean> {
       data.fuelLiters,
       data.ignition,
       data.locationName,
-      data.driverName,
+      data.driverId ?? null,
       data.toNumber,
       data.recordedAt,
       data.activeTripId ?? null,
+      data.telegramMessage ?? null,
     ],
-  );
-  return (result.rowCount ?? 0) > 0;
+    );
+    const id = result.rows[0]?.id ?? null;
+    if (id) {
+      console.log(`[telemetry] INSERT gps_telemetry succeeded id=${id}`);
+      return { inserted: true, id };
+    }
+    console.log(
+      `[telemetry] INSERT gps_telemetry skipped by conflict vehicle=${data.vehicleId} event=${data.eventType} active_trip_id=${data.activeTripId ?? 'null'}`,
+    );
+    return { inserted: false, id: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[telemetry] INSERT gps_telemetry failed: ${message}`);
+    throw error;
+  }
 }
 
 export interface FetchTelemetryParams {
@@ -327,11 +349,12 @@ export async function fetchTelemetry(
     fuelLiters: row.fuel_liters,
     ignition: row.ignition,
     locationName: row.location_name,
-    driverName: row.driver_name,
+    driverId: row.driver_id ?? null,
     toNumber: row.to_number,
     recordedAt: row.recorded_at,
     createdAt: row.created_at,
     activeTripId: row.active_trip_id ?? null,
+    telegramMessage: row.telegram_message ?? null,
     activeToNumber: row.active_to_number ?? null,
     activeToStatus: row.active_to_status ?? null,
     activeDriverName: row.active_driver_name ?? null,

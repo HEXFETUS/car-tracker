@@ -24,7 +24,44 @@
 //     ignition OFF.
 
 import { getJson, setJson } from './state.js';
-import { getLatestTelemetry } from '../../backend/src/services/gpsTelemetryService.js';
+import pg from 'pg';
+
+const { Pool } = pg;
+let telemetryPool = null;
+
+function getTelemetryPool() {
+  if (!process.env.DATABASE_URL) return null;
+  if (!telemetryPool) {
+    telemetryPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 3,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+    });
+  }
+  return telemetryPool;
+}
+
+async function getLatestTelemetry(vehicleId) {
+  const pool = getTelemetryPool();
+  if (!pool) return null;
+  const result = await pool.query(
+    `SELECT speed_kmh, ignition, event_type, active_trip_id
+     FROM gps_telemetry
+     WHERE vehicle_id = $1
+     ORDER BY recorded_at DESC
+     LIMIT 1`,
+    [vehicleId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    speedKmh: Number(row.speed_kmh ?? 0),
+    ignition: row.ignition === true,
+    eventType: row.event_type,
+    activeTripId: row.active_trip_id ?? null,
+  };
+}
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -32,6 +69,29 @@ import { getLatestTelemetry } from '../../backend/src/services/gpsTelemetryServi
 // Can be overridden via DESTINATION_RADIUS_METERS env variable.
 // Default: 100 meters
 const DESTINATION_RADIUS_METERS = Number(process.env.DESTINATION_RADIUS_METERS) || 100;
+
+// ── Event Type Constants ─────────────────────────────────────────
+// Normalized event types used across the entire telemetry pipeline.
+// These match what is actually saved in gps_telemetry.event_type.
+
+const IGNITION_ON_ALERT = 'IGNITION ON ALERT';
+const IGNITION_OFF_ALERT = 'IGNITION OFF ALERT';
+const LOCATION_UPDATE_ALERT = 'LOCATION UPDATE ALERT';
+const IDLING_ALERT = 'IDLING ALERT';
+const MOVING_ALERT = 'MOVING ALERT';
+const SPEEDING_ALERT = 'SPEEDING ALERT';
+const LOW_FUEL_ALERT = 'LOW FUEL ALERT';
+
+// Event types that indicate an active trip is in progress.
+// Used when restoring trip state after restart/state loss.
+const ACTIVE_TRIP_EVENT_TYPES = new Set([
+  IGNITION_ON_ALERT,
+  LOCATION_UPDATE_ALERT,
+  MOVING_ALERT,
+  IDLING_ALERT,
+  SPEEDING_ALERT,
+  LOW_FUEL_ALERT,
+]);
 
 // ── State Keys ───────────────────────────────────────────────────
 
@@ -197,15 +257,41 @@ export async function processTripState(vehicle, vehicleId, latitude = null, long
     if (lastTelemetry) {
       const lastEventType = lastTelemetry.eventType;
       const wasIgnitionOn = lastTelemetry.ignition === true;
-      
-      // If last event was IGNITION ON or the vehicle was moving, restore state
-      if (lastEventType === 'IGNITION ON' || (wasIgnitionOn && lastTelemetry.speedKmh > 0)) {
+      const isMoving = lastTelemetry.speedKmh > 0;
+
+      console.log(`[tripState] Latest DB telemetry for ${vehicleId}:`, JSON.stringify({
+        eventType: lastEventType,
+        speedKmh: lastTelemetry.speedKmh,
+        ignition: lastTelemetry.ignition,
+        activeTripId: lastTelemetry.activeTripId,
+      }));
+
+      // Restore active trip state when latest telemetry event_type is any
+      // active-trip event type, or when ignition=true and speed_kmh > 0.
+      const shouldRestoreTrip = ACTIVE_TRIP_EVENT_TYPES.has(lastEventType) ||
+        (wasIgnitionOn && isMoving);
+
+      if (shouldRestoreTrip) {
         state.tripStarted = true;
         state.currentTripId = lastTelemetry.activeTripId;
         if (lastEventType === 'DESTINATION_ARRIVED') {
           state.arrived = true;
         }
         saveState(vehicleId, state);
+        console.log(`[tripState] Restored active trip for ${vehicleId}:`, JSON.stringify({
+          restoredTripId: state.currentTripId,
+          reason: lastEventType ? `event_type=${lastEventType}` : 'ignition=true && speed>0',
+          lastEventType,
+          wasIgnitionOn,
+          isMoving,
+        }));
+      } else {
+        console.log(`[tripState] Did NOT restore trip for ${vehicleId}:`, JSON.stringify({
+          reason: 'no active trip indicators in latest telemetry',
+          lastEventType,
+          wasIgnitionOn,
+          isMoving,
+        }));
       }
     }
   }
@@ -246,8 +332,36 @@ export async function processTripState(vehicle, vehicleId, latitude = null, long
 
   // ── Ignition ON – start trip ────────────────────────────────
   // Only emit IGNITION_ON when the value came from telemetry.
+  // Do NOT create a new IGNITION ON ALERT if the latest DB telemetry
+  // already shows: ignition=true, or speed_kmh > 0, or active_trip_id
+  // is not null and latest event is not IGNITION OFF ALERT.
   if (ignition && !state.tripStarted && !state.arrived) {
     if (hasExplicitIgnition) {
+      // Check DB to see if vehicle is already in an active trip
+      const lastTelemetry = await getLatestTelemetry(vehicleId);
+      const dbShowsActiveTrip = lastTelemetry && (
+        lastTelemetry.ignition === true ||
+        lastTelemetry.speedKmh > 0 ||
+        (lastTelemetry.activeTripId !== null && lastTelemetry.eventType !== IGNITION_OFF_ALERT)
+      );
+
+      if (dbShowsActiveTrip) {
+        // Vehicle is already moving/has active trip — do NOT emit IGNITION ON
+        console.log(`[tripState] SKIPPED IGNITION ON for ${vehicleId}:`, JSON.stringify({
+          reason: 'DB already shows active trip',
+          dbIgnition: lastTelemetry?.ignition,
+          dbSpeedKmh: lastTelemetry?.speedKmh,
+          dbActiveTripId: lastTelemetry?.activeTripId,
+          dbEventType: lastTelemetry?.eventType,
+        }));
+        // Restore state from DB so subsequent processing works
+        state.tripStarted = true;
+        state.currentTripId = lastTelemetry.activeTripId;
+        state.arrived = false;
+        saveState(vehicleId, state);
+        return alerts;
+      }
+
       state.tripStarted = true;
       state.arrived = false;
       state.currentTripId = `trip-${vehicleId}-${now}`;
@@ -259,13 +373,12 @@ export async function processTripState(vehicle, vehicleId, latitude = null, long
       state.toDestinationCoordinate = toDestinationCoordinate;
       saveState(vehicleId, state);
 
-      console.log('[trip] START', {
-        vehicle: vehicleId,
+      console.log(`[tripState] EMITTED IGNITION ON for ${vehicleId}:`, JSON.stringify({
+        reason: 'explicit_ignition_on_and_no_active_trip_in_db',
         tripId: state.currentTripId,
-        reason: 'explicit_ignition_on',
         coordinate: currentCoord,
         timestamp: new Date(now).toISOString(),
-      });
+      }));
 
       alerts.push({
         type: 'IGNITION_ON',

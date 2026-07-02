@@ -98,6 +98,7 @@ export function syncFleetAndAlert(options?: {
   toNumberOverrides?: Record<string, string>;
   toDestinationOverrides?: Record<string, string>;
   noToVehicleIds?: string[];
+  dispatchAlerts?: boolean;
 }): Promise<SyncResult>;
 
 export function sendTelegram(message: string): Promise<{ ok: boolean; error?: string }>;

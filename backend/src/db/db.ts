@@ -27,6 +27,17 @@ pg.types.setTypeParser(TIMESTAMP_OID, (val: string) => {
 });
 
 let pool: pg.Pool | null = null;
+let loggedDatabaseTarget = false;
+
+function getSafeDatabaseTarget(connectionString: string): string {
+  if (!connectionString) return 'DATABASE_URL is not set';
+  try {
+    const parsed = new URL(connectionString);
+    return `host=${parsed.hostname || 'unknown'} port=${parsed.port || 'default'} database=${parsed.pathname.replace(/^\//, '') || 'unknown'}`;
+  } catch {
+    return 'DATABASE_URL is set but could not be parsed';
+  }
+}
 
 /**
  * Return the shared application pool.
@@ -34,6 +45,11 @@ let pool: pg.Pool | null = null;
  */
 export function getPool(): pg.Pool {
   if (!pool) {
+    if (!loggedDatabaseTarget) {
+      console.log(`[db] PostgreSQL target: ${getSafeDatabaseTarget(DATABASE_URL)}`);
+      loggedDatabaseTarget = true;
+    }
+
     pool = new Pool({
       connectionString: DATABASE_URL,
       max: 5,

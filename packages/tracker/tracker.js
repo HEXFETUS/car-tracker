@@ -18,7 +18,7 @@
 import { alreadySentRecently, getJson, setJson } from './state.js';
 import { insertAlertsToSupabase, isSupabaseConfigured, findVehicleIdByPlate } from './supabase.js';
 import { buildTripLogRecord } from './tripLogTransformer.js';
-import { getLatestTelemetry } from '../../backend/src/services/gpsTelemetryService.js';
+import pg from 'pg';
 import {
   processTripState,
   consumeOrigin,
@@ -32,7 +32,16 @@ import {
 
 export const SPEED_LIMIT_KMH = Number(process.env.SPEED_LIMIT_KMH || 80);
 export const LOW_FUEL_LITERS = Number(process.env.LOW_FUEL_LITERS || 5);
-export const IDLE_ALERT_THRESHOLDS_MINUTES = [10, 15, 30];
+// Idling alert thresholds in minutes (cumulative total idle time).
+// First alert at 10 minutes, then every 15 minutes after that.
+// This produces: 10, 25, 40, 55, 70, 85, ...
+export const IDLE_ALERT_THRESHOLDS_MINUTES = (() => {
+  const thresholds = [];
+  for (let i = 0; i < 20; i++) {
+    thresholds.push(10 + i * 15);
+  }
+  return thresholds;
+})();
 export const IDLE_LIMIT_MINUTES = IDLE_ALERT_THRESHOLDS_MINUTES[0];
 export const ALERT_DEDUPE_SECONDS = Number(process.env.ALERT_DEDUPE_SECONDS || process.env.SYNC_INTERVAL_SECONDS || 300);
 export const CARTRACK_TIMEOUT_MS = Number(process.env.CARTRACK_TIMEOUT_MS || 15000);
@@ -332,11 +341,92 @@ function normalizeAlert(entry) {
   };
 }
 
+let postgresPool = null;
+let loggedPostgresTarget = false;
+
+function getSafeDatabaseTarget(connectionString) {
+  if (!connectionString) return 'DATABASE_URL is not set';
+  try {
+    const parsed = new URL(connectionString);
+    return `host=${parsed.hostname || 'unknown'} port=${parsed.port || 'default'} database=${parsed.pathname.replace(/^\//, '') || 'unknown'}`;
+  } catch {
+    return 'DATABASE_URL is set but could not be parsed';
+  }
+}
+
+function getPostgresPool() {
+  const { DATABASE_URL } = process.env;
+  if (!DATABASE_URL) throw new Error('DATABASE_URL is not set');
+  if (!postgresPool) {
+    if (!loggedPostgresTarget) {
+      console.log(`[tracker-db] PostgreSQL target: ${getSafeDatabaseTarget(DATABASE_URL)}`);
+      loggedPostgresTarget = true;
+    }
+    postgresPool = new pg.Pool({
+      connectionString: DATABASE_URL,
+      max: 3,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+    });
+    postgresPool.on('error', (error) => {
+      console.error('[tracker-db] Unexpected PostgreSQL pool error:', error.message);
+    });
+  }
+  return postgresPool;
+}
+
+function eventTypeFromAlert(alert) {
+  const eventType = alert.eventType || ALERT_TYPE_TO_EVENT_TYPE[alert.type] || alert.type || 'message';
+  return String(eventType).toUpperCase() === 'MESSAGE' ? 'TELEGRAM_MESSAGE' : String(eventType);
+}
+
+function recordedAtFromAlert(alert) {
+  const parsed = new Date(alert.timestamp || '');
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+}
+
+async function insertGpsTelemetry(alert) {
+  const pool = getPostgresPool();
+  const eventType = eventTypeFromAlert(alert);
+  console.log(`[telemetry] Before INSERT gps_telemetry vehicle=${alert.vehicle_id ?? 'null'} event=${eventType}`);
+  try {
+    const result = await pool.query(
+      `INSERT INTO gps_telemetry
+         (vehicle_id, plate_number, event_type, latitude, longitude,
+          speed_kmh, fuel_liters, ignition, location_name, driver_id,
+          to_number, recorded_at, active_trip_id, telegram_message)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING id`,
+      [
+        alert.vehicle_id ?? null,
+        alert.plate ?? '',
+        eventType,
+        alert.coordinates?.latitude ?? null,
+        alert.coordinates?.longitude ?? null,
+        alert.speed ?? 0,
+        alert.fuel ?? null,
+        Boolean(alert.ignition),
+        alert.location ?? null,
+        null,
+        alert.to_number ?? null,
+        recordedAtFromAlert(alert),
+        null,
+        alert.message,
+      ],
+    );
+    const id = result.rows[0]?.id;
+    console.log(`[telemetry] INSERT gps_telemetry succeeded id=${id}`);
+    return id;
+  } catch (error) {
+    console.error(`[telemetry] INSERT gps_telemetry failed: ${error.message}`);
+    throw error;
+  }
+}
+
 export async function sendVehicleAlerts(alerts) {
   const result = { queued: alerts.length, sent: 0, skipped: 0, failed: 0, persisted: 0 };
   if (!alerts.length) return result;
   const nowMs = Date.now();
-  const accepted = [];
   for (const raw of alerts) {
     const alert = normalizeAlert(raw);
     if (!alert?.message) continue;
@@ -344,17 +434,25 @@ export async function sendVehicleAlerts(alerts) {
       result.skipped += 1;
       continue;
     }
-    const telegram = await sendTelegram(alert.message);
-    if (telegram?.ok) result.sent += 1;
-    else result.failed += 1;
-    accepted.push(alert);
-  }
-  if (accepted.length && isSupabaseConfigured()) {
+
+    let telemetryId;
     try {
-      const persistResult = await insertAlertsToSupabase(accepted);
-      if (persistResult?.ok) result.persisted = persistResult.count || accepted.length;
+      telemetryId = await insertGpsTelemetry(alert);
+      result.persisted += 1;
     } catch (error) {
-      console.error('Supabase alert persist error:', error.message);
+      result.failed += 1;
+      console.error(`[tracker] Skipping Telegram because gps_telemetry INSERT failed: ${error.message}`);
+      continue;
+    }
+
+    console.log(`[tracker] Before Telegram send telemetry_id=${telemetryId}`);
+    const telegram = await sendTelegram(alert.message);
+    if (telegram?.ok) {
+      result.sent += 1;
+      console.log(`[tracker] Telegram send succeeded telemetry_id=${telemetryId}`);
+    } else {
+      result.failed += 1;
+      console.error(`[tracker] Telegram send failed telemetry_id=${telemetryId}: ${telegram?.error ?? 'telegram_not_ok'}`);
     }
   }
   return result;
@@ -688,7 +786,14 @@ export async function buildVehicleStatus(vehicle) {
  *   When provided, this is used instead of the built-in Supabase lookup.
  */
 export async function syncFleetAndAlert(options = {}) {
-  const { resolveVehicleId: resolveFn, driverOverrides = {}, toNumberOverrides = {}, noToVehicleIds = [], toDestinationOverrides = {} } = options;
+  const {
+    resolveVehicleId: resolveFn,
+    driverOverrides = {},
+    toNumberOverrides = {},
+    noToVehicleIds = [],
+    toDestinationOverrides = {},
+    dispatchAlerts = true,
+  } = options;
   const data = await getFleetDataCached();
   const vehicles = extractVehicles(data);
   const vehicleStatuses = [];
@@ -832,19 +937,27 @@ export async function syncFleetAndAlert(options = {}) {
       if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
       if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
       if (ignition && moving && !prevMoving && prevIdlingTooLong) pushAlert('motion', formatMotionAlert(name, location, eventTime, toNumber, driver));
-      if (ignition && location !== prev.location) pushAlert('location_update', formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber, driver));
+      // Location updates are NOT sent as Telegram alerts.
+      // Raw telemetry snapshots (LOCATION UPDATE) are saved by the scheduler
+      // in STEP 1 for every vehicle with ignition=on and valid coordinates.
+      // No Telegram message is needed for normal movement.
+      // if (ignition && location !== prev.location) pushAlert('location_update', formatLocationUpdateAlert(...));
     } else if (ignition) {
       if (speeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
       if (lowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
       if (idle.idlingTooLong) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
     }
 
-    const alertResult = await sendVehicleAlerts(alerts);
-    alertSummary.queued += alertResult.queued;
-    alertSummary.sent += alertResult.sent;
-    alertSummary.skipped += alertResult.skipped;
-    alertSummary.failed += alertResult.failed;
-    alertSummary.persisted += alertResult.persisted || 0;
+    if (dispatchAlerts) {
+      const alertResult = await sendVehicleAlerts(alerts);
+      alertSummary.queued += alertResult.queued;
+      alertSummary.sent += alertResult.sent;
+      alertSummary.skipped += alertResult.skipped;
+      alertSummary.failed += alertResult.failed;
+      alertSummary.persisted += alertResult.persisted || 0;
+    } else {
+      alertSummary.queued += alerts.length;
+    }
 
     const state = {
       ignition,
@@ -878,6 +991,7 @@ export async function syncFleetAndAlert(options = {}) {
       time: formattedEventTime,
       speed,
       speeding,
+      ignition,
       speed_limit: SPEED_LIMIT_KMH,
       fuel,
       fuel_liters: fuel,
@@ -937,15 +1051,8 @@ export async function syncFleetAndAlert(options = {}) {
     }
   }
 
-  // Persist trip-state alerts via the existing alert pipeline
-  if (tripAlerts.length) {
-    const tripAlertResult = await sendVehicleAlerts(tripAlerts);
-    alertSummary.queued += tripAlertResult.queued;
-    alertSummary.sent += tripAlertResult.sent;
-    alertSummary.skipped += tripAlertResult.skipped;
-    alertSummary.failed += tripAlertResult.failed;
-    alertSummary.persisted += tripAlertResult.persisted || 0;
-  }
+  // Trip-state alerts are already included in each vehicle's alert batch.
+  void tripAlerts;
 
   return { status: 'ok', vehicles: vehicles.length, alerts: alertSummary, data: vehicleStatuses, tripLogs: tripLogRecords, emittedAlerts: allEmittedAlerts };
 }
