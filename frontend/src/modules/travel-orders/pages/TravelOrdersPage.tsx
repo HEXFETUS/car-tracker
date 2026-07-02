@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useMemo } from 'react';
-import { Plus, Loader2, Eye, Clock, ClipboardCheck, CheckCircle, XCircle } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, Loader2, Eye, MapPin, Calendar, User, Truck, UserCircle, Search, RotateCcw } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { NewTravelOrderModal } from '../components/NewTravelOrderModal';
 import { TravelOrderDetailsModal } from '../components/TravelOrderDetailsModal';
+import { TravelOrdersToolbar, type TabKey } from '../components/TravelOrdersToolbar';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import { canAccessTab } from '@/shared/config/role-access';
 import {
@@ -28,13 +28,11 @@ function toLocalISO(datetimeLocal: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00${sign}${hours}:${minutes}`;
 }
 
-type TabKey = 'pending' | 'for-approval' | 'approved' | 'cancelled';
-
-const TABS: { key: TabKey; label: string; icon: typeof Clock }[] = [
-  { key: 'pending', label: 'Needs Assigning', icon: Clock },
-  { key: 'for-approval', label: 'For Approval', icon: ClipboardCheck },
-  { key: 'approved', label: 'Approved', icon: CheckCircle },
-  { key: 'cancelled', label: 'Cancelled', icon: XCircle },
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'pending', label: 'Needs Assigning' },
+  { key: 'for-approval', label: 'For Approval' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'cancelled', label: 'Cancelled' },
 ];
 
 export function TravelOrdersPage() {
@@ -46,6 +44,9 @@ export function TravelOrdersPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<TravelOrderData | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Filter tabs based on user role
   const visibleTabs = useMemo(() => {
@@ -120,11 +121,6 @@ export function TravelOrdersPage() {
     setIsDetailsOpen(true);
   }
 
-  function formatToNumber(toNumber: string) {
-    // toNumber is now stored as a full string like "TO-2026-0001"
-    return toNumber;
-  }
-
   function formatDateTime(dateStr: string | null) {
     if (!dateStr) return null;
     return new Date(dateStr).toLocaleString('en-US', {
@@ -138,73 +134,80 @@ export function TravelOrdersPage() {
 
   const statusBadge = (status: string) => {
     const colors: Record<string, string> = {
-      PENDING: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      FOR_APPROVAL: 'bg-indigo-100 text-indigo-800 border-indigo-200',
-      APPROVED: 'bg-blue-100 text-blue-800 border-blue-200',
+      PENDING: 'bg-blue-100 text-blue-800 border-blue-200',
+      FOR_REQUEST: 'bg-orange-100 text-orange-800 border-orange-200',
+      FOR_APPROVAL: 'bg-orange-100 text-orange-800 border-orange-200',
+      APPROVED: 'bg-green-100 text-green-800 border-green-200',
       ACTIVE: 'bg-green-100 text-green-800 border-green-200',
       COMPLETED: 'bg-zinc-100 text-zinc-600 border-zinc-200',
       CANCELLED: 'bg-red-100 text-red-800 border-red-200',
     };
-    return `rounded-full px-3 py-0.5 text-xs font-medium border ${colors[status] || 'bg-zinc-100 text-zinc-600 border-zinc-200'}`;
+    return `rounded-full px-2.5 py-0.5 text-xs font-medium border ${colors[status] || 'bg-zinc-100 text-zinc-600 border-zinc-200'}`;
+  };
+
+  // ── Frontend-only filtering ──
+  const filteredOrders = useMemo(() => {
+    let result = orders;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (o) =>
+          (o.toNumber && o.toNumber.toLowerCase().includes(q)) ||
+          (o.travelerName && o.travelerName.toLowerCase().includes(q)) ||
+          (o.originLocation && o.originLocation.toLowerCase().includes(q)) ||
+          (o.destinationLocation && o.destinationLocation.toLowerCase().includes(q)) ||
+          (o.plateNumber && o.plateNumber.toLowerCase().includes(q)) ||
+          (o.driverName && o.driverName.toLowerCase().includes(q)) ||
+          (o.purpose && o.purpose.toLowerCase().includes(q)),
+      );
+    }
+
+    return result;
+  }, [orders, searchQuery]);
+
+  // ── Empty state messages per tab ──
+  const emptyMessages: Record<TabKey, { title: string; description: string }> = {
+    pending: {
+      title: 'No unassigned travel orders',
+      description: 'Create a new travel order and assign a vehicle & driver to get started.',
+    },
+    'for-approval': {
+      title: 'No orders pending approval',
+      description: 'Assigned orders will appear here once vehicle & driver are set.',
+    },
+    approved: {
+      title: 'No approved travel orders',
+      description: 'Approved orders will appear here once they are approved.',
+    },
+    cancelled: {
+      title: 'No cancelled travel orders',
+      description: 'Cancelled orders will appear here once they are rejected or cancelled.',
+    },
   };
 
   return (
-    <div className="space-y-8">
-      {/* Tab Bar + New Travel Order button — mobile: separate, desktop: inline */}
-      <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between border-b border-zinc-200">
-        <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="Travel order tabs">
-          {visibleTabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.key}
-                onClick={() => {
-                  setActiveTab(tab.key);
-                  setOrders([]);
-                }}
-                className={`
-                  inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
-                  ${
-                    safeActiveTab === tab.key
-                      ? 'border-brand-teal text-brand-teal'
-                      : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
-                  }
-                `}
-                aria-current={safeActiveTab === tab.key ? 'page' : undefined}
-              >
-                <Icon className="size-4" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
+    <div className="space-y-3">
+      {/* ── Unified Toolbar ── */}
+      <TravelOrdersToolbar
+        activeTab={safeActiveTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          setOrders([]);
+        }}
+        visibleTabs={visibleTabs}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onRefresh={loadOrders}
+        onNewOrder={() => setIsModalOpen(true)}
+        loading={loading}
+      />
 
-        {/* Mobile: small right-aligned button */}
-        <div className="flex justify-end sm:hidden">
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-          >
-            <Plus className="size-3.5" />
-            New Travel Order
-          </button>
-        </div>
-
-        {/* Desktop: original button */}
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="hidden sm:inline-flex items-center justify-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-        >
-          <Plus className="size-4" />
-          New Travel Order
-        </button>
-      </div>
-
-      {/* Content */}
+      {/* ── Content ── */}
       {loading ? (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
-          <Loader2 className="size-8 text-brand-teal animate-spin mb-3" />
-          <p className="text-base font-medium text-zinc-600">
+        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 min-h-[200px] text-center shadow-brand border border-zinc-100">
+          <Loader2 className="size-7 text-brand-teal animate-spin mb-2" />
+          <p className="text-sm font-medium text-zinc-500">
             {safeActiveTab === 'pending'
               ? 'Loading unassigned orders…'
               : safeActiveTab === 'for-approval'
@@ -214,45 +217,57 @@ export function TravelOrdersPage() {
                   : 'Loading cancelled orders…'}
           </p>
         </div>
-      ) : orders.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
-          <p className="text-base font-medium text-zinc-600">
-            {safeActiveTab === 'pending'
-              ? 'No unassigned travel orders'
-              : safeActiveTab === 'for-approval'
-                ? 'No orders pending approval'
-                : safeActiveTab === 'approved'
-                  ? 'No approved travel orders'
-                  : 'No cancelled travel orders'}
-          </p>
-          <p className="mt-1 text-sm text-zinc-400">
-            {safeActiveTab === 'pending'
-              ? 'Create a new travel order and assign a vehicle & driver to get started.'
-              : safeActiveTab === 'for-approval'
-                ? 'Assigned orders will appear here once vehicle & driver are set.'
-                : safeActiveTab === 'approved'
-                  ? 'Approved orders will appear here once they are approved.'
-                  : 'Cancelled orders will appear here once they are rejected or cancelled.'}
-          </p>
+      ) : filteredOrders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 min-h-[260px] text-center shadow-brand border border-zinc-100">
+          {searchQuery ? (
+            <>
+              <Search className="size-6 text-zinc-300 mb-2" />
+              <p className="text-sm font-medium text-zinc-600">No travel orders match your search</p>
+              <p className="mt-1 text-xs text-zinc-400">Try changing your search query or clear it to see all orders.</p>
+              <button
+                onClick={() => setSearchQuery('')}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 transition-colors"
+              >
+                <RotateCcw className="size-3.5" />
+                Clear Search
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="mb-2 flex size-10 items-center justify-center rounded-full bg-zinc-100">
+                <Search className="size-5 text-zinc-400" />
+              </div>
+              <p className="text-sm font-medium text-zinc-700">{emptyMessages[safeActiveTab].title}</p>
+              <p className="mt-0.5 text-xs text-zinc-400 max-w-sm">{emptyMessages[safeActiveTab].description}</p>
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+              >
+                <Plus className="size-3.5" />
+                New Travel Order
+              </button>
+            </>
+          )}
         </div>
       ) : (
-        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-          {orders.map((order) => (
+        /* ── Card View ── */
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredOrders.map((order) => (
             <div
               key={order.id}
-              className="group flex flex-col rounded-xl bg-white shadow-brand transition-all hover:shadow-brand-lg hover:-translate-y-0.5"
+              className="group flex flex-col rounded-xl border border-zinc-100 bg-white shadow-brand transition-all hover:-translate-y-0.5 hover:shadow-brand-lg"
             >
-              {/* Header: TO Number + Purpose */}
-              <div className="flex items-start justify-between rounded-t-xl bg-brand-cream px-5 py-4">
+              {/* Header: TO Number + Status + Purpose */}
+              <div className="flex items-start justify-between px-4 pt-3 pb-1.5">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-brand-teal truncate">
-                      {formatToNumber(order.toNumber as string)}
-                    </p>
+                    <span className="text-sm font-bold text-brand-teal truncate">
+                      {order.toNumber}
+                    </span>
                     <span className={statusBadge(order.status)}>{order.status}</span>
                   </div>
                   {order.purpose && (
-                    <p className="mt-1.5 text-sm font-medium text-zinc-700 line-clamp-2">
+                    <p className="mt-1 text-xs text-zinc-500 line-clamp-1">
                       {order.purpose}
                     </p>
                   )}
@@ -260,36 +275,42 @@ export function TravelOrdersPage() {
               </div>
 
               {/* Body: Details */}
-              <div className="flex flex-1 flex-col gap-2.5 px-5 py-4">
-                <InfoRow label="Traveler" value={order.travelerName} />
-                <InfoRow
-                  label="Route"
-                  value={`${order.originLocation || '—'} → ${order.destinationLocation}`}
+              <div className="flex flex-1 flex-col gap-1.5 px-4 py-2">
+                <CompactRow icon={<User className="size-3.5" />} label={order.travelerName} />
+                <CompactRow
+                  icon={<MapPin className="size-3.5" />}
+                  label={order.originLocation || '—'}
+                />
+                <CompactRow
+                  icon={<MapPin className="size-3.5 text-brand-teal" />}
+                  label={order.destinationLocation || '—'}
                 />
                 {order.scheduledDepartureAt && (
-                  <InfoRow label="Departure" value={formatDateTime(order.scheduledDepartureAt)} />
-                )}
-                {order.scheduledArrivalAt && (
-                  <InfoRow label="Return" value={formatDateTime(order.scheduledArrivalAt)} />
+                  <CompactRow
+                    icon={<Calendar className="size-3.5" />}
+                    label={formatDateTime(order.scheduledDepartureAt)}
+                  />
                 )}
                 {order.plateNumber && (
-                  <InfoRow label="Vehicle" value={order.plateNumber} />
+                  <CompactRow icon={<Truck className="size-3.5" />} label={order.plateNumber} />
                 )}
                 {order.driverName && (
-                  <InfoRow label="Driver" value={order.driverName} />
+                  <CompactRow icon={<UserCircle className="size-3.5" />} label={order.driverName} />
                 )}
               </div>
 
-              {/* Footer: View Details */}
-              <div className="flex items-center justify-between border-t border-zinc-100 px-5 py-3">
-                {order.approvedByName && (
-                  <span className="text-xs text-zinc-400">
+              {/* Footer: Approved by + View Details */}
+              <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5">
+                {order.approvedByName ? (
+                  <span className="text-xs text-zinc-400 truncate">
                     Approved by <span className="font-medium text-zinc-600">{order.approvedByName}</span>
                   </span>
+                ) : (
+                  <span />
                 )}
                 <button
                   onClick={() => handleViewDetails(order)}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"
+                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"
                 >
                   <Eye className="size-3.5" />
                   View Details
@@ -319,13 +340,13 @@ export function TravelOrdersPage() {
   );
 }
 
-/** Small helper to render a key-value row in the card body */
-function InfoRow({ label, value }: { label: string; value: string | null }) {
+/** Small helper to render a compact row with icon in the card body */
+function CompactRow({ icon, label }: { icon: React.ReactNode; label: string | null }) {
   return (
-    <div className="flex items-start gap-2 text-sm">
-      <span className="text-zinc-400 shrink-0 min-w-[75px]">{label}</span>
-      <span className="font-medium text-zinc-900 break-words min-w-0" title={value || ''}>
-        {value || '—'}
+    <div className="flex items-center gap-2 text-sm">
+      <span className="text-zinc-400 shrink-0">{icon}</span>
+      <span className="text-zinc-700 truncate" title={label || ''}>
+        {label || '—'}
       </span>
     </div>
   );

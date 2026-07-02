@@ -71,27 +71,6 @@ export interface VehicleOption {
   plateNumber: string;
 }
 
-export interface GpsAlertRow {
-  id: string;
-  vehicle_id: string;
-  vehiclePlate: string;
-  gps_log_id: string | null;
-  alert_type: string;
-  alert_message: string;
-  latitude: number | null;
-  longitude: number | null;
-  created_at: string;
-}
-
-export interface GpsAlertsResult {
-  success: boolean;
-  data: GpsAlertRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  message?: string;
-}
-
 type GpsLogResponse = {
   success: boolean;
   data: EnrichedGpsTripLog;
@@ -227,29 +206,6 @@ export async function deleteGpsLog(id: string): Promise<DeleteGpsLogResponse> {
 }
 
 /**
- * Fetch paginated GPS alerts with optional filters.
- */
-export async function fetchGpsAlerts(params: {
-  page?: number;
-  pageSize?: number;
-  vehicleId?: string;
-  alertType?: string;
-  alertDate?: string;
-} = {}): Promise<GpsAlertsResult> {
-  const qs = new URLSearchParams();
-  if (params.page) qs.set('page', String(params.page));
-  if (params.pageSize) qs.set('pageSize', String(params.pageSize));
-  if (params.vehicleId) qs.set('vehicleId', params.vehicleId);
-  if (params.alertType) qs.set('alertType', params.alertType);
-  if (params.alertDate) qs.set('alertDate', params.alertDate);
-
-  const url = `${API_BASE}/alerts?${qs.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Failed to fetch GPS alerts');
-  return res.json();
-}
-
-/**
  * Trigger historical sync for a specific vehicle and date.
  */
 export async function syncGpsLogsHistory(vehicleId: string, date: string): Promise<SyncHistoryResult> {
@@ -360,50 +316,6 @@ export async function syncTrackingHistory(payload: AdminSyncPayload): Promise<Tr
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Tracking history sync failed');
-  return res.json();
-}
-
-export interface TravelReportRow {
-  id: string;
-  toNumber: string;
-  driverName: string;
-  vehiclePlate: string;
-  travelHours: string;
-  from: string;
-  to: string;
-  tripDate: string;
-  departureTime: string | null;
-  arrivalTime: string | null;
-  legNumber: number;
-  legDescription: string;
-  movingHours: string;
-  idlingHours: string;
-  totalHours: string;
-}
-
-export interface TravelReportsResult {
-  success: boolean;
-  data: TravelReportRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  message?: string;
-}
-
-export async function fetchTravelReports(params: {
-  vehicleId?: string;
-  tripDate?: string;
-  page?: number;
-  pageSize?: number;
-} = {}): Promise<TravelReportsResult> {
-  const qs = new URLSearchParams();
-  if (params.vehicleId) qs.set('vehicleId', params.vehicleId);
-  if (params.tripDate) qs.set('tripDate', params.tripDate);
-  qs.set('page', String(params.page || 1));
-  qs.set('pageSize', String(params.pageSize || 20));
-
-  const res = await fetch(`/api/gps-logs/reports?${qs.toString()}`);
-  if (!res.ok) throw new Error('Failed to fetch travel reports');
   return res.json();
 }
 

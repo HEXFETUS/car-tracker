@@ -15,6 +15,14 @@ import {
   LineChart, Line, AreaChart, Area,
 } from 'recharts';
 import { cn } from '@/shared/lib/utils';
+import {
+  tableContainerClass,
+  tableClass,
+  tableHeaderClass,
+  tableHeaderCellClass,
+  tableRowClass,
+  tableCellClass,
+} from '@/shared/styles/table-constants';
 import { fetchDashboardData } from '../api/dashboard-api';
 
 // ── Color Palette ─────────────────────────────────────────────
@@ -416,42 +424,44 @@ export function DashboardPage() {
       </div>
 
       {/* ── Active Trips (Real-Time) ──────────────────── */}
-      <SectionCard title="Active Trips" icon={Navigation}>
-        {d.tables.activeTrips.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-brand-cream text-xs font-medium uppercase text-zinc-400">
-                  <th className="pb-2 pr-3">TO #</th>
-                  <th className="pb-2 pr-3">Vehicle</th>
-                  <th className="pb-2 pr-3">Driver</th>
-                  <th className="pb-2 pr-3">Origin</th>
-                  <th className="pb-2 pr-3">Destination</th>
-                  <th className="pb-2 pr-3">Departure</th>
-                  <th className="pb-2 pr-3">Arrival</th>
-                  <th className="pb-2">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.tables.activeTrips.map((trip) => (
-                  <tr key={trip.id} className="border-b border-brand-cream/60 hover:bg-brand-cream/30">
-                    <td className="py-2.5 pr-3 font-medium text-zinc-900">{trip.to_number}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600">{trip.plate_number}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600">{trip.driver_name}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600">{trip.origin_location}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600">{trip.destination_target}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600">{fmtTime(trip.scheduled_departure)}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600">{fmtTime(trip.scheduled_arrival)}</td>
-                    <td className="py-2.5"><StatusBadge status={trip.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <EmptyState message="No active trips at the moment" />
-        )}
-      </SectionCard>
+        <SectionCard title="Active Trips" icon={Navigation}>
+          {d.tables.activeTrips.length > 0 ? (
+            <div className={tableContainerClass}>
+              <div className="overflow-x-auto">
+                <table className={tableClass}>
+                  <thead>
+                    <tr className={tableHeaderClass}>
+                      <th className={tableHeaderCellClass}>TO #</th>
+                      <th className={tableHeaderCellClass}>Vehicle</th>
+                      <th className={tableHeaderCellClass}>Driver</th>
+                      <th className={tableHeaderCellClass}>Origin</th>
+                      <th className={tableHeaderCellClass}>Destination</th>
+                      <th className={tableHeaderCellClass}>Departure</th>
+                      <th className={tableHeaderCellClass}>Arrival</th>
+                      <th className={tableHeaderCellClass}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.tables.activeTrips.map((trip) => (
+                      <tr key={trip.id} className={tableRowClass}>
+                        <td className={tableCellClass}>{trip.to_number}</td>
+                        <td className={tableCellClass}>{trip.plate_number}</td>
+                        <td className={tableCellClass}>{trip.driver_name}</td>
+                        <td className={tableCellClass}>{trip.origin_location}</td>
+                        <td className={tableCellClass}>{trip.destination_target}</td>
+                        <td className={tableCellClass}>{fmtTime(trip.scheduled_departure)}</td>
+                        <td className={tableCellClass}>{fmtTime(trip.scheduled_arrival)}</td>
+                        <td className={tableCellClass}><StatusBadge status={trip.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <EmptyState message="No active trips at the moment" />
+          )}
+        </SectionCard>
 
       {/* ── Row 5: Live Vehicle Monitoring ────────────── */}
       <SectionCard title="Live Vehicle Monitoring" icon={Radio}>
@@ -494,76 +504,80 @@ export function DashboardPage() {
       </SectionCard>
 
       {/* ── Row 6: GPS Alert Center ───────────────────── */}
-      <SectionCard title="GPS Alert Center" icon={Bell}>
-        {d.tables.recentAlerts.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-brand-cream text-xs font-medium uppercase text-zinc-400">
-                  <th className="pb-2 pr-3">Time</th>
-                  <th className="pb-2 pr-3">Vehicle</th>
-                  <th className="pb-2 pr-3">Alert Type</th>
-                  <th className="pb-2 pr-3">Message</th>
-                  <th className="pb-2 pr-3">Location</th>
-                  <th className="pb-2">GPS Record</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.tables.recentAlerts.map((alert) => (
-                  <tr key={alert.id} className="border-b border-brand-cream/60 hover:bg-brand-cream/30">
-                    <td className="py-2.5 pr-3 text-xs text-zinc-500">{fmtTime(alert.time)}</td>
-                    <td className="py-2.5 pr-3 font-medium text-zinc-900">{alert.vehicle}</td>
-                    <td className="py-2.5 pr-3"><AlertBadge type={alert.alert_type} /></td>
-                    <td className="py-2.5 pr-3 max-w-xs truncate text-zinc-600">{alert.alert_message}</td>
-                    <td className="py-2.5 pr-3 text-xs text-zinc-500">{alert.location}</td>
-                    <td className="py-2.5 text-xs text-zinc-500">{alert.gps_record_no || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <EmptyState message="No recent GPS alerts" />
-        )}
-      </SectionCard>
+        <SectionCard title="GPS Alert Center" icon={Bell}>
+          {d.tables.recentAlerts.length > 0 ? (
+            <div className={tableContainerClass}>
+              <div className="overflow-x-auto">
+                <table className={tableClass}>
+                  <thead>
+                    <tr className={tableHeaderClass}>
+                      <th className={tableHeaderCellClass}>Time</th>
+                      <th className={tableHeaderCellClass}>Vehicle</th>
+                      <th className={tableHeaderCellClass}>Alert Type</th>
+                      <th className={tableHeaderCellClass}>Message</th>
+                      <th className={tableHeaderCellClass}>Location</th>
+                      <th className={tableHeaderCellClass}>GPS Record</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.tables.recentAlerts.map((alert) => (
+                      <tr key={alert.id} className={tableRowClass}>
+                        <td className={tableCellClass}>{fmtTime(alert.time)}</td>
+                        <td className={tableCellClass}>{alert.vehicle}</td>
+                        <td className={tableCellClass}><AlertBadge type={alert.alert_type} /></td>
+                        <td className={tableCellClass}>{alert.alert_message}</td>
+                        <td className={tableCellClass}>{alert.location}</td>
+                        <td className={tableCellClass}>{alert.gps_record_no || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <EmptyState message="No recent GPS alerts" />
+          )}
+        </SectionCard>
 
       {/* ── Recently Completed Trips ───────────────────── */}
-      <SectionCard title="Recently Completed Trips" icon={CheckCircle2}>
-        {d.tables.recentlyCompleted.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-brand-cream text-xs font-medium uppercase text-zinc-400">
-                  <th className="pb-2 pr-3">Date</th>
-                  <th className="pb-2 pr-3">Vehicle</th>
-                  <th className="pb-2 pr-3">Driver</th>
-                  <th className="pb-2 pr-3">Origin</th>
-                  <th className="pb-2 pr-3">Destination</th>
-                  <th className="pb-2 pr-3">Arrival</th>
-                  <th className="pb-2 pr-3">Distance</th>
-                  <th className="pb-2">Max Speed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.tables.recentlyCompleted.map((trip) => (
-                  <tr key={trip.id} className="border-b border-brand-cream/60 hover:bg-brand-cream/30">
-                    <td className="py-2.5 pr-3 text-zinc-600">{trip.trip_date}</td>
-                    <td className="py-2.5 pr-3 font-medium text-zinc-900">{trip.plate_number}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600">{trip.driver_name}</td>
-                    <td className="py-2.5 pr-3 max-w-[120px] truncate text-zinc-600">{trip.origin}</td>
-                    <td className="py-2.5 pr-3 max-w-[120px] truncate text-zinc-600">{trip.destination}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600 text-xs">{fmtTime(trip.arrival_time_gps)}</td>
-                    <td className="py-2.5 pr-3 text-zinc-600">{trip.gps_distance_km ? fmtKm(trip.gps_distance_km) : '—'}</td>
-                    <td className="py-2.5 text-zinc-600">{trip.max_speed_kph ? fmtSpeed(trip.max_speed_kph) : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <EmptyState message="No recently completed trips in the last 24 hours" />
-        )}
-      </SectionCard>
+        <SectionCard title="Recently Completed Trips" icon={CheckCircle2}>
+          {d.tables.recentlyCompleted.length > 0 ? (
+            <div className={tableContainerClass}>
+              <div className="overflow-x-auto">
+                <table className={tableClass}>
+                  <thead>
+                    <tr className={tableHeaderClass}>
+                      <th className={tableHeaderCellClass}>Date</th>
+                      <th className={tableHeaderCellClass}>Vehicle</th>
+                      <th className={tableHeaderCellClass}>Driver</th>
+                      <th className={tableHeaderCellClass}>Origin</th>
+                      <th className={tableHeaderCellClass}>Destination</th>
+                      <th className={tableHeaderCellClass}>Arrival</th>
+                      <th className={tableHeaderCellClass}>Distance</th>
+                      <th className={tableHeaderCellClass}>Max Speed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.tables.recentlyCompleted.map((trip) => (
+                      <tr key={trip.id} className={tableRowClass}>
+                        <td className={tableCellClass}>{trip.trip_date}</td>
+                        <td className={tableCellClass}>{trip.plate_number}</td>
+                        <td className={tableCellClass}>{trip.driver_name}</td>
+                        <td className={tableCellClass}>{trip.origin}</td>
+                        <td className={tableCellClass}>{trip.destination}</td>
+                        <td className={tableCellClass}>{fmtTime(trip.arrival_time_gps)}</td>
+                        <td className={tableCellClass}>{trip.gps_distance_km ? fmtKm(trip.gps_distance_km) : '—'}</td>
+                        <td className={tableCellClass}>{trip.max_speed_kph ? fmtSpeed(trip.max_speed_kph) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <EmptyState message="No recently completed trips in the last 24 hours" />
+          )}
+        </SectionCard>
 
       {/* ── Row 7: Driver Performance Leaderboard ──────── */}
       <SectionCard title="Driver Performance Leaderboard" icon={Users}>

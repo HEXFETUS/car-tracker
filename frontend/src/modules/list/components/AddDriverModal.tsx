@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import { X, User, FileText } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
 interface AddDriverModalProps {
@@ -23,6 +23,25 @@ interface FormErrors {
   expiryDate?: string;
 }
 
+function FormSection({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-zinc-100 bg-white p-5 shadow-brand">
+      <div className="flex items-center gap-2 mb-4 pb-3 border-b border-zinc-100">
+        <span className="text-brand-teal">{icon}</span>
+        <h3 className="text-sm font-bold text-zinc-800">{title}</h3>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function inputClass(error?: string) {
+  return cn(
+    'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
+    error ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal',
+  );
+}
+
 export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProps) {
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -34,7 +53,6 @@ export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProp
 
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Reset form on open
   useEffect(() => {
     if (isOpen) {
       setFullName('');
@@ -47,7 +65,6 @@ export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProp
     }
   }, [isOpen]);
 
-  // Close on Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -56,7 +73,6 @@ export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProp
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Close on backdrop click
   function handleBackdropClick(e: React.MouseEvent) {
     if (e.target === modalRef.current) onClose();
   }
@@ -101,12 +117,10 @@ export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProp
     >
       <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
           <div>
             <h2 className="text-lg font-bold text-zinc-900">Add New Driver</h2>
-            <p className="text-sm text-zinc-400">
-              Fill in the details to register a new driver.
-            </p>
+            <p className="text-sm text-zinc-400">Fill in the details to register a new driver.</p>
           </div>
           <button
             type="button"
@@ -118,122 +132,107 @@ export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProp
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
-          {/* Row: Full Name + Phone */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Full Name <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="e.g. Juan Dela Cruz"
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.fullName ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+          <FormSection title="Personal Information" icon={<User className="size-4" />}>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Full Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="e.g. Juan Dela Cruz"
+                  className={inputClass(errors.fullName)}
+                />
+                {errors.fullName && (
+                  <p className="mt-1 text-xs text-red-500">{errors.fullName}</p>
                 )}
-              />
-              {errors.fullName && (
-                <p className="mt-1 text-xs text-red-500">{errors.fullName}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Phone <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="e.g. +63 917 123 4567"
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.phone ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Phone <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="e.g. +63 917 123 4567"
+                  className={inputClass(errors.phone)}
+                />
+                {errors.phone && (
+                  <p className="mt-1 text-xs text-red-500">{errors.phone}</p>
                 )}
-              />
-              {errors.phone && (
-                <p className="mt-1 text-xs text-red-500">{errors.phone}</p>
-              )}
+              </div>
             </div>
-          </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Email <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="e.g. juan@example.com"
+                  className={inputClass(errors.email)}
+                />
+                {errors.email && (
+                  <p className="mt-1 text-xs text-red-500">{errors.email}</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Address <span className="text-zinc-400">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="e.g. 123 Rizal Avenue, Manila"
+                  className={inputClass()}
+                />
+              </div>
+            </div>
+          </FormSection>
 
-          {/* Row: Email + License Number */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Email <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="e.g. juan@example.com"
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.email ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+          <FormSection title="License Information" icon={<FileText className="size-4" />}>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  License Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={licenseNumber}
+                  onChange={(e) => setLicenseNumber(e.target.value)}
+                  placeholder="e.g. N01-12-345678"
+                  className={inputClass(errors.licenseNumber)}
+                />
+                {errors.licenseNumber && (
+                  <p className="mt-1 text-xs text-red-500">{errors.licenseNumber}</p>
                 )}
-              />
-              {errors.email && (
-                <p className="mt-1 text-xs text-red-500">{errors.email}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                License Number <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={licenseNumber}
-                onChange={(e) => setLicenseNumber(e.target.value)}
-                placeholder="e.g. N01-12-345678"
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.licenseNumber ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Expiry Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={expiryDate}
+                  onChange={(e) => setExpiryDate(e.target.value)}
+                  className={inputClass(errors.expiryDate)}
+                />
+                {errors.expiryDate && (
+                  <p className="mt-1 text-xs text-red-500">{errors.expiryDate}</p>
                 )}
-              />
-              {errors.licenseNumber && (
-                <p className="mt-1 text-xs text-red-500">{errors.licenseNumber}</p>
-              )}
+              </div>
             </div>
-          </div>
-
-          {/* Row: Expiry Date + Address */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Expiry Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={expiryDate}
-                onChange={(e) => setExpiryDate(e.target.value)}
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.expiryDate ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                )}
-              />
-              {errors.expiryDate && (
-                <p className="mt-1 text-xs text-red-500">{errors.expiryDate}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Address <span className="text-zinc-400">(optional)</span>
-              </label>
-              <input
-                type="text"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="e.g. 123 Rizal Avenue, Manila"
-                className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-              />
-            </div>
-          </div>
+          </FormSection>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-5">
+          <div className="flex items-center justify-end gap-3 pt-2">
             <button
               type="button"
               onClick={onClose}

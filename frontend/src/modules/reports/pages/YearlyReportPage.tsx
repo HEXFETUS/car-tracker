@@ -1,3 +1,4 @@
+
 import { cn } from '@/shared/lib/utils';
 import {
   MOCK_YEARLY_KPI,
@@ -17,7 +18,6 @@ import {
   ArrowDown,
   Minus,
 } from 'lucide-react';
-
 function TrendIndicator({ current, previous }: { current: number; previous: number }) {
   if (current > previous) {
     return <ArrowUp className="size-4 text-red-500" />;
@@ -32,138 +32,35 @@ export function YearlyReportPage() {
   const kpi: YearlyKpi = MOCK_YEARLY_KPI;
   const monthlyData: MonthlyAggregate[] = MOCK_MONTHLY_AGGREGATES;
 
+  // Compact stat pills
+  const statPills = [
+    { label: 'Annual Distance', value: `${kpi.totalAnnualDistanceKm.toLocaleString()} km`, icon: <Gauge className="size-3.5" /> },
+    { label: 'Annual Trips', value: kpi.totalAnnualTrips, icon: <MapPin className="size-3.5" /> },
+    { label: 'Approved TOs', value: kpi.totalApprovedTOs, icon: <FileText className="size-3.5" /> },
+    { label: 'Unauthorized', value: kpi.unauthorizedTripsYear, icon: <XCircle className="size-3.5" /> },
+    { label: 'Variance Issues', value: kpi.varianceIssuesFlaggedYear, icon: <AlertTriangle className="size-3.5" /> },
+    { label: 'Avg Monthly Dist.', value: `${kpi.avgMonthlyDistanceKm.toLocaleString()} km`, icon: <BarChart3 className="size-3.5" /> },
+    { label: 'Approval Rate', value: `${kpi.toApprovalRateYearPct.toFixed(1)}%`, icon: <TrendingUp className="size-3.5" /> },
+  ];
+
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl">
-          Yearly Report
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Macro-level overview &mdash; H1 2026
-        </p>
+    <div className="space-y-3">
+      {/* ── Compact Stats Pills ── */}
+      <div className="flex flex-wrap gap-2">
+        {statPills.map((pill) => (
+          <span
+            key={pill.label}
+            className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs shadow-sm"
+          >
+            <span className="text-brand-teal">{pill.icon}</span>
+            <span className="text-zinc-500">{pill.label}: </span>
+            <span className="font-semibold text-zinc-900">{pill.value}</span>
+          </span>
+        ))}
       </div>
 
-      {/* Yearly KPI Cards */}
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl bg-white p-5 shadow-brand transition-all hover:shadow-brand-lg">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Total Annual Distance
-              </p>
-              <p className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900">
-                {kpi.totalAnnualDistanceKm.toLocaleString()} km
-              </p>
-            </div>
-            <div className="rounded-lg bg-brand-moss/30 p-2.5 text-brand-teal">
-              <Gauge className="size-5" />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-white p-5 shadow-brand transition-all hover:shadow-brand-lg">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Total Annual Trips
-              </p>
-              <p className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900">
-                {kpi.totalAnnualTrips}
-              </p>
-            </div>
-            <div className="rounded-lg bg-brand-moss/30 p-2.5 text-brand-teal">
-              <MapPin className="size-5" />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-white p-5 shadow-brand transition-all hover:shadow-brand-lg ring-1 ring-brand-teal/20">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Total Approved TOs
-              </p>
-              <p className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900">
-                {kpi.totalApprovedTOs}
-              </p>
-            </div>
-            <div className="rounded-lg bg-brand-moss/30 p-2.5 text-brand-teal">
-              <FileText className="size-5" />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-white p-5 shadow-brand transition-all hover:shadow-brand-lg">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Unauthorized Trips (Year)
-              </p>
-              <p className="mt-1.5 text-2xl font-bold tracking-tight text-red-600">
-                {kpi.unauthorizedTripsYear}
-              </p>
-            </div>
-            <div className="rounded-lg bg-red-50 p-2.5 text-red-500">
-              <XCircle className="size-5" />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-white p-5 shadow-brand transition-all hover:shadow-brand-lg ring-1 ring-brand-teal/20">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Variance Issues Flagged
-              </p>
-              <p className="mt-1.5 text-2xl font-bold tracking-tight text-red-600">
-                {kpi.varianceIssuesFlaggedYear}
-              </p>
-            </div>
-            <div className="rounded-lg bg-red-50 p-2.5 text-red-500">
-              <AlertTriangle className="size-5" />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-white p-5 shadow-brand transition-all hover:shadow-brand-lg">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Avg Monthly Distance
-              </p>
-              <p className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900">
-                {kpi.avgMonthlyDistanceKm.toLocaleString()} km
-              </p>
-            </div>
-            <div className="rounded-lg bg-brand-moss/30 p-2.5 text-brand-teal">
-              <BarChart3 className="size-5" />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-white p-5 shadow-brand transition-all hover:shadow-brand-lg">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                TO Approval Rate (Year)
-              </p>
-              <p className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900">
-                {kpi.toApprovalRateYearPct.toFixed(1)}%
-              </p>
-            </div>
-            <div className="rounded-lg bg-brand-moss/30 p-2.5 text-brand-teal">
-              <TrendingUp className="size-5" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Month-over-Month Trend Bars */}
+      {/* ── Month-over-Month Trend Bars ── */}
       <div>
-        <h2 className="mb-4 text-lg font-semibold text-zinc-900">
-          Monthly Distance & Variance Trends
-        </h2>
         <div className="space-y-3">
           {monthlyData.map((m, idx) => {
             const maxDistance = Math.max(...monthlyData.map((d) => d.totalDistanceKm));
@@ -173,7 +70,7 @@ export function YearlyReportPage() {
             return (
               <div
                 key={m.month}
-                className="rounded-xl bg-white p-4 shadow-brand transition-all hover:shadow-brand-lg"
+                className="rounded-xl bg-white p-4 shadow-brand border border-zinc-100 transition-all hover:shadow-brand-lg"
               >
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-2">
@@ -243,8 +140,8 @@ export function YearlyReportPage() {
         </div>
       </div>
 
-      {/* Summary footer */}
-      <div className="rounded-xl bg-white p-5 shadow-brand">
+      {/* ── Summary footer ── */}
+      <div className="rounded-xl bg-white p-4 shadow-brand border border-zinc-100">
         <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
           <div className="flex items-center gap-2">
             <Calendar className="size-4 text-zinc-400" />

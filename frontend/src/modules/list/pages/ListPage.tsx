@@ -1,23 +1,15 @@
-import { useState } from 'react';
-import { Plus, Car, Users, Wrench } from 'lucide-react';
+import { useState, useMemo, useCallback } from 'react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { VehiclesPage } from '@/modules/list/pages/VehiclesPage';
 import { DriversPage } from '@/modules/list/pages/DriversPage';
 import { MaintenancePage } from '@/modules/list/pages/MaintenancePage';
+import { ListToolbar, type TabKey } from '@/modules/list/components/ListToolbar';
 import { AddVehicleModal } from '@/modules/list/components/AddVehicleModal';
 import { AddDriverModal } from '@/modules/list/components/AddDriverModal';
 import { NewMaintenanceModal } from '@/modules/list/components/NewMaintenanceModal';
 import { createVehicle } from '@/modules/list/api/vehicles-api';
 import { createDriver } from '@/modules/list/api/drivers-api';
 import { createMaintenance } from '@/modules/list/api/maintenance-api';
-
-type TabKey = 'vehicles' | 'drivers' | 'maintenance';
-
-const TABS: { key: TabKey; label: string; icon: typeof Car }[] = [
-  { key: 'vehicles', label: 'Vehicles', icon: Car },
-  { key: 'drivers', label: 'Drivers', icon: Users },
-  { key: 'maintenance', label: 'Maintenance', icon: Wrench },
-];
 
 export function ListPage() {
   const { toast, confirm } = useNotification();
@@ -26,6 +18,27 @@ export function ListPage() {
   const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const newItemLabel = useMemo(() => {
+    switch (activeTab) {
+      case 'vehicles': return 'New Vehicle';
+      case 'drivers': return 'New Driver';
+      case 'maintenance': return 'New Maintenance';
+    }
+  }, [activeTab]);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  const handleNewItem = useCallback(() => {
+    switch (activeTab) {
+      case 'vehicles': setIsVehicleModalOpen(true); break;
+      case 'drivers': setIsDriverModalOpen(true); break;
+      case 'maintenance': setIsMaintenanceModalOpen(true); break;
+    }
+  }, [activeTab]);
 
   async function handleAddVehicle(payload: {
     plateNumber: string;
@@ -97,96 +110,32 @@ export function ListPage() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Tab Bar + Action button — mobile: separate, desktop: inline */}
-      <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between border-b border-zinc-200">
-        <nav className="-mb-px flex gap-4 sm:gap-6 overflow-x-auto pb-px" aria-label="List tabs">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`
-                shrink-0 whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors
-                ${
-                  activeTab === tab.key
-                    ? 'border-brand-teal text-brand-teal'
-                    : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
-                }
-              `}
-              aria-current={activeTab === tab.key ? 'page' : undefined}
-            >
-              <tab.icon className="inline size-4 mr-1.5 -mt-0.5" />
-              {tab.label}
-            </button>
-          ))}
-        </nav>
+    <div className="space-y-3">
+      {/* ── Unified Toolbar ── */}
+      <ListToolbar
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          setSearchQuery('');
+        }}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onRefresh={handleRefresh}
+        onNewItem={handleNewItem}
+        newItemLabel={newItemLabel}
+      />
 
-        {/* Mobile: small right-aligned buttons */}
-        <div className="flex justify-end sm:hidden">
-          {activeTab === 'vehicles' && (
-            <button
-              onClick={() => setIsVehicleModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-            >
-              <Plus className="size-3.5" />
-              Add New Vehicle
-            </button>
-          )}
-          {activeTab === 'drivers' && (
-            <button
-              onClick={() => setIsDriverModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-            >
-              <Plus className="size-3.5" />
-              Add Driver
-            </button>
-          )}
-          {activeTab === 'maintenance' && (
-            <button
-              onClick={() => setIsMaintenanceModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-            >
-              <Plus className="size-3.5" />
-              Add Maintenance
-            </button>
-          )}
-        </div>
-
-        {/* Desktop: original buttons */}
+      {/* ── Tab content ── */}
+      <div>
         {activeTab === 'vehicles' && (
-          <button
-            onClick={() => setIsVehicleModalOpen(true)}
-            className="hidden sm:inline-flex items-center justify-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-          >
-            <Plus className="size-4" />
-            Add New Vehicle
-          </button>
+          <VehiclesPage key={refreshKey} searchQuery={searchQuery} />
         )}
         {activeTab === 'drivers' && (
-          <button
-            onClick={() => setIsDriverModalOpen(true)}
-            className="hidden sm:inline-flex items-center justify-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-          >
-            <Plus className="size-4" />
-            Add Driver
-          </button>
+          <DriversPage key={refreshKey} searchQuery={searchQuery} />
         )}
         {activeTab === 'maintenance' && (
-          <button
-            onClick={() => setIsMaintenanceModalOpen(true)}
-            className="hidden sm:inline-flex items-center justify-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-          >
-            <Plus className="size-4" />
-            Add Maintenance
-          </button>
+          <MaintenancePage key={refreshKey} searchQuery={searchQuery} />
         )}
-      </div>
-
-      {/* Tab content */}
-      <div>
-        {activeTab === 'vehicles' && <VehiclesPage key={refreshKey} hideAddButton />}
-        {activeTab === 'drivers' && <DriversPage key={refreshKey} hideAddButton />}
-        {activeTab === 'maintenance' && <MaintenancePage key={refreshKey} />}
       </div>
 
       {/* Add Vehicle Modal */}

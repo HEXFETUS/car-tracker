@@ -811,22 +811,20 @@ export async function persistGpsTripLogs(
       const travelOrderId = travelOrder?.id ?? null;
       const toStatusAuto = travelOrder?.status ?? null;
 
-      // ── HARD REJECTION: GPS logs must not be created without a matched Travel Order ──
-      if (!travelOrderId) {
-        failed += 1;
-        continue;
-      }
-
       // ── HARD REJECTION: Must have valid departure and arrival times ──
-      if (!tripLog.departureTimeGps || !tripLog.arrivalTimeGps || tripLog.departureTimeGps === tripLog.arrivalTimeGps) {
-        failed += 1;
-        continue;
-      }
+      // For trips with no matched Travel Order (anomaly), we still save them
+      // even if departure/arrival times are identical or missing one side.
+      if (travelOrderId) {
+        if (!tripLog.departureTimeGps || !tripLog.arrivalTimeGps || tripLog.departureTimeGps === tripLog.arrivalTimeGps) {
+          failed += 1;
+          continue;
+        }
 
-      // ── HARD REJECTION: Must have valid coordinates when distance > 0 ──
-      if (Number(tripLog.gpsDistanceKm) > 0 && (!tripLog.coordinatesOrigin || !tripLog.coordinatesDestination)) {
-        failed += 1;
-        continue;
+        // ── HARD REJECTION: Must have valid coordinates when distance > 0 ──
+        if (Number(tripLog.gpsDistanceKm) > 0 && (!tripLog.coordinatesOrigin || !tripLog.coordinatesDestination)) {
+          failed += 1;
+          continue;
+        }
       }
 
       const resolvedDriverId = driverId || null;
@@ -845,19 +843,27 @@ export async function persistGpsTripLogs(
       if (!validStatuses.includes(tripStatusGps)) tripStatusGps = 'en-route';
 
       // ── Anomaly Detection ─────────────────────────────────
+      const noTravelOrder = !travelOrderId;
       const unauthorizedMovement =
-        !travelOrderId && (tripLog.tripStatus === 'Moving' || tripLog.tripStatus === 'Idling');
+        noTravelOrder && (tripLog.tripStatus === 'Moving' || tripLog.tripStatus === 'Idling');
       const noDriverAssigned = !resolvedDriverId;
-      const anomalyFlag = tripLog.anomalyFlag || unauthorizedMovement || noDriverAssigned;
+      const anomalyFlag = tripLog.anomalyFlag || noTravelOrder || unauthorizedMovement || noDriverAssigned;
 
       const anomalyNotes: string[] = [];
-      if (unauthorizedMovement && !tripLog.toNumber) anomalyNotes.push('No travel order linked to this trip');
-      if (noDriverAssigned) anomalyNotes.push('No driver assigned to this vehicle');
+      if (noTravelOrder) {
+        anomalyNotes.push('Anomaly - No TO');
+      }
+      if (noDriverAssigned) {
+        anomalyNotes.push('No driver assigned to this vehicle');
+      }
       if (tripLog.anomalyFlag && tripLog.anomalyFlag === true) {
         if (tripLog.maxSpeedKph > 120) anomalyNotes.push('Speeding detected');
         if (tripLog.anomalyFlag && !anomalyNotes.length) anomalyNotes.push('Anomalous activity detected');
       }
       const notesRemarks = anomalyNotes.length > 0 ? anomalyNotes.join('; ') : null;
+
+      // For trips with no matched Travel Order, set toStatusAuto to 'NO TO'
+      const resolvedToStatusAuto = noTravelOrder ? 'NO TO' : toStatusAuto;
 
       // ── Ongoing Trip Tracking ─────────────────────────────
       // One row per trip: START creates the row, ONGOING updates it, END finalizes it.
@@ -878,7 +884,7 @@ export async function persistGpsTripLogs(
             anomalyFlag,
             notesRemarks,
             travelOrderId,
-            toStatusAuto,
+            toStatusAuto: resolvedToStatusAuto,
           });
           saved += 1;
           continue;
@@ -892,7 +898,7 @@ export async function persistGpsTripLogs(
             anomalyFlag,
             notesRemarks,
             travelOrderId,
-            toStatusAuto,
+            toStatusAuto: resolvedToStatusAuto,
           });
           saved += 1;
           continue;
@@ -925,7 +931,7 @@ export async function persistGpsTripLogs(
         maxSpeedKph: clampedMaxSpeedKph,
         tripStatusGps,
         travelOrderId,
-        toStatusAuto,
+        toStatusAuto: resolvedToStatusAuto,
         anomalyFlag,
         notesRemarks,
         destinationVerified: false,
@@ -961,4 +967,270 @@ async function findOngoingTripLogSync(vehicleId: string, tripDate: string): Prom
     [vehicleId, tripDate],
   );
   return result.rows[0] ?? null;
+}
+
+// ── Telemetry-to-Trip-Log Sync ────────────────────────────────
+
+interface TelemetryGroup {
+  vehicleId: string;
+  plateNumber: string;
+  activeTripId: string | null;
+  tripDate: string;
+  departureTimeGps: string | null;
+  arrivalTimeGps: string | null;
+  originGpsStartPoint: string;
+  destinationGpsEndPoint: string;
+  coordinatesOrigin: string | null;
+  coordinatesDestination: string | null;
+  gpsDistanceKm: number;
+  engineHours: number;
+  maxSpeedKph: number;
+  tripStatusGps: string;
+  driverName: string | null;
+  toNumber: string | null;
+  anomalyFlag: boolean;
+  notesRemarks: string | null;
+  pointCount: number;
+}
+
+/**
+ * Sync GPS trip logs from gps_telemetry records.
+ *
+ * Reads ALL telemetry records ordered by vehicle, active_trip_id, and recorded_at,
+ * groups them by (active_trip_id OR vehicle_id+date), derives trip fields,
+ * resolves travel orders, and upserts into gps_trip_logs.
+ *
+ * @returns Summary of created, updated, skipped, and failed counts.
+ */
+export async function syncGpsTripLogsFromTelemetry(): Promise<{
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+}> {
+  const pool = getPool();
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  let rows: any[];
+  try {
+    const result = await pool.query(
+      `SELECT
+        gt.*,
+        to_data.to_number AS active_to_number,
+        to_data.status AS active_to_status,
+        d.full_name AS active_driver_name
+      FROM gps_telemetry gt
+      LEFT JOIN LATERAL (
+        SELECT to_number, status, driver_id
+        FROM travel_orders
+        WHERE vehicle_id = gt.vehicle_id
+          AND status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+          AND DATE(scheduled_departure) = DATE(gt.recorded_at)
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) to_data ON true
+      LEFT JOIN drivers d ON d.id = to_data.driver_id
+      WHERE gt.recorded_at IS NOT NULL
+      ORDER BY gt.vehicle_id, COALESCE(gt.active_trip_id, gt.vehicle_id || '::date::' || DATE(gt.recorded_at)::text), gt.recorded_at ASC`,
+    );
+    rows = result.rows;
+  } catch (err) {
+    console.error('[syncGpsTripLogsFromTelemetry] Query failed:', (err as Error).message);
+    return { created: 0, updated: 0, skipped: 0, failed: 0 };
+  }
+
+  if (rows.length === 0) {
+    return { created: 0, updated: 0, skipped: 0, failed: 0 };
+  }
+
+  // Group telemetry rows by composite key
+  const groups = new Map<string, any[]>();
+  for (const row of rows) {
+    const groupKey = row.active_trip_id
+      ? `trip:${row.vehicle_id}:${row.active_trip_id}`
+      : `date:${row.vehicle_id}:${String(row.recorded_at).split('T')[0]}`;
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+    groups.get(groupKey)!.push(row);
+  }
+
+  console.log(`[syncGpsTripLogsFromTelemetry] ${rows.length} telemetry rows grouped into ${groups.size} trip groups`);
+
+  for (const [_key, telemetryRows] of groups) {
+    try {
+      const first = telemetryRows[0];
+      const last = telemetryRows[telemetryRows.length - 1];
+
+      // Derive vehicle_id and plate_number from first row
+      const vehicleId: string | null = first.vehicle_id ?? null;
+      if (!vehicleId) {
+        skipped += 1;
+        continue;
+      }
+
+      const plateNumber: string = first.plate_number ?? 'Unknown';
+      const activeTripId: string | null = first.active_trip_id ?? null;
+
+      // Trip dates
+      const firstRecordedAt: string | null = first.recorded_at ?? null;
+      const lastRecordedAt: string | null = last.recorded_at ?? null;
+      const tripDate = firstRecordedAt ? String(firstRecordedAt).split('T')[0] : new Date().toISOString().split('T')[0];
+      const departureTimeGps = firstRecordedAt;
+      const arrivalTimeGps = lastRecordedAt;
+
+      // Derive origin/destination from first/last locations
+      const originGpsStartPoint = first.location_name || '';
+      const destinationGpsEndPoint = last.location_name || '';
+      const coordinatesOrigin = first.latitude != null && first.longitude != null
+        ? `${first.latitude},${first.longitude}`
+        : null;
+      const coordinatesDestination = last.latitude != null && last.longitude != null
+        ? `${last.latitude},${last.longitude}`
+        : null;
+
+      // Calculate distance approx from first/last coordinates
+      let gpsDistanceKm = 0;
+      if (coordinatesOrigin && coordinatesDestination) {
+        gpsDistanceKm = haversineDistance(coordinatesOrigin, coordinatesDestination) / 1000;
+      }
+
+      // Max speed across group
+      let maxSpeedKph = 0;
+      for (const row of telemetryRows) {
+        if (Number(row.speed_kmh) > maxSpeedKph) maxSpeedKph = Number(row.speed_kmh);
+      }
+
+      // Determine trip status based on event types in the group
+      const eventTypes = new Set(telemetryRows.map((r: any) => r.event_type));
+      const hasIgnitionOff = eventTypes.has('IGNITION OFF ALERT') || eventTypes.has('IGNITION_OFF');
+      const hasMoving = eventTypes.has('MOVING ALERT') || eventTypes.has('LOCATION UPDATE ALERT') || eventTypes.has('LOCATION_UPDATE');
+      const hasIdling = eventTypes.has('IDLING ALERT') || eventTypes.has('IDLING');
+      const hasIgnitionOn = eventTypes.has('IGNITION ON ALERT');
+
+      let tripStatusGps: string;
+      if (hasIgnitionOff) tripStatusGps = 'completed';
+      else if (hasMoving) tripStatusGps = 'en-route';
+      else if (hasIdling) tripStatusGps = 'en-route';
+      else if (hasIgnitionOn) tripStatusGps = 'departed';
+      else tripStatusGps = 'en-route';
+
+      // Driver name from telemetry (enriched via LEFT JOIN)
+      const driverName: string | null = first.active_driver_name ?? null;
+
+      // Resolve travel order
+      const travelOrder = await findApprovedTravelOrderForDate(vehicleId, tripDate);
+      const travelOrderId = travelOrder?.id ?? null;
+      const toNumber: string | null = first.active_to_number ?? null;
+
+      const noTravelOrder = !travelOrderId;
+      const noDriverAssigned = !driverName;
+      const anomalyFlag = noTravelOrder || noDriverAssigned;
+
+      const anomalyNotes: string[] = [];
+      if (noTravelOrder) anomalyNotes.push('Anomaly - No TO');
+      if (noDriverAssigned) anomalyNotes.push('No driver assigned to this vehicle');
+      const notesRemarks = anomalyNotes.length > 0 ? anomalyNotes.join('; ') : null;
+      const resolvedToStatusAuto = noTravelOrder ? 'NO TO' : (travelOrder?.status ?? null);
+
+      // Engine hours estimated from telemetry span
+      const startMs = firstRecordedAt ? new Date(firstRecordedAt).getTime() : Date.now();
+      const endMs = lastRecordedAt ? new Date(lastRecordedAt).getTime() : Date.now();
+      const engineHours = Math.max(0, (endMs - startMs) / 3600000);
+
+      // Look for existing trip log by active_trip_id or by vehicle+date+departure
+      let existingLog: { id: string } | null = null;
+
+      if (activeTripId) {
+        const existing = await pool.query<{ id: string }>(
+          `SELECT id FROM gps_trip_logs WHERE active_trip_id = $1 LIMIT 1`,
+          [activeTripId],
+        );
+        existingLog = existing.rows[0] ?? null;
+      }
+
+      if (!existingLog) {
+        // Fallback: find by vehicle + date + approximate departure
+        const existing = await pool.query<{ id: string }>(
+          `SELECT id FROM gps_trip_logs
+           WHERE vehicle_id = $1
+             AND trip_date = $2::date
+             AND departure_time_gps IS NOT DISTINCT FROM $3::timestamptz
+           LIMIT 1`,
+          [vehicleId, tripDate, departureTimeGps],
+        );
+        existingLog = existing.rows[0] ?? null;
+      }
+
+      if (existingLog) {
+        // Update existing log
+        await updateGpsTripLog(existingLog.id, {
+          arrivalTimeGps,
+          destinationGpsEndPoint: destinationGpsEndPoint || undefined,
+          gpsDistanceKm,
+          engineHours,
+          maxSpeedKph,
+          tripStatusGps,
+          anomalyFlag,
+          notesRemarks,
+          travelOrderId,
+          toStatusAuto: resolvedToStatusAuto,
+        });
+        updated += 1;
+        continue;
+      }
+
+      // Create new gps_trip_logs row
+      const pool2 = getPool();
+      const gpsRecordNo = await generateGpsRecordNo();
+
+      // Insert with active_trip_id and all derived fields
+      try {
+        await pool2.query(
+          `INSERT INTO gps_trip_logs
+             (gps_record_no, trip_date, vehicle_id, driver_id,
+              origin_gps_start_point, destination_gps_end_point,
+              coordinates_origin, coordinates_destination,
+              departure_time_gps, arrival_time_gps,
+              gps_distance_km, engine_hours, max_speed_kph,
+              trip_status_gps, travel_order_id, to_status_auto,
+              anomaly_flag, notes_remarks, active_trip_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+           ON CONFLICT (gps_record_no) DO UPDATE SET
+             gps_distance_km = EXCLUDED.gps_distance_km,
+             max_speed_kph = EXCLUDED.max_speed_kph,
+             engine_hours = EXCLUDED.engine_hours,
+             arrival_time_gps = EXCLUDED.arrival_time_gps,
+             trip_status_gps = EXCLUDED.trip_status_gps,
+             anomaly_flag = EXCLUDED.anomaly_flag,
+             notes_remarks = EXCLUDED.notes_remarks
+           RETURNING id`,
+          [
+            gpsRecordNo, tripDate, vehicleId, null,
+            originGpsStartPoint, destinationGpsEndPoint,
+            coordinatesOrigin, coordinatesDestination,
+            departureTimeGps, arrivalTimeGps,
+            gpsDistanceKm, engineHours, maxSpeedKph,
+            tripStatusGps, travelOrderId, resolvedToStatusAuto,
+            anomalyFlag, notesRemarks,
+            activeTripId,
+          ],
+        );
+        created += 1;
+      } catch (insertErr) {
+        // If unique constraint fails (active_trip_id), it was created by another process
+        console.log(`[syncGpsTripLogsFromTelemetry] Insert conflict (likely duplicate active_trip_id): ${(insertErr as Error).message}`);
+        skipped += 1;
+      }
+    } catch (groupErr) {
+      console.error('[syncGpsTripLogsFromTelemetry] Error processing group:', (groupErr as Error).message);
+      failed += 1;
+    }
+  }
+
+  console.log(`[syncGpsTripLogsFromTelemetry] Done: ${created} created, ${updated} updated, ${skipped} skipped, ${failed} failed`);
+  return { created, updated, skipped, failed };
 }

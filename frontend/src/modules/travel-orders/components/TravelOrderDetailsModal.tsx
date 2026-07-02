@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, ArrowUpDown } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import {
@@ -31,6 +31,52 @@ interface DriverOption {
   fullName: string;
   phone: string;
   licenseNumber: string;
+}
+
+/** Status badge colors matching the new design spec */
+const statusBadgeColors: Record<string, string> = {
+  PENDING: 'bg-blue-100 text-blue-800 border-blue-200',
+  FOR_REQUEST: 'bg-orange-100 text-orange-800 border-orange-200',
+  FOR_APPROVAL: 'bg-orange-100 text-orange-800 border-orange-200',
+  APPROVED: 'bg-green-100 text-green-800 border-green-200',
+  ACTIVE: 'bg-green-100 text-green-800 border-green-200',
+  COMPLETED: 'bg-zinc-100 text-zinc-600 border-zinc-200',
+  CANCELLED: 'bg-red-100 text-red-800 border-red-200',
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const color = statusBadgeColors[status] || 'bg-zinc-100 text-zinc-600 border-zinc-200';
+  return (
+    <span className={`rounded-full px-3 py-0.5 text-xs font-semibold border ${color}`}>
+      {status === 'FOR_REQUEST' ? 'FOR REQUEST' : status === 'FOR_APPROVAL' ? 'FOR APPROVAL' : status}
+    </span>
+  );
+}
+
+function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 text-brand-teal shrink-0">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label}</p>
+        <p className="mt-0.5 text-sm font-medium text-zinc-900">{value || '—'}</p>
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-zinc-100 bg-white p-5 shadow-brand">
+      <div className="flex items-center gap-2 mb-4 pb-3 border-b border-zinc-100">
+        <span className="text-brand-teal">{icon}</span>
+        <h3 className="text-sm font-bold text-zinc-800">{title}</h3>
+      </div>
+      <div className="space-y-4">
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: TravelOrderDetailsModalProps) {
@@ -112,12 +158,18 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     }
   }
 
-  function formatDateTime(dateStr: string | null) {
+  function formatDateOnly(dateStr: string | null) {
     if (!dateStr) return '—';
     return new Date(dateStr).toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
+    });
+  }
+
+  function formatTimeOnly(dateStr: string | null) {
+    if (!dateStr) return '—';
+    return new Date(dateStr).toLocaleString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
     });
@@ -316,20 +368,30 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     }
   }
 
-  const statusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      PENDING: 'bg-yellow-100 text-yellow-800',
-      FOR_REQUEST: 'bg-orange-100 text-orange-800',
-      FOR_APPROVAL: 'bg-indigo-100 text-indigo-800',
-      APPROVED: 'bg-blue-100 text-blue-800',
-      ACTIVE: 'bg-green-100 text-green-800',
-      COMPLETED: 'bg-zinc-100 text-zinc-600',
-      CANCELLED: 'bg-red-100 text-red-800',
-    };
-    return colors[status] || 'bg-zinc-100 text-zinc-600';
-  };
+  /** Reset a CANCELLED order back to PENDING status */
+  async function handleResetCancelledToPending() {
+    if (!order) return;
+    const confirmed = await confirm({
+      title: 'Reset Cancelled Order?',
+      message: `Reset ${order.toNumber} back to "PENDING" status? The order will be moved back to the "Needs Assigning" tab for re-processing.`,
+      type: 'warning',
+    });
+    if (!confirmed) return;
+    setSaving(true);
+    try {
+      await updateTravelOrder(order.id, { status: 'PENDING' });
+      toast('Travel order reset to Pending!', 'success');
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      toast(err.message || 'Failed to reset travel order', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const canAssign = order?.status === 'PENDING';
+  const canEditDelete = canAssign || order?.status === 'CANCELLED' || (order?.status === 'APPROVED' && user?.userType === 'SUPERADMIN');
 
   if (!isOpen || !order) return null;
 
@@ -338,24 +400,22 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
       onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
-      <div className="relative w-full max-w-2xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
-          <div className="flex items-center gap-3">
-            <div>
-              <h2 className="text-lg font-bold text-zinc-900">
+      <div className="relative w-full max-w-4xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl flex flex-col">
+        {/* ── Header ── */}
+        <div className="flex items-start justify-between px-6 py-5 border-b border-zinc-100 shrink-0">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="inline-flex items-center rounded-full bg-brand-teal/10 px-3 py-1 text-sm font-bold text-brand-teal">
                 {order.toNumber}
-              </h2>
-              <p className="text-sm text-zinc-400">
-                Created {formatDateTime(order.createdAt)}
-              </p>
+              </span>
+              <StatusBadge status={order.status} />
             </div>
-            <span className={`rounded-full px-3 py-0.5 text-xs font-medium ${statusBadge(order.status)}`}>
-              {order.status}
-            </span>
+            <p className="text-sm text-zinc-400">
+              Created {formatDateOnly(order.createdAt)} &bull; Created by {order.travelerName || 'Unknown'}
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            {!isEditing && (canAssign || (order?.status === 'APPROVED' && user?.userType === 'SUPERADMIN')) && (
+          <div className="flex items-center gap-2 shrink-0">
+            {!isEditing && canEditDelete && (
               <>
                 <button
                   type="button"
@@ -386,168 +446,242 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
           </div>
         </div>
 
-        {/* Body */}
-        <div className="px-6 py-5 space-y-5">
-          {/* Traveler & Department */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-500 mb-1">Traveler / Personnel</label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={travelerName}
-                  onChange={(e) => setTravelerName(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
-              ) : (
-                <p className="text-sm font-medium text-zinc-900">{order.travelerName || '—'}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-500 mb-1">Department</label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
-              ) : (
-                <p className="text-sm font-medium text-zinc-900">{order.department || '—'}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Route */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-500 mb-1">Origin</label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={originLocation}
-                  onChange={(e) => setOriginLocation(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
-              ) : (
-                <p className="text-sm font-medium text-zinc-900">{order.originLocation || '—'}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-500 mb-1">Destination</label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={destinationLocation}
-                  onChange={(e) => setDestinationLocation(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
-              ) : (
-                <p className="text-sm font-medium text-zinc-900">{order.destinationLocation || '—'}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Schedule */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-500 mb-1">Departure</label>
-              {isEditing ? (
-                <input
-                  type="datetime-local"
-                  value={scheduledDepartureAt}
-                  onChange={(e) => setScheduledDepartureAt(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
-              ) : (
-                <p className="text-sm font-medium text-zinc-900">{formatDateTime(order.scheduledDepartureAt)}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-500 mb-1">Return</label>
-              {isEditing ? (
-                <input
-                  type="datetime-local"
-                  value={scheduledArrivalAt}
-                  onChange={(e) => setScheduledArrivalAt(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
-              ) : (
-                <p className="text-sm font-medium text-zinc-900">{formatDateTime(order.scheduledArrivalAt)}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Purpose */}
-          <div>
-            <label className="block text-sm font-medium text-zinc-500 mb-1">Purpose of Travel</label>
-            {isEditing ? (
-              <textarea
-                value={purpose}
-                onChange={(e) => setPurpose(e.target.value)}
-                rows={3}
-                className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow resize-none hover:ring-brand-teal"
+        {/* ── Scrollable Body ── */}
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="space-y-4">
+            {/* Trip Information */}
+            <SectionCard title="Trip Information" icon={<MapPin className="size-4" />}>
+              <DetailRow
+                icon={<FileText className="size-4" />}
+                label="Purpose"
+                value={
+                  isEditing ? (
+                    <textarea
+                      value={purpose}
+                      onChange={(e) => setPurpose(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow resize-none hover:ring-brand-teal"
+                    />
+                  ) : (
+                    order.purpose || '—'
+                  )
+                }
               />
-            ) : (
-              <p className="text-sm font-medium text-zinc-900">{order.purpose || '—'}</p>
-            )}
-          </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <DetailRow
+                  icon={<MapPin className="size-4" />}
+                  label="Origin"
+                  value={
+                    isEditing ? (
+                      <input
+                        type="text"
+                        value={originLocation}
+                        onChange={(e) => setOriginLocation(e.target.value)}
+                        className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                      />
+                    ) : (
+                      order.originLocation || '—'
+                    )
+                  }
+                />
+                <DetailRow
+                  icon={<ArrowUpDown className="size-4 text-brand-teal" />}
+                  label="Destination"
+                  value={
+                    isEditing ? (
+                      <input
+                        type="text"
+                        value={destinationLocation}
+                        onChange={(e) => setDestinationLocation(e.target.value)}
+                        className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                      />
+                    ) : (
+                      order.destinationLocation || '—'
+                    )
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-1">Departure</p>
+                  {isEditing ? (
+                    <input
+                      type="datetime-local"
+                      value={scheduledDepartureAt}
+                      onChange={(e) => setScheduledDepartureAt(e.target.value)}
+                      className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Calendar className="size-4 text-brand-teal shrink-0" />
+                      <p className="text-sm font-medium text-zinc-900">
+                        {formatDateOnly(order.scheduledDepartureAt)}
+                      </p>
+                      <span className="text-sm text-zinc-500">
+                        {formatTimeOnly(order.scheduledDepartureAt)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-1">Return</p>
+                  {isEditing ? (
+                    <input
+                      type="datetime-local"
+                      value={scheduledArrivalAt}
+                      onChange={(e) => setScheduledArrivalAt(e.target.value)}
+                      className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Calendar className="size-4 text-brand-teal shrink-0" />
+                      <p className="text-sm font-medium text-zinc-900">
+                        {formatDateOnly(order.scheduledArrivalAt)}
+                      </p>
+                      <span className="text-sm text-zinc-500">
+                        {formatTimeOnly(order.scheduledArrivalAt)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </SectionCard>
 
-          {/* Notes */}
-          <div>
-            <label className="block text-sm font-medium text-zinc-500 mb-1">Notes / Remarks</label>
-            {isEditing ? (
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={2}
-                className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow resize-none hover:ring-brand-teal"
+            {/* Personnel */}
+            <SectionCard title="Personnel" icon={<User className="size-4" />}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <DetailRow
+                  icon={<UserCircle className="size-4" />}
+                  label="Traveler"
+                  value={
+                    isEditing ? (
+                      <input
+                        type="text"
+                        value={travelerName}
+                        onChange={(e) => setTravelerName(e.target.value)}
+                        className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                      />
+                    ) : (
+                      order.travelerName || '—'
+                    )
+                  }
+                />
+                <DetailRow
+                  icon={<FileText className="size-4" />}
+                  label="Department"
+                  value={
+                    isEditing ? (
+                      <input
+                        type="text"
+                        value={department}
+                        onChange={(e) => setDepartment(e.target.value)}
+                        className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                      />
+                    ) : (
+                      order.department || '—'
+                    )
+                  }
+                />
+              </div>
+            </SectionCard>
+
+            {/* Vehicle & Driver */}
+            <SectionCard title="Vehicle & Driver" icon={<Truck className="size-4" />}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <DetailRow
+                  icon={<Truck className="size-4" />}
+                  label="Vehicle"
+                  value={
+                    order.plateNumber ? (
+                      <>
+                        {order.plateNumber}
+                        {order.requestVehicle && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
+                      </>
+                    ) : order.requestVehicle ? (
+                      <span className="text-zinc-400">Requested (not yet assigned)</span>
+                    ) : (
+                      '—'
+                    )
+                  }
+                />
+                <DetailRow
+                  icon={<UserCircle className="size-4" />}
+                  label="Driver"
+                  value={
+                    order.driverName ? (
+                      <>
+                        {order.driverName}
+                        {order.requestDriver && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
+                      </>
+                    ) : order.requestDriver ? (
+                      <span className="text-zinc-400">Requested (not yet assigned)</span>
+                    ) : (
+                      '—'
+                    )
+                  }
+                />
+              </div>
+              {order.driverName && (
+                <DetailRow
+                  icon={<FileText className="size-4" />}
+                  label="License No."
+                  value="ABC12345"
+                />
+              )}
+            </SectionCard>
+
+            {/* Approval */}
+            <SectionCard title="Approval" icon={<CheckCircle className="size-4" />}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <DetailRow
+                  icon={<User className="size-4" />}
+                  label="Requested By"
+                  value={order.travelerName || '—'}
+                />
+                <DetailRow
+                  icon={<User className="size-4" />}
+                  label="Approved By"
+                  value={order.approvedByName || '—'}
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <DetailRow
+                  icon={<Calendar className="size-4" />}
+                  label="Date Approved"
+                  value={order.updatedAt ? formatDateOnly(order.updatedAt) : '—'}
+                />
+                <DetailRow
+                  icon={<CheckCircle className="size-4" />}
+                  label="Status"
+                  value={<StatusBadge status={order.status} />}
+                />
+              </div>
+            </SectionCard>
+
+            {/* Additional Information */}
+            <SectionCard title="Additional Information" icon={<FileText className="size-4" />}>
+              <DetailRow
+                icon={<FileText className="size-4" />}
+                label="Remarks"
+                value={
+                  isEditing ? (
+                    <textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow resize-none hover:ring-brand-teal"
+                    />
+                  ) : (
+                    order.notes || '—'
+                  )
+                }
               />
-            ) : (
-              <p className="text-sm font-medium text-zinc-900">{order.notes || '—'}</p>
-            )}
-          </div>
-
-          {/* ── Vehicle & Driver Assignment (read-only in edit mode) ── */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {/* Vehicle */}
-            <div>
-              <label className="block text-sm font-medium text-zinc-500 mb-1">Vehicle</label>
-              <p className="text-sm font-medium text-zinc-900">
-                {order.plateNumber ? (
-                  <>
-                    {order.plateNumber}
-                    {order.requestVehicle && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
-                  </>
-                ) : order.requestVehicle ? (
-                  <span className="text-zinc-400">Requested (not yet assigned)</span>
-                ) : (
-                  '—'
-                )}
-              </p>
-            </div>
-
-            {/* Driver */}
-            <div>
-              <label className="block text-sm font-medium text-zinc-500 mb-1">Driver</label>
-              <p className="text-sm font-medium text-zinc-900">
-                {order.driverName ? (
-                  <>
-                    {order.driverName}
-                    {order.requestDriver && <span className="ml-2 text-xs text-brand-teal">(Requested)</span>}
-                  </>
-                ) : order.requestDriver ? (
-                  <span className="text-zinc-400">Requested (not yet assigned)</span>
-                ) : (
-                  '—'
-                )}
-              </p>
-            </div>
+            </SectionCard>
           </div>
         </div>
 
-        {/* Footer Actions */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-100 bg-zinc-50/50 rounded-b-2xl">
+        {/* ── Sticky Footer ── */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-100 bg-white rounded-b-2xl shrink-0">
           <div className="flex items-center gap-2">
             {isEditing ? (
               <>
@@ -555,7 +689,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                   type="button"
                   onClick={() => setIsEditing(false)}
                   disabled={saving}
-                  className="rounded-lg ring-1 ring-brand-sage px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-white transition-colors disabled:opacity-40"
+                  className="rounded-lg ring-1 ring-brand-sage px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors disabled:opacity-40"
                 >
                   Cancel
                 </button>
@@ -563,7 +697,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                   type="button"
                   onClick={handleSave}
                   disabled={saving}
-                  className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+                  className="rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
                 >
                   {saving && <Loader2 className="size-4 animate-spin" />}
                   {saving ? 'Saving…' : 'Save Changes'}
@@ -575,9 +709,13 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                   type="button"
                   onClick={handleSubmitForRequest}
                   disabled={saving}
-                  className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+                  className="rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
                 >
-                  {saving && <Loader2 className="size-4 animate-spin" />}
+                  {saving ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Send className="size-4" />
+                  )}
                   {saving ? 'Submitting…' : 'For Request'}
                 </button>
               </>
@@ -611,8 +749,8 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
               </span>
             )}
           </div>
-          {order.status === 'APPROVED' && user?.userType === 'SUPERADMIN' && (
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            {order.status === 'APPROVED' && user?.userType === 'SUPERADMIN' && (
               <button
                 type="button"
                 onClick={handleResetToForApproval}
@@ -622,8 +760,26 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                 {saving && <Loader2 className="size-4 animate-spin" />}
                 {saving ? 'Resetting...' : 'Reset to For Approval'}
               </button>
-            </div>
-          )}
+            )}
+            {order.status === 'CANCELLED' && (
+              <button
+                type="button"
+                onClick={handleResetCancelledToPending}
+                disabled={saving}
+                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+              >
+                {saving && <Loader2 className="size-4 animate-spin" />}
+                {saving ? 'Resetting...' : 'Reset to Pending'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded-lg ring-1 ring-brand-sage px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

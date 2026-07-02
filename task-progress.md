@@ -1,22 +1,10 @@
-# Dual Synchronization System Implementation
+# Settings Module UI Redesign - Task Progress
 
-## Progress Checklist
-
-### Backend
-- [x] Analyze existing backend code (routes + service)
-- [x] Add `POST /api/gps-logs/fleet-trip-history/auto-sync` endpoint (auto sync today's data)
-- [x] Add `POST /api/gps-logs/fleet-trip-history/sync-date` endpoint (manual sync for specific date)
-- [x] Create `syncAllVehiclesToday()` service function in fleetTripHistorySyncService.ts
-- [x] Both endpoints use same filtering logic (shared via `syncAllVehiclesFleetTripHistory`)
-
-### Frontend API
-- [x] Add `autoSyncFleetTripHistory()` API function
-- [x] Add `syncFleetTripHistoryByDate()` API function
-
-### Frontend UI (GpsLogsPage.tsx)
-- [x] Add automatic sync on Trip History tab open
-- [x] Add 60-second auto-sync interval
-- [x] Replace existing sync button with manual sync UI (Date Picker + Sync Selected Date button)
-- [x] Add "Last synchronized" timestamp display
-- [x] Add "Synchronizing..." status indicator
-- [x] Clean up old sync handler to use new endpoints
+- [x] Analyze existing codebase and reference UI patterns
+- [ ] Create SettingsToolbar component (compact toolbar with tabs)
+- [ ] Create SettingsCard component (reusable card with icon, title, status badge)
+- [ ] Create SchedulerRunHistory component (redesigned compact table)
+- [ ] Create SchedulerRunOnceButton component (standalone run once button)
+- [ ] Rewrite ConnectionPage.tsx (modern card-based layout with responsive grid)
+- [ ] Rewrite SettingsPage.tsx (modern toolbar layout)
+- [ ] Verify TypeScript build passes with zero errors

@@ -1,78 +1,69 @@
 import { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle, CheckCircle2, Pencil, Save, X, SatelliteDish, MapPinOff, Search, RotateCcw } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useNotification } from '@/shared/context/NotificationContext';
+import {
+  tableContainerClass,
+  tableClass,
+  tableHeaderClass,
+  tableHeaderCellClass,
+  tableRowClass,
+  tableCellClass,
+} from '@/shared/styles/table-constants';
 import { fetchReconciliation } from '../api/reports-api';
 import type { ReconciliationRecord } from '../types';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Pencil,
-  Save,
-  X,
-  Filter,
-  Frown,
-  SatelliteDish,
-  MapPinOff,
-} from 'lucide-react';
 
-type StatusFilterValue = ReconciliationRecord['status'] | '';
-
-const STATUS_OPTIONS: { value: StatusFilterValue; label: string }[] = [
-  { value: '', label: 'All Statuses' },
-  { value: 'Matched', label: 'Matched' },
-  { value: 'Flagged', label: 'Flagged' },
-  { value: 'NO GPS RECORD', label: 'No GPS Record' },
-  { value: 'MISSING TO DISTANCE', label: 'Missing TO Distance' },
-];
+interface ReconciliationPageProps {
+  statusFilter: string;
+  onStatusFilterChange: (status: string) => void;
+}
 
 function MatchStatusBadge({ status }: { status: ReconciliationRecord['status'] }) {
   switch (status) {
     case 'Matched':
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-brand-sage/20 px-3 py-0.5 text-xs font-medium text-brand-sage">
-          <CheckCircle2 className="size-3.5" />
+        <span className="inline-flex items-center gap-1 rounded-full bg-brand-sage/20 px-2.5 py-0.5 text-xs font-medium text-brand-sage">
+          <CheckCircle2 className="size-3" />
           Matched
         </span>
       );
     case 'Flagged':
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-0.5 text-xs font-medium text-red-600">
-          <AlertTriangle className="size-3.5" />
+        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-600">
+          <AlertTriangle className="size-3" />
           Flagged
         </span>
       );
     case 'NO GPS RECORD':
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-0.5 text-xs font-medium text-amber-700">
-          <SatelliteDish className="size-3.5" />
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+          <SatelliteDish className="size-3" />
           No GPS Record
         </span>
       );
     case 'MISSING TO DISTANCE':
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-0.5 text-xs font-medium text-purple-700">
-          <MapPinOff className="size-3.5" />
+        <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-700">
+          <MapPinOff className="size-3" />
           Missing TO Dist.
         </span>
       );
   }
 }
 
-export function ReconciliationPage() {
+export function ReconciliationPage({ statusFilter }: ReconciliationPageProps) {
   const { toast } = useNotification();
   const [records, setRecords] = useState<ReconciliationRecord[]>([]);
   const [editId, setEditId] = useState<string | null>(null);
   const [editRemarks, setEditRemarks] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>('');
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchReconciliation({ status: statusFilter || undefined })
+    fetchReconciliation({ status: statusFilter as ReconciliationRecord['status'] || undefined })
       .then((data) => {
         if (!cancelled) setRecords(data);
       })
@@ -109,73 +100,50 @@ export function ReconciliationPage() {
     setEditRemarks('');
   };
 
+  const handleRefresh = () => {
+    setLoading(true);
+    setError(null);
+    fetchReconciliation({ status: statusFilter as ReconciliationRecord['status'] || undefined })
+      .then((data) => setRecords(data))
+      .catch((err: Error) => {
+        setError(err.message || 'Failed to load reconciliation data');
+        toast('Failed to load reconciliation data', 'error');
+      })
+      .finally(() => setLoading(false));
+  };
+
   return (
-    <div className="space-y-8">
-      {/* Instruction header */}
-      <div className="flex items-start gap-3 rounded-xl bg-brand-moss/30 p-4 shadow-brand">
-        <AlertTriangle className="mt-0.5 size-5 shrink-0 text-brand-teal" />
-        <p className="text-sm leading-relaxed text-zinc-700">
-          Reconciliation compares GPS actual mileage against Travel Order estimated distance. Variance {'>'} 20% is automatically flagged. Only APPROVED, ACTIVE, and COMPLETED travel orders are shown.
-        </p>
-      </div>
-
-      {/* Status filter */}
-      <div className="flex items-center gap-3">
-        <Filter className="size-4 text-zinc-500" />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as StatusFilterValue)}
-          className="rounded-lg border border-brand-sage/40 bg-white px-3 py-1.5 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
-        >
-          {STATUS_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Loading state */}
+    <div className="space-y-3">
+      {/* ── Loading state ── */}
       {loading && (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
-          <Loader2 className="mb-3 size-8 animate-spin text-brand-teal" />
-          <p className="text-base font-medium text-zinc-600">Loading reconciliation data…</p>
+        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 min-h-[240px] text-center shadow-brand border border-zinc-100">
+          <Loader2 className="mb-2 size-7 animate-spin text-brand-teal" />
+          <p className="text-sm font-medium text-zinc-500">Loading reconciliation data…</p>
         </div>
       )}
 
-      {/* Error state */}
+      {/* ── Error state ── */}
       {!loading && error && (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
-          <AlertTriangle className="mb-3 size-10 text-red-400" />
-          <p className="text-base font-medium text-red-600">Failed to load data</p>
-          <p className="mt-1 text-sm text-zinc-500">{error}</p>
+        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 min-h-[240px] text-center shadow-brand border border-zinc-100">
+          <AlertTriangle className="mb-2 size-8 text-red-400" />
+          <p className="text-sm font-medium text-red-600">Failed to load data</p>
+          <p className="mt-1 text-xs text-zinc-500">{error}</p>
           <button
-            onClick={() => {
-              setStatusFilter(''); // trigger re-fetch via effect
-              // Force re-fetch by toggling a dummy state
-              setLoading(true);
-              setError(null);
-              fetchReconciliation()
-                .then((data) => setRecords(data))
-                .catch((err: Error) => {
-                  setError(err.message || 'Failed to load reconciliation data');
-                  toast('Failed to load reconciliation data', 'error');
-                })
-                .finally(() => setLoading(false));
-            }}
-            className="mt-4 rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/90"
+            onClick={handleRefresh}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3.5 py-1.5 text-xs font-medium text-white hover:bg-brand-teal/90"
           >
+            <RotateCcw className="size-3.5" />
             Retry
           </button>
         </div>
       )}
 
-      {/* Empty state */}
+      {/* ── Empty state ── */}
       {!loading && !error && records.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 py-16 text-center shadow-brand">
-          <Frown className="mb-3 size-10 text-zinc-300" />
-          <p className="text-base font-medium text-zinc-600">No reconciliation records found</p>
-          <p className="mt-1 text-sm text-zinc-400">
+        <div className="flex flex-col items-center justify-center rounded-xl bg-white px-6 min-h-[240px] text-center shadow-brand border border-zinc-100">
+          <Search className="mb-2 size-6 text-zinc-300" />
+          <p className="text-sm font-medium text-zinc-600">No reconciliation records found</p>
+          <p className="mt-1 text-xs text-zinc-400 max-w-sm">
             {statusFilter
               ? `No travel orders with status "${statusFilter}" match the current criteria.`
               : 'There are no APPROVED, ACTIVE, or COMPLETED travel orders to reconcile.'}
@@ -183,90 +151,55 @@ export function ReconciliationPage() {
         </div>
       )}
 
-      {/* Desktop data table */}
+      {/* ── Desktop data table ── */}
       {!loading && !error && records.length > 0 && (
-        <div className="hidden overflow-hidden rounded-xl bg-white shadow-brand md:block">
+        <div className={tableContainerClass}>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className={tableClass}>
               <thead>
-                <tr className="bg-brand-cream text-left text-xs font-medium uppercase tracking-wider text-brand-teal">
-                  <th className="whitespace-nowrap px-4 py-4">TO No.</th>
-                  <th className="whitespace-nowrap px-4 py-4">GPS Record No.</th>
-                  <th className="whitespace-nowrap px-4 py-4">Vehicle Plate</th>
-                  <th className="whitespace-nowrap px-4 py-4">Trip Date</th>
-                  <th className="whitespace-nowrap px-4 py-4">Origin</th>
-                  <th className="whitespace-nowrap px-4 py-4">Destination</th>
-                  <th className="whitespace-nowrap px-4 py-4">Arrival Time</th>
-                  <th className="whitespace-nowrap px-4 py-4 text-right">TO Est. (km)</th>
-                  <th className="whitespace-nowrap px-4 py-4 text-right">GPS Actual (km)</th>
-                  <th className="whitespace-nowrap px-4 py-4 text-right">Variance (km)</th>
-                  <th className="whitespace-nowrap px-4 py-4 text-right">Variance %</th>
-                  <th className="whitespace-nowrap px-4 py-4">TO Status</th>
-                  <th className="whitespace-nowrap px-4 py-4">Match Status</th>
-                  <th className="whitespace-nowrap px-4 py-4">Explanation / Remarks</th>
-                  <th className="whitespace-nowrap px-4 py-4 text-center">Action</th>
+                <tr className={tableHeaderClass}>
+                  <th className={tableHeaderCellClass}>TO No.</th>
+                  <th className={tableHeaderCellClass}>GPS Record No.</th>
+                  <th className={tableHeaderCellClass}>Vehicle Plate</th>
+                  <th className={tableHeaderCellClass}>Trip Date</th>
+                  <th className={tableHeaderCellClass}>Origin</th>
+                  <th className={tableHeaderCellClass}>Destination</th>
+                  <th className={tableHeaderCellClass}>Arrival Time</th>
+                  <th className={cn(tableHeaderCellClass, 'text-right')}>TO Est. (km)</th>
+                  <th className={cn(tableHeaderCellClass, 'text-right')}>GPS Actual (km)</th>
+                  <th className={cn(tableHeaderCellClass, 'text-right')}>Variance (km)</th>
+                  <th className={cn(tableHeaderCellClass, 'text-right')}>Variance %</th>
+                  <th className={tableHeaderCellClass}>TO Status</th>
+                  <th className={tableHeaderCellClass}>Match Status</th>
+                  <th className={tableHeaderCellClass}>Explanation / Remarks</th>
+                  <th className={cn(tableHeaderCellClass, 'text-center')}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {records.map((rec, idx) => {
+                {records.map((rec, _idx) => {
                   const isEditing = editId === rec.id;
                   return (
-                    <tr
-                      key={rec.id}
-                      className={cn(
-                        'transition-colors',
-                        idx % 2 === 0 ? 'bg-white' : 'bg-brand-cream/50',
-                        'hover:bg-brand-moss/20'
-                      )}
-                    >
-                      <td className="whitespace-nowrap px-4 py-4 font-medium text-zinc-900">
-                        {rec.toNo}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-zinc-700">
-                        {rec.gpsRecordNo}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 font-medium text-zinc-900">
-                        {rec.vehiclePlate}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-zinc-500">
-                        {rec.tripDate}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-zinc-700">
-                        {rec.origin}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-zinc-700">
-                        {rec.destination}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-zinc-500">
-                        {rec.arrivalTime || '—'}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-zinc-900">
-                        {rec.toEstMileageKm.toFixed(1)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-zinc-900">
-                        {rec.gpsActualMileageKm.toFixed(1)}
-                      </td>
-                      <td
-                        className={cn(
-                          'whitespace-nowrap px-4 py-4 text-right font-mono font-medium',
-                          rec.status === 'Flagged' ? 'text-red-600' : 'text-zinc-900'
-                        )}
-                      >
+                    <tr key={rec.id} className={tableRowClass}>
+                      <td className={tableCellClass}>{rec.toNo}</td>
+                      <td className={tableCellClass}>{rec.gpsRecordNo}</td>
+                      <td className={tableCellClass}>{rec.vehiclePlate}</td>
+                      <td className={tableCellClass}>{rec.tripDate}</td>
+                      <td className={tableCellClass}>{rec.origin}</td>
+                      <td className={tableCellClass}>{rec.destination}</td>
+                      <td className={tableCellClass}>{rec.arrivalTime || '—'}</td>
+                      <td className={cn(tableCellClass, 'text-right font-mono')}>{rec.toEstMileageKm.toFixed(1)}</td>
+                      <td className={cn(tableCellClass, 'text-right font-mono')}>{rec.gpsActualMileageKm.toFixed(1)}</td>
+                      <td className={cn(tableCellClass, 'text-right font-mono font-medium')}>
                         {rec.status === 'NO GPS RECORD' || rec.status === 'MISSING TO DISTANCE'
                           ? '—'
                           : `${rec.varianceKm >= 0 ? '+' : ''}${rec.varianceKm.toFixed(1)}`}
                       </td>
-                      <td
-                        className={cn(
-                          'whitespace-nowrap px-4 py-4 text-right font-mono font-medium',
-                          rec.status === 'Flagged' ? 'text-red-600' : 'text-zinc-900'
-                        )}
-                      >
+                      <td className={cn(tableCellClass, 'text-right font-mono font-medium')}>
                         {rec.status === 'NO GPS RECORD' || rec.status === 'MISSING TO DISTANCE'
                           ? '—'
                           : `${rec.variancePct.toFixed(1)}%`}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-4">
+                      <td className={tableCellClass}>
                         <span className={cn(
                           'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
                           rec.toStatus === 'APPROVED' && 'bg-blue-100 text-blue-700',
@@ -277,17 +210,17 @@ export function ReconciliationPage() {
                           {rec.toStatus || 'Unknown'}
                         </span>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-4">
+                      <td className={tableCellClass}>
                         <MatchStatusBadge status={rec.status} />
                       </td>
-                      <td className="max-w-50 px-4 py-4">
+                      <td className={cn(tableCellClass, 'max-w-50')}>
                         {isEditing ? (
                           <div className="flex items-center gap-1">
                             <input
                               type="text"
                               value={editRemarks}
                               onChange={(e) => setEditRemarks(e.target.value)}
-                              className="w-full rounded-lg border border-brand-sage/40 bg-white px-2 py-1 text-xs text-zinc-700 placeholder-zinc-300 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+                              className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 placeholder-zinc-300 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
                               placeholder="Add remarks..."
                             />
                             <button
@@ -304,12 +237,12 @@ export function ReconciliationPage() {
                             </button>
                           </div>
                         ) : (
-                          <span className="text-zinc-400">
+                          <span className="text-zinc-400 text-xs">
                             {rec.explanationRemarks || '—'}
                           </span>
                         )}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-center">
+                      <td className={cn(tableCellClass, 'text-center')}>
                         <button
                           onClick={() => handleEdit(rec)}
                           className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-brand-teal transition-colors hover:bg-brand-moss/30"
@@ -327,17 +260,15 @@ export function ReconciliationPage() {
         </div>
       )}
 
-      {/* Mobile cards */}
+      {/* ── Mobile cards ── */}
       {!loading && !error && records.length > 0 && (
-        <div className="space-y-4 md:hidden">
+        <div className="space-y-3 md:hidden">
           {records.map((rec) => (
-            <div key={rec.id} className="rounded-xl bg-white p-5 shadow-brand">
+            <div key={rec.id} className="rounded-xl bg-white p-4 shadow-brand border border-zinc-100">
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-zinc-900">{rec.toNo}</p>
-                  <p className="text-xs text-zinc-400">
-                    {rec.vehiclePlate} &middot; {rec.tripDate}
-                  </p>
+                  <p className="text-xs text-zinc-400">{rec.vehiclePlate} - {rec.tripDate}</p>
                 </div>
                 <div className="flex gap-2">
                   <span className={cn(
@@ -359,7 +290,7 @@ export function ReconciliationPage() {
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">Route</p>
-                  <p className="truncate text-zinc-700">{rec.origin} &rarr; {rec.destination}</p>
+                    <p className="truncate text-zinc-700">{rec.origin} to {rec.destination}</p>
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">Arrival Time</p>
@@ -378,13 +309,15 @@ export function ReconciliationPage() {
                   {rec.status === 'NO GPS RECORD' || rec.status === 'MISSING TO DISTANCE' ? (
                     <p className="font-mono text-zinc-400">—</p>
                   ) : (
-                    <p className={cn('font-mono font-medium', rec.status === 'Flagged' ? 'text-red-600' : 'text-zinc-900')}>
-                      {rec.varianceKm >= 0 ? '+' : ''}
-                      {rec.varianceKm.toFixed(1)} km ({rec.variancePct.toFixed(1)}%)
+                    <p className={cn(
+                      'font-mono font-medium',
+                      rec.status === 'Flagged' ? 'text-red-600' : 'text-zinc-900'
+                    )}>
+                      {`${rec.varianceKm >= 0 ? '+' : ''}${rec.varianceKm.toFixed(1)} km (${rec.variancePct.toFixed(1)}%)`}
                     </p>
                   )}
                 </div>
-                <div>
+                <div className="col-span-2">
                   <p className="text-xs text-zinc-400">Remarks</p>
                   <p className="text-zinc-500">{rec.explanationRemarks || '—'}</p>
                 </div>

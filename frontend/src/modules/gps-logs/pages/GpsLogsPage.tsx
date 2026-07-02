@@ -2,23 +2,26 @@
 //
 // Parent container that manages tab switching between:
 // Logs, Trip History, Reports, Alerts, Telemetry.
+// Shared filter state is lifted here so switching tabs preserves filters.
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router';
-import { GpsLogsTabs, type TabKey } from '../components/GpsLogsTabs';
+import { type TabKey } from '../components/GpsLogsToolbar';
 import { LogsPage } from './LogsPage';
-import { ReportsPage } from './ReportsPage';
-import { AlertsPage } from './AlertsPage';
 import { TelemetryPage } from './TelemetryPage';
 
 export function GpsLogsPage() {
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabKey>('logs');
 
+  // ── Shared filter state (preserved across tab switches) ──
+  const [vehicleFilter, setVehicleFilter] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
+
   // Sync tab from URL search params
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab === 'logs' || tab === 'reports' || tab === 'alerts' || tab === 'telemetry') {
+    if (tab === 'logs' || tab === 'telemetry') {
       setActiveTab(tab);
     }
   }, [searchParams]);
@@ -28,13 +31,25 @@ export function GpsLogsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <GpsLogsTabs activeTab={activeTab} onTabChange={handleTabChange} />
-
-      {activeTab === 'logs' && <LogsPage />}
-      {activeTab === 'reports' && <ReportsPage />}
-      {activeTab === 'alerts' && <AlertsPage />}
-      {activeTab === 'telemetry' && <TelemetryPage />}
+    <div className="space-y-3">
+      {activeTab === 'logs' && (
+        <LogsPage
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          vehicleFilter={vehicleFilter}
+          onVehicleFilterChange={setVehicleFilter}
+          dateFilter={dateFilter}
+          onDateFilterChange={setDateFilter}
+        />
+      )}
+      {activeTab === 'telemetry' && (
+        <TelemetryPage
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          vehicleFilter={vehicleFilter}
+          onVehicleFilterChange={setVehicleFilter}
+        />
+      )}
     </div>
   );
 }

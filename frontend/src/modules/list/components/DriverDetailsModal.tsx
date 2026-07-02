@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Loader2, Phone, Mail, Calendar, Trash2, Edit3 } from 'lucide-react';
+import { X, Loader2, Phone, Mail, Calendar, Trash2, Edit3, User, FileText, Info } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { updateDriver, deleteDriver } from '../api/drivers-api';
 import type { Driver } from '@car-tracker/shared';
@@ -13,11 +13,7 @@ interface DriverDetailsModalProps {
 
 function formatExpiryDate(dateStr: string): string {
   const date = new Date(dateStr);
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function isExpired(dateStr: string): boolean {
@@ -26,21 +22,46 @@ function isExpired(dateStr: string): boolean {
 
 const STATUS_OPTIONS = ['active', 'inactive', 'on-leave', 'suspended'];
 
+function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 text-brand-teal shrink-0">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label}</p>
+        <p className="mt-0.5 text-sm font-medium text-zinc-900">{value || '—'}</p>
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-zinc-100 bg-white p-5 shadow-brand">
+      <div className="flex items-center gap-2 mb-4 pb-3 border-b border-zinc-100">
+        <span className="text-brand-teal">{icon}</span>
+        <h3 className="text-sm font-bold text-zinc-800">{title}</h3>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </div>
+  );
+}
+
+function inputClass() {
+  return 'w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal';
+}
+
 export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: DriverDetailsModalProps) {
   const { toast, confirm } = useNotification();
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
 
-  // Edit form state
   const [editFullName, setEditFullName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editLicenseNumber, setEditLicenseNumber] = useState('');
   const [editExpiryDate, setEditExpiryDate] = useState('');
-
-  // Status dropdown
   const [selectedStatus, setSelectedStatus] = useState('');
 
   if (!isOpen || !driver) return null;
@@ -122,7 +143,7 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
     setEditing(true);
   };
 
-  // ── Edit Mode ──────────────────────────────────────────────────
+  // ── Edit Mode ──
   if (editing) {
     return (
       <div
@@ -130,118 +151,61 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
         onClick={(e) => { if (e.target === e.currentTarget) cancelEditing(); }}
       >
         <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-5">
+          <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
             <div>
               <h2 className="text-lg font-bold text-zinc-900">Edit Driver</h2>
-              <p className="text-sm text-zinc-400">
-                Update the details for this driver.
-              </p>
+              <p className="text-sm text-zinc-400">Update the details for this driver.</p>
             </div>
-            <button
-              type="button"
-              onClick={cancelEditing}
-              className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
-            >
+            <button type="button" onClick={cancelEditing} className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors">
               <X className="size-5" />
             </button>
           </div>
-
-          {/* Form */}
-          <div className="px-6 py-5 space-y-5">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Full Name</label>
-                <input
-                  type="text"
-                  value={editFullName}
-                  onChange={(e) => setEditFullName(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
+          <div className="px-6 py-5 space-y-4">
+            <SectionCard title="Personal Information" icon={<User className="size-4" />}>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Full Name</label>
+                  <input type="text" value={editFullName} onChange={(e) => setEditFullName(e.target.value)} className={inputClass()} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Phone</label>
+                  <input type="text" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} className={inputClass()} />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Phone</label>
-                <input
-                  type="text"
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Email</label>
+                  <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className={inputClass()} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Address</label>
+                  <textarea value={editAddress} onChange={(e) => setEditAddress(e.target.value)} rows={2} className={inputClass() + ' resize-none'} />
+                </div>
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
+            </SectionCard>
+            <SectionCard title="License Information" icon={<FileText className="size-4" />}>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">License Number</label>
+                  <input type="text" value={editLicenseNumber} onChange={(e) => setEditLicenseNumber(e.target.value)} className={inputClass()} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Expiry Date</label>
+                  <input type="date" value={editExpiryDate} onChange={(e) => setEditExpiryDate(e.target.value)} className={inputClass()} />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">License Number</label>
-                <input
-                  type="text"
-                  value={editLicenseNumber}
-                  onChange={(e) => setEditLicenseNumber(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Expiry Date</label>
-                <input
-                  type="date"
-                  value={editExpiryDate}
-                  onChange={(e) => setEditExpiryDate(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Status</label>
-                <select
-                  value={selectedStatus}
-                  onChange={(e) => setSelectedStatus(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                >
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">Status</label>
+                <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} className={inputClass()}>
                   {STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
-                    </option>
+                    <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
                   ))}
                 </select>
               </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">Address</label>
-              <textarea
-                value={editAddress}
-                onChange={(e) => setEditAddress(e.target.value)}
-                rows={2}
-                className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow resize-none"
-                placeholder="Optional address..."
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-5">
-              <button
-                type="button"
-                onClick={cancelEditing}
-                className="rounded-lg ring-1 ring-brand-sage px-5 py-2.5 text-sm font-medium text-zinc-600 hover:bg-brand-cream transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveEdit}
-                disabled={saving}
-                className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors"
-              >
+            </SectionCard>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button type="button" onClick={cancelEditing} className="rounded-lg ring-1 ring-brand-sage px-5 py-2.5 text-sm font-medium text-zinc-600 hover:bg-brand-cream transition-colors">Cancel</button>
+              <button type="button" onClick={handleSaveEdit} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors">
                 {saving ? <Loader2 className="size-4 animate-spin" /> : null}
                 Save Changes
               </button>
@@ -252,37 +216,41 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
     );
   }
 
-  // ── Details View ───────────────────────────────────────────────
+  // ── Details View ──
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="relative w-full max-w-lg animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+      <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
         {/* Header */}
-        <div className="flex items-center justify-between rounded-t-2xl bg-brand-cream px-6 py-5">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-full bg-brand-moss/50 text-lg font-bold text-brand-teal shrink-0">
-              {driver.fullName.charAt(0)}
+        <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
+          <div className="flex flex-col gap-1">
+            <div className="inline-flex items-center gap-3 flex-wrap">
+              <div className="flex size-8 items-center justify-center rounded-full bg-brand-moss/50 text-sm font-bold text-brand-teal">
+                {driver.fullName.charAt(0)}
+              </div>
+              <span className="text-lg font-bold text-zinc-900">{driver.fullName}</span>
             </div>
-            <div>
-              <p className="text-lg font-bold text-zinc-900">{driver.fullName}</p>
-              <p className="text-xs text-zinc-400">{driver.licenseNumber}</p>
-            </div>
+            <p className="text-sm text-zinc-400">{driver.licenseNumber} &bull; {driver.email}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-2 text-zinc-400 hover:bg-white/60 hover:text-zinc-700 transition-colors"
-          >
-            <X className="size-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button type="button" onClick={handleStartEditing} className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-brand-teal transition-colors" title="Edit">
+              <Edit3 className="size-4" />
+            </button>
+            <button type="button" onClick={handleDelete} disabled={deleting} className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-red-500 transition-colors disabled:opacity-40" title="Delete">
+              {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            </button>
+            <button type="button" onClick={onClose} className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors">
+              <X className="size-5" />
+            </button>
+          </div>
         </div>
 
-        {/* Body - Driver Details */}
-        <div className="px-6 py-5 space-y-5">
+        {/* Body */}
+        <div className="px-6 py-5 space-y-4">
           {/* Status */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-4 py-3">
             <span className="text-sm font-medium text-zinc-700">Status</span>
             <select
               value={driver.status ?? 'active'}
@@ -307,97 +275,59 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
             </select>
           </div>
 
-          <div className="h-px bg-zinc-100" />
+          <SectionCard title="Personal Information" icon={<User className="size-4" />}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <DetailRow icon={<Phone className="size-4" />} label="Phone" value={driver.phone} />
+              <DetailRow icon={<Mail className="size-4" />} label="Email" value={driver.email} />
+              {driver.address && <DetailRow icon={<Info className="size-4" />} label="Address" value={driver.address} />}
+            </div>
+          </SectionCard>
 
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="block text-xs font-medium uppercase tracking-wider text-zinc-400">Phone</span>
-              <span className="mt-1 block font-medium text-zinc-900">
-                <Phone className="size-3.5 inline mr-1 text-zinc-400" />
-                {driver.phone}
-              </span>
+          <SectionCard title="License Information" icon={<FileText className="size-4" />}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <DetailRow
+                icon={<FileText className="size-4" />}
+                label="License #"
+                value={<span className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">{driver.licenseNumber}</span>}
+              />
+              <DetailRow
+                icon={<Calendar className="size-4" />}
+                label="Expiry"
+                value={
+                  <span className={expired ? 'text-red-600 font-medium' : ''}>
+                    {formatExpiryDate(driver.expiryDate)}
+                    {expired && <span className="ml-1.5 rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-600">Expired</span>}
+                  </span>
+                }
+              />
             </div>
-            <div>
-              <span className="block text-xs font-medium uppercase tracking-wider text-zinc-400">Email</span>
-              <span className="mt-1 block font-medium text-zinc-900">
-                <Mail className="size-3.5 inline mr-1 text-zinc-400" />
-                {driver.email}
-              </span>
-            </div>
-            <div>
-              <span className="block text-xs font-medium uppercase tracking-wider text-zinc-400">License #</span>
-              <span className="mt-1 inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">
-                {driver.licenseNumber}
-              </span>
-            </div>
-            <div>
-              <span className="block text-xs font-medium uppercase tracking-wider text-zinc-400">Expiry</span>
-              <span className="mt-1 block font-medium text-zinc-900">
-                <Calendar className="size-3.5 inline mr-1 text-zinc-400" />
-                <span className={expired ? 'text-red-600 font-medium' : ''}>
-                  {formatExpiryDate(driver.expiryDate)}
-                  {expired && (
-                    <span className="ml-1.5 rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-600">
-                      Expired
-                    </span>
-                  )}
-                </span>
-              </span>
-            </div>
-            {driver.address && (
-              <div className="col-span-2">
-                <span className="block text-xs font-medium uppercase tracking-wider text-zinc-400">Address</span>
-                <span className="mt-1 block font-medium text-zinc-900">{driver.address}</span>
-              </div>
-            )}
-          </div>
+          </SectionCard>
 
-          <div className="h-px bg-zinc-100" />
-
-          {/* Timestamps */}
-          <div className="grid grid-cols-2 gap-4 text-xs text-zinc-400">
-            <div>
-              <span className="block">Created</span>
-              <span className="font-medium text-zinc-500">
-                {new Date(driver.createdAt).toLocaleDateString('en-US', {
-                  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                })}
-              </span>
+          <SectionCard title="Audit Information" icon={<Calendar className="size-4" />}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <DetailRow
+                icon={<Calendar className="size-4" />}
+                label="Created"
+                value={new Date(driver.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              />
+              <DetailRow
+                icon={<Calendar className="size-4" />}
+                label="Last Updated"
+                value={new Date(driver.updatedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              />
             </div>
-            <div>
-              <span className="block">Last Updated</span>
-              <span className="font-medium text-zinc-500">
-                {new Date(driver.updatedAt).toLocaleDateString('en-US', {
-                  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                })}
-              </span>
-            </div>
-          </div>
+          </SectionCard>
         </div>
 
-        {/* Footer - Actions */}
-        <div className="flex items-center justify-between border-t border-zinc-100 px-6 py-4">
-          <div className="flex items-center gap-2">
-            {/* Delete Button */}
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"
-            >
-              {deleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-              Delete
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Edit Button */}
-            <button
-              onClick={handleStartEditing}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-4 py-2 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-            >
-              <Edit3 className="size-3.5" />
-              Edit
-            </button>
-          </div>
+        {/* Footer */}
+        <div className="flex items-center justify-end px-6 py-4 border-t border-zinc-100">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg ring-1 ring-brand-sage px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>

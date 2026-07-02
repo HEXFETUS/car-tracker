@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import { X, Car, Fuel } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
 interface AddVehicleModalProps {
@@ -23,6 +23,25 @@ interface FormErrors {
   year?: string;
 }
 
+function FormSection({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-zinc-100 bg-white p-5 shadow-brand">
+      <div className="flex items-center gap-2 mb-4 pb-3 border-b border-zinc-100">
+        <span className="text-brand-teal">{icon}</span>
+        <h3 className="text-sm font-bold text-zinc-800">{title}</h3>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function inputClass(error?: string) {
+  return cn(
+    'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
+    error ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal',
+  );
+}
+
 export function AddVehicleModal({ isOpen, onClose, onSubmit }: AddVehicleModalProps) {
   const [plateNumber, setPlateNumber] = useState('');
   const [make, setMake] = useState('');
@@ -35,7 +54,6 @@ export function AddVehicleModal({ isOpen, onClose, onSubmit }: AddVehicleModalPr
 
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Reset form on open
   useEffect(() => {
     if (isOpen) {
       setPlateNumber('');
@@ -49,7 +67,6 @@ export function AddVehicleModal({ isOpen, onClose, onSubmit }: AddVehicleModalPr
     }
   }, [isOpen]);
 
-  // Close on Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -58,7 +75,6 @@ export function AddVehicleModal({ isOpen, onClose, onSubmit }: AddVehicleModalPr
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Close on backdrop click
   function handleBackdropClick(e: React.MouseEvent) {
     if (e.target === modalRef.current) onClose();
   }
@@ -106,12 +122,10 @@ export function AddVehicleModal({ isOpen, onClose, onSubmit }: AddVehicleModalPr
     >
       <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
           <div>
             <h2 className="text-lg font-bold text-zinc-900">Add New Vehicle</h2>
-            <p className="text-sm text-zinc-400">
-              Fill in the details to register a new vehicle.
-            </p>
+            <p className="text-sm text-zinc-400">Fill in the details to register a new vehicle.</p>
           </div>
           <button
             type="button"
@@ -123,143 +137,129 @@ export function AddVehicleModal({ isOpen, onClose, onSubmit }: AddVehicleModalPr
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
-          {/* Row: Plate Number + Year */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Plate Number <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={plateNumber}
-                onChange={(e) => setPlateNumber(e.target.value)}
-                placeholder="e.g. ABC 1234"
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.plateNumber ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+          <FormSection title="Basic Information" icon={<Car className="size-4" />}>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Plate Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={plateNumber}
+                  onChange={(e) => setPlateNumber(e.target.value)}
+                  placeholder="e.g. ABC 1234"
+                  className={inputClass(errors.plateNumber)}
+                />
+                {errors.plateNumber && (
+                  <p className="mt-1 text-xs text-red-500">{errors.plateNumber}</p>
                 )}
-              />
-              {errors.plateNumber && (
-                <p className="mt-1 text-xs text-red-500">{errors.plateNumber}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Year <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                value={year}
-                onChange={(e) => setYear(e.target.value)}
-                placeholder="e.g. 2025"
-                min={1900}
-                max={new Date().getFullYear() + 2}
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.year ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Year <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  value={year}
+                  onChange={(e) => setYear(e.target.value)}
+                  placeholder="e.g. 2025"
+                  min={1900}
+                  max={new Date().getFullYear() + 2}
+                  className={inputClass(errors.year)}
+                />
+                {errors.year && (
+                  <p className="mt-1 text-xs text-red-500">{errors.year}</p>
                 )}
-              />
-              {errors.year && (
-                <p className="mt-1 text-xs text-red-500">{errors.year}</p>
-              )}
+              </div>
             </div>
-          </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Make <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={make}
+                  onChange={(e) => setMake(e.target.value)}
+                  placeholder="e.g. Toyota"
+                  className={inputClass(errors.make)}
+                />
+                {errors.make && (
+                  <p className="mt-1 text-xs text-red-500">{errors.make}</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Model <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="e.g. Camry"
+                  className={inputClass(errors.model)}
+                />
+                {errors.model && (
+                  <p className="mt-1 text-xs text-red-500">{errors.model}</p>
+                )}
+              </div>
+            </div>
+          </FormSection>
 
-          {/* Row: Make + Model */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Make <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={make}
-                onChange={(e) => setMake(e.target.value)}
-                placeholder="e.g. Toyota"
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.make ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                )}
-              />
-              {errors.make && (
-                <p className="mt-1 text-xs text-red-500">{errors.make}</p>
-              )}
+          <FormSection title="Classification" icon={<Fuel className="size-4" />}>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Color <span className="text-zinc-400">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  placeholder="e.g. Silver"
+                  className={inputClass()}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                  Vehicle Type <span className="text-zinc-400">(optional)</span>
+                </label>
+                <select
+                  value={vehicleType}
+                  onChange={(e) => setVehicleType(e.target.value)}
+                  className={inputClass()}
+                >
+                  <option value="">Select type...</option>
+                  <option value="Sedan">Sedan</option>
+                  <option value="SUV">SUV</option>
+                  <option value="Truck">Truck</option>
+                  <option value="Van">Van</option>
+                  <option value="Motorcycle">Motorcycle</option>
+                  <option value="Bus">Bus</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Model <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. Camry"
-                className={cn(
-                  'w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow',
-                  errors.model ? 'border-red-300 bg-red-50' : 'border-0 ring-1 ring-brand-sage hover:ring-brand-teal'
-                )}
-              />
-              {errors.model && (
-                <p className="mt-1 text-xs text-red-500">{errors.model}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Row: Color + Vehicle Type */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Color <span className="text-zinc-400">(optional)</span>
-              </label>
-              <input
-                type="text"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-                placeholder="e.g. Silver"
-                className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">
-                Vehicle Type <span className="text-zinc-400">(optional)</span>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                Fuel Type <span className="text-zinc-400">(optional)</span>
               </label>
               <select
-                value={vehicleType}
-                onChange={(e) => setVehicleType(e.target.value)}
-                className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                value={fuelType}
+                onChange={(e) => setFuelType(e.target.value)}
+                className={inputClass()}
               >
-                <option value="">Select type...</option>
-                <option value="Sedan">Sedan</option>
-                <option value="SUV">SUV</option>
-                <option value="Truck">Truck</option>
-                <option value="Van">Van</option>
-                <option value="Motorcycle">Motorcycle</option>
-                <option value="Bus">Bus</option>
+                <option value="">Select fuel type...</option>
+                <option value="gasoline">Gasoline</option>
+                <option value="diesel">Diesel</option>
+                <option value="electric">Electric</option>
+                <option value="hybrid">Hybrid</option>
               </select>
             </div>
-          </div>
-
-          {/* Fuel Type */}
-          <div>
-            <label className="block text-sm font-medium text-zinc-700 mb-1">
-              Fuel Type <span className="text-zinc-400">(optional)</span>
-            </label>
-            <select
-              value={fuelType}
-              onChange={(e) => setFuelType(e.target.value)}
-              className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-            >
-              <option value="">Select fuel type...</option>
-              <option value="gasoline">Gasoline</option>
-              <option value="diesel">Diesel</option>
-              <option value="electric">Electric</option>
-              <option value="hybrid">Hybrid</option>
-            </select>
-          </div>
+          </FormSection>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-5">
+          <div className="flex items-center justify-end gap-3 pt-2">
             <button
               type="button"
               onClick={onClose}

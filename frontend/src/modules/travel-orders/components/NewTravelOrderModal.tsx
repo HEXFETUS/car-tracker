@@ -40,9 +40,9 @@ export function NewTravelOrderModal({
         if (e.target === modalRef.current) e.stopPropagation();
       }}
     >
-      <div className="relative w-full max-w-2xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl">
+      <div className="relative w-full max-w-4xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100 shrink-0">
           <div>
             <h2 className="text-lg font-bold text-zinc-900">New Travel Order</h2>
             <p className="text-sm text-zinc-400">
@@ -59,7 +59,7 @@ export function NewTravelOrderModal({
         </div>
 
         {/* Form */}
-        <div className="px-6 py-5">
+        <div className="flex-1 px-6 py-5 overflow-y-auto">
           <TravelOrderForm
             onSubmit={onSubmit}
             onCancel={onClose}

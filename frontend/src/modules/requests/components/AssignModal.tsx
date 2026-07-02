@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Loader2, Check } from 'lucide-react';
+import { X, Loader2, Check, MapPin, Calendar, Clock, Truck, UserCircle, FileText, ClipboardCheck } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import {
   fetchVehicles,
@@ -15,6 +15,32 @@ interface AssignModalProps {
   onClose: () => void;
   order: PendingTravelOrder | null;
   onSuccess: () => void;
+}
+
+function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 text-brand-teal shrink-0">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label}</p>
+        <p className="mt-0.5 text-sm font-medium text-zinc-900">{value || '—'}</p>
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-zinc-100 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 mb-4 pb-3 border-b border-zinc-100">
+        <span className="text-brand-teal">{icon}</span>
+        <h3 className="text-sm font-bold text-zinc-800">{title}</h3>
+      </div>
+      <div className="space-y-4">
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalProps) {
@@ -110,17 +136,17 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
   if (!isOpen || !order) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm transition-opacity">
-      <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
+      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
+    >
+      <div className="relative w-full max-w-2xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
-          <div>
-            <h2 className="text-lg font-bold text-zinc-900">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100 shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center rounded-full bg-brand-teal/10 px-3 py-1 text-sm font-bold text-brand-teal">
               {order.toNumber}
-            </h2>
-            <p className="text-sm text-zinc-400">
-              Assign Vehicle & Driver
-            </p>
+            </span>
           </div>
           <button
             type="button"
@@ -131,102 +157,112 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
           </button>
         </div>
 
-        {/* Body — Order Details (read-only) */}
-        <div className="px-6 py-5 space-y-4 border-b border-zinc-100">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <DetailRow label="Traveler" value={order.travelerName || '—'} />
-            <DetailRow label="Department" value={order.department || '—'} />
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <DetailRow label="Route" value={`${order.originLocation || '—'} → ${order.destinationLocation}`} />
-            <DetailRow label="Purpose" value={order.purpose || '—'} />
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <DetailRow label="Departure" value={formatDateTime(order.scheduledDepartureAt)} />
-            <DetailRow label="Return" value={formatDateTime(order.scheduledArrivalAt)} />
-          </div>
-        </div>
+        {/* Scrollable Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="space-y-4">
+            {/* Request Information */}
+            <SectionCard title="Request Information" icon={<ClipboardCheck className="size-4" />}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <DetailRow icon={<UserCircle className="size-4" />} label="Traveler" value={order.travelerName || '—'} />
+                <DetailRow icon={<FileText className="size-4" />} label="Department" value={order.department || '—'} />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <DetailRow icon={<MapPin className="size-4" />} label="Origin" value={order.originLocation || '—'} />
+                <DetailRow icon={<MapPin className="size-4" />} label="Destination" value={order.destinationLocation || '—'} />
+              </div>
+              <DetailRow icon={<FileText className="size-4" />} label="Purpose" value={order.purpose || '—'} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <DetailRow
+                  icon={<Calendar className="size-4" />}
+                  label="Departure"
+                  value={formatDateTime(order.scheduledDepartureAt)}
+                />
+                <DetailRow
+                  icon={<Clock className="size-4" />}
+                  label="Return"
+                  value={formatDateTime(order.scheduledArrivalAt)}
+                />
+              </div>
+            </SectionCard>
 
-        {/* Body — Assignment Form */}
-        <div className="px-6 py-5 space-y-5">
-          <h3 className="text-sm font-semibold text-zinc-700 uppercase tracking-wide">
-            Resource Assignment
-          </h3>
-
-          {loadingOptions ? (
-            <div className="flex items-center justify-center py-6">
-              <Loader2 className="size-6 text-brand-teal animate-spin" />
-              <span className="ml-2 text-sm text-zinc-500">Loading options…</span>
-            </div>
-          ) : (
-            <>
+            {/* Resource Assignment */}
+            <SectionCard title="Resource Assignment" icon={<Truck className="size-4" />}>
               {/* Current Assignment Display */}
               {(order.plateNumber || order.driverName) && (
-                <div className="rounded-lg bg-brand-cream border border-brand-sage/30 p-3">
+                <div className="rounded-lg bg-brand-cream border border-brand-sage/30 p-3 mb-4">
                   <p className="text-xs font-medium text-brand-teal mb-1">Current Assignment</p>
-                  <p className="text-sm text-zinc-700">
-                    {order.plateNumber && <>Vehicle: <strong>{order.plateNumber}</strong></>}
-                    {order.plateNumber && order.driverName && <> &middot; </>}
-                    {order.driverName && <>Driver: <strong>{order.driverName}</strong></>}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-700">
+                    {order.plateNumber && <span>Vehicle: <strong>{order.plateNumber}</strong></span>}
+                    {order.plateNumber && order.driverName && <span className="text-zinc-300">|</span>}
+                    {order.driverName && <span>Driver: <strong>{order.driverName}</strong></span>}
+                  </div>
                 </div>
               )}
 
-              {/* Vehicle Selection */}
-              <div>
-                <label className="block text-sm font-medium text-zinc-500 mb-1.5">
-                  Vehicle (Plate Number)
-                </label>
-                <select
-                  value={selectedVehicleId}
-                  onChange={(e) => setSelectedVehicleId(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                >
-                  <option value="">— Select a vehicle —</option>
-                  {vehicles
-                    .filter((v) => !v.underRepair)
-                    .map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.plateNumber} — {v.make} {v.model} ({v.year})
-                      </option>
-                    ))}
-                </select>
-                <p className="mt-1 text-xs text-zinc-400">
-                  Valid tracking plates: KAR6444, KAR6412, KAR6558
-                </p>
-              </div>
+              {loadingOptions ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="size-5 text-brand-teal animate-spin" />
+                  <span className="ml-2 text-sm text-zinc-500">Loading options…</span>
+                </div>
+              ) : (
+                <>
+                  {/* Vehicle Selection */}
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-500 mb-1.5">
+                      Vehicle (Plate Number)
+                    </label>
+                    <select
+                      value={selectedVehicleId}
+                      onChange={(e) => setSelectedVehicleId(e.target.value)}
+                      className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                    >
+                      <option value="">— Select a vehicle —</option>
+                      {vehicles
+                        .filter((v) => !v.underRepair)
+                        .map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.plateNumber} — {v.make} {v.model} ({v.year})
+                          </option>
+                        ))}
+                    </select>
+                    <p className="mt-1 text-xs text-zinc-400">
+                      Valid tracking plates: KAR6444, KAR6412, KAR6558
+                    </p>
+                  </div>
 
-              {/* Driver Selection */}
-              <div>
-                <label className="block text-sm font-medium text-zinc-500 mb-1.5">
-                  Driver
-                </label>
-                <select
-                  value={selectedDriverId}
-                  onChange={(e) => setSelectedDriverId(e.target.value)}
-                  className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                >
-                  <option value="">— Select a driver —</option>
-                  {drivers
-                    .filter((d) => d.status === 'active')
-                    .map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.fullName}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            </>
-          )}
+                  {/* Driver Selection */}
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-500 mb-1.5">
+                      Driver
+                    </label>
+                    <select
+                      value={selectedDriverId}
+                      onChange={(e) => setSelectedDriverId(e.target.value)}
+                      className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
+                    >
+                      <option value="">— Select a driver —</option>
+                      {drivers
+                        .filter((d) => d.status === 'active')
+                        .map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.fullName}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </>
+              )}
+            </SectionCard>
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-zinc-100 bg-zinc-50/50 rounded-b-2xl">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-zinc-100 bg-white rounded-b-2xl shrink-0">
           <button
             type="button"
             onClick={handleClose}
             disabled={saving}
-            className="rounded-lg ring-1 ring-brand-sage px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-white transition-colors disabled:opacity-40"
+            className="rounded-lg ring-1 ring-brand-sage px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors disabled:opacity-40"
           >
             Cancel
           </button>
@@ -245,17 +281,6 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-zinc-400">{label}</span>
-      <span className="font-medium text-zinc-900 truncate ml-2 max-w-[60%]" title={value}>
-        {value || '—'}
-      </span>
     </div>
   );
 }

@@ -14,7 +14,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "baseUrl": ".",
-    "types": ["node", "express"]
+    "types": ["node", "express"],
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*"],
   "references": []
