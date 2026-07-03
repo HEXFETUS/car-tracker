@@ -187,12 +187,12 @@ async function persistEmittedAlerts(alerts) {
     let activeTripId = last.rows[0]?.active_trip_id ?? null;
 
     // Event-specific active_trip_id logic (mirrors scheduler.ts)
-    if (eventType === 'IGNITION ON ALERT') {
+    if (eventType === 'IGNITION_ON') {
       activeTripId = crypto.randomUUID();
-    } else if (eventType === 'IGNITION OFF ALERT') {
+    } else if (eventType === 'IGNITION_OFF') {
       // Check for active idling in this batch
       const hasActiveIdling = alerts.some(
-        (a) => a.vehicleId === vehicleId && a.eventType === 'IDLING ALERT',
+        (a) => a.vehicleId === vehicleId && a.eventType === 'IDLING_TOO_LONG',
       );
       if (hasActiveIdling) {
         skipped += 1;
@@ -202,7 +202,7 @@ async function persistEmittedAlerts(alerts) {
         skipped += 1;
         continue;
       }
-    } else if (eventType === 'IDLING ALERT') {
+    } else if (eventType === 'IDLING_TOO_LONG') {
       if (!activeTripId) {
         skipped += 1;
         continue;
@@ -235,7 +235,7 @@ async function persistEmittedAlerts(alerts) {
     }
 
     // Dedup for boundary events
-    if (eventType === 'IGNITION ON ALERT' || eventType === 'IGNITION OFF ALERT') {
+    if (eventType === 'IGNITION_ON' || eventType === 'IGNITION_OFF') {
       const existsResult = await pool.query(
         `SELECT 1 FROM gps_telemetry
          WHERE vehicle_id = $1 AND active_trip_id = $2 AND event_type = $3
@@ -298,14 +298,14 @@ async function runTests() {
       // Step 1: IGNITION ON
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '40 minutes', $3)`,
+         VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '40 minutes', $3)`,
         [testVehicleId, testPlate, tripId],
       );
 
       // Step 2: IDLING 10min
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '30 minutes', $3)`,
+         VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '30 minutes', $3)`,
         [testVehicleId, testPlate, tripId],
       );
       await pool.query(
@@ -317,7 +317,7 @@ async function runTests() {
       // Step 3: IDLING 15min
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '25 minutes', $3)`,
+         VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '25 minutes', $3)`,
         [testVehicleId, testPlate, tripId],
       );
       await pool.query(
@@ -329,7 +329,7 @@ async function runTests() {
       // Step 4: IDLING 30min
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
+         VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
         [testVehicleId, testPlate, tripId],
       );
       await pool.query(
@@ -341,14 +341,14 @@ async function runTests() {
       // Step 5: MOVING
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'MOVING ALERT', 45, true, NOW() - INTERVAL '5 minutes', $3)`,
+         VALUES ($1, $2, 'MOTION_STARTED', 45, true, NOW() - INTERVAL '5 minutes', $3)`,
         [testVehicleId, testPlate, tripId],
       );
 
       // Step 6: IGNITION OFF
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IGNITION OFF ALERT', 0, false, NOW(), $3)`,
+         VALUES ($1, $2, 'IGNITION_OFF', 0, false, NOW(), $3)`,
         [testVehicleId, testPlate, tripId],
       );
 
@@ -357,20 +357,20 @@ async function runTests() {
       const eventTypes = rows.map((r) => r.event_type);
 
       assertEqual(eventTypes.length, 6, 'Should have 6 telemetry records');
-      assertEqual(eventTypes[0], 'IGNITION ON ALERT', 'Event 1');
-      assertEqual(eventTypes[1], 'IDLING ALERT', 'Event 2');
-      assertEqual(eventTypes[2], 'IDLING ALERT', 'Event 3');
-      assertEqual(eventTypes[3], 'IDLING ALERT', 'Event 4');
-      assertEqual(eventTypes[4], 'MOVING ALERT', 'Event 5');
-      assertEqual(eventTypes[5], 'IGNITION OFF ALERT', 'Event 6');
+      assertEqual(eventTypes[0], 'IGNITION_ON', 'Event 1');
+      assertEqual(eventTypes[1], 'IDLING_TOO_LONG', 'Event 2');
+      assertEqual(eventTypes[2], 'IDLING_TOO_LONG', 'Event 3');
+      assertEqual(eventTypes[3], 'IDLING_TOO_LONG', 'Event 4');
+      assertEqual(eventTypes[4], 'MOTION_STARTED', 'Event 5');
+      assertEqual(eventTypes[5], 'IGNITION_OFF', 'Event 6');
 
       // All should have same active_trip_id
       const tripIds = rows.map((r) => r.active_trip_id);
       assert(tripIds.every((id) => id === tripId), 'All records should share the same active_trip_id');
 
       // No IGNITION OFF ALERT should appear before MOVING
-      const offIndex = eventTypes.indexOf('IGNITION OFF ALERT');
-      const movingIndex = eventTypes.indexOf('MOVING ALERT');
+      const offIndex = eventTypes.indexOf('IGNITION_OFF');
+      const movingIndex = eventTypes.indexOf('MOTION_STARTED');
       assert(offIndex > movingIndex, 'IGNITION OFF should come after MOVING');
     }))();
 
@@ -392,7 +392,7 @@ async function runTests() {
       // IGNITION ON
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '40 minutes', $3)`,
+         VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '40 minutes', $3)`,
         [vehicleId2, plate2, tripId2],
       );
 
@@ -403,7 +403,7 @@ async function runTests() {
           {
             vehicleId: vehicleId2,
             plate: plate2,
-            eventType: 'IDLING ALERT',
+            eventType: 'IDLING_TOO_LONG',
             speed: 0,
             ignition: true,
             idleAlertCount: [10, 15, 30].filter((t) => minute >= t).length,
@@ -420,7 +420,7 @@ async function runTests() {
       }
 
       const rows = await getTelemetryForVehicle(vehicleId2);
-      const idlingRows = rows.filter((r) => r.event_type === 'IDLING ALERT');
+      const idlingRows = rows.filter((r) => r.event_type === 'IDLING_TOO_LONG');
 
       assertEqual(idlingRows.length, 3, 'Should have exactly 3 IDLING ALERT records');
 
@@ -453,12 +453,12 @@ async function runTests() {
       // Pre-existing: IGNITION ON + 10-min IDLING ALERT (from before restart)
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '20 minutes', $3)`,
+         VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '20 minutes', $3)`,
         [vehicleId3, plate3, tripId3],
       );
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
+         VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
         [vehicleId3, plate3, tripId3],
       );
       await pool.query(
@@ -472,7 +472,7 @@ async function runTests() {
         {
           vehicleId: vehicleId3,
           plate: plate3,
-          eventType: 'IDLING ALERT',
+          eventType: 'IDLING_TOO_LONG',
           speed: 0,
           ignition: true,
           idleAlertCount: 2,
@@ -484,7 +484,7 @@ async function runTests() {
       await persistEmittedAlerts(alerts);
 
       const rows = await getTelemetryForVehicle(vehicleId3);
-      const idlingRows = rows.filter((r) => r.event_type === 'IDLING ALERT');
+      const idlingRows = rows.filter((r) => r.event_type === 'IDLING_TOO_LONG');
 
       assertEqual(idlingRows.length, 2, 'Should have exactly 2 IDLING ALERT records (10min + 15min)');
 
@@ -517,7 +517,7 @@ async function runTests() {
       // IGNITION ON
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '15 minutes', $3)`,
+         VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '15 minutes', $3)`,
         [vehicleId4, plate4, tripId4],
       );
 
@@ -529,7 +529,7 @@ async function runTests() {
         {
           vehicleId: vehicleId4,
           plate: plate4,
-          eventType: 'IDLING ALERT',
+          eventType: 'IDLING_TOO_LONG',
           speed: 0,
           ignition: false, // GPS reports false
           idleAlertCount: 1,
@@ -545,8 +545,8 @@ async function runTests() {
       const rows = await getTelemetryForVehicle(vehicleId4);
       const eventTypes = rows.map((r) => r.event_type);
 
-      assert(eventTypes.includes('IDLING ALERT'), 'Should have IDLING ALERT');
-      assert(!eventTypes.includes('IGNITION OFF ALERT'), 'Should NOT have IGNITION OFF ALERT');
+      assert(eventTypes.includes('IDLING_TOO_LONG'), 'Should have IDLING ALERT');
+      assert(!eventTypes.includes('IGNITION_OFF'), 'Should NOT have IGNITION OFF ALERT');
 
       // Cleanup
       await pool.query('DELETE FROM gps_telemetry WHERE vehicle_id = $1', [vehicleId4]);
@@ -572,7 +572,7 @@ async function runTests() {
       // IGNITION ON
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
+         VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
         [vehicleId5, plate5, tripId5],
       );
 
@@ -629,12 +629,12 @@ async function runTests() {
       // IGNITION ON + MOVING
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '30 minutes', $3)`,
+         VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '30 minutes', $3)`,
         [vehicleId6, plate6, tripId6],
       );
       await pool.query(
         `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-         VALUES ($1, $2, 'MOVING ALERT', 40, true, NOW() - INTERVAL '20 minutes', $3)`,
+         VALUES ($1, $2, 'MOTION_STARTED', 40, true, NOW() - INTERVAL '20 minutes', $3)`,
         [vehicleId6, plate6, tripId6],
       );
 
@@ -643,7 +643,7 @@ async function runTests() {
         {
           vehicleId: vehicleId6,
           plate: plate6,
-          eventType: 'LOCATION UPDATE ALERT',
+          eventType: 'LOCATION_UPDATE',
           speed: 45,
           ignition: true,
           timestamp: new Date().toISOString(),
@@ -655,8 +655,8 @@ async function runTests() {
       const rows = await getTelemetryForVehicle(vehicleId6);
       const eventTypes = rows.map((r) => r.event_type);
 
-      assertEqual(eventTypes.filter((e) => e === 'MOVING ALERT').length, 1, 'Should have exactly 1 MOVING ALERT');
-      assert(eventTypes.includes('LOCATION UPDATE ALERT'), 'Should have LOCATION UPDATE ALERT');
+      assertEqual(eventTypes.filter((e) => e === 'MOTION_STARTED').length, 1, 'Should have exactly 1 MOVING ALERT');
+      assert(eventTypes.includes('LOCATION_UPDATE'), 'Should have LOCATION UPDATE ALERT');
 
       // Cleanup
       await pool.query('DELETE FROM gps_telemetry WHERE vehicle_id = $1', [vehicleId6]);
@@ -682,7 +682,7 @@ async function runTests() {
         {
           vehicleId: vehicleId7,
           plate: plate7,
-          eventType: 'IDLING ALERT',
+          eventType: 'IDLING_TOO_LONG',
           speed: 0,
           ignition: true,
           idleAlertCount: 1,
@@ -692,7 +692,7 @@ async function runTests() {
         {
           vehicleId: vehicleId7,
           plate: plate7,
-          eventType: 'MOVING ALERT',
+          eventType: 'MOTION_STARTED',
           speed: 50,
           ignition: true,
           timestamp: new Date().toISOString(),
@@ -717,7 +717,7 @@ async function runTests() {
         {
           vehicleId: vehicleId7,
           plate: plate7,
-          eventType: 'IGNITION OFF ALERT',
+          eventType: 'IGNITION_OFF',
           speed: 0,
           ignition: false,
           timestamp: new Date().toISOString(),
@@ -753,7 +753,7 @@ async function runTests() {
         {
           vehicleId: vehicleId8,
           plate: plate8,
-          eventType: 'IGNITION ON ALERT',
+          eventType: 'IGNITION_ON',
           speed: 0,
           ignition: true,
           timestamp: new Date().toISOString(),
@@ -764,7 +764,7 @@ async function runTests() {
 
       const rows = await getTelemetryForVehicle(vehicleId8);
       assertEqual(rows.length, 1, 'Should have 1 telemetry record');
-      assertEqual(rows[0].event_type, 'IGNITION ON ALERT', 'Should be IGNITION ON ALERT');
+      assertEqual(rows[0].event_type, 'IGNITION_ON', 'Should be IGNITION ON ALERT');
       assert(rows[0].active_trip_id != null, 'active_trip_id should not be null');
 
       // Cleanup

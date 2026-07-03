@@ -715,13 +715,13 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // IGNITION ON
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '40 minutes', $3)`,
+           VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '40 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
         // IDLING 10min
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '30 minutes', $3)`,
+           VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '30 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
         await pool.query(
@@ -732,7 +732,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // IDLING 15min
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '25 minutes', $3)`,
+           VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '25 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
         await pool.query(
@@ -743,7 +743,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // IDLING 30min
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
+           VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
         await pool.query(
@@ -754,13 +754,13 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // MOVING
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'MOVING ALERT', 45, true, NOW() - INTERVAL '5 minutes', $3)`,
+           VALUES ($1, $2, 'MOTION_STARTED', 45, true, NOW() - INTERVAL '5 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
         // IGNITION OFF
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IGNITION OFF ALERT', 0, false, NOW(), $3)`,
+           VALUES ($1, $2, 'IGNITION_OFF', 0, false, NOW(), $3)`,
           [vehicleId, plate, tripId],
         );
 
@@ -773,12 +773,12 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
 
         const eventTypes = rows.map((r: any) => r.event_type);
         assertEqual(eventTypes.length, 6, 'Should have 6 telemetry records');
-        assertEqual(eventTypes[0], 'IGNITION ON ALERT', 'Event 1');
-        assertEqual(eventTypes[1], 'IDLING ALERT', 'Event 2');
-        assertEqual(eventTypes[2], 'IDLING ALERT', 'Event 3');
-        assertEqual(eventTypes[3], 'IDLING ALERT', 'Event 4');
-        assertEqual(eventTypes[4], 'MOVING ALERT', 'Event 5');
-        assertEqual(eventTypes[5], 'IGNITION OFF ALERT', 'Event 6');
+        assertEqual(eventTypes[0], 'IGNITION_ON', 'Event 1');
+        assertEqual(eventTypes[1], 'IDLING_TOO_LONG', 'Event 2');
+        assertEqual(eventTypes[2], 'IDLING_TOO_LONG', 'Event 3');
+        assertEqual(eventTypes[3], 'IDLING_TOO_LONG', 'Event 4');
+        assertEqual(eventTypes[4], 'MOTION_STARTED', 'Event 5');
+        assertEqual(eventTypes[5], 'IGNITION_OFF', 'Event 6');
 
         const tripIds = rows.map((r: any) => r.active_trip_id);
         assert(tripIds.every((id: string) => id === tripId), 'All records should share the same active_trip_id');
@@ -796,7 +796,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // IGNITION ON
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '40 minutes', $3)`,
+           VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '40 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
 
@@ -804,7 +804,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         for (const threshold of [10, 15, 30]) {
           await pool.query(
             `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-             VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '${40 - threshold} minutes', $3)`,
+             VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '${40 - threshold} minutes', $3)`,
             [vehicleId, plate, tripId],
           );
           await pool.query(
@@ -816,7 +816,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
 
         const idlingRows = (await pool.query(
           `SELECT event_type FROM gps_telemetry
-           WHERE vehicle_id = $1 AND event_type = 'IDLING ALERT'`,
+           WHERE vehicle_id = $1 AND event_type = 'IDLING_TOO_LONG'`,
           [vehicleId],
         )).rows;
 
@@ -846,12 +846,12 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // Pre-existing: IGNITION ON + 10-min IDLING ALERT
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '20 minutes', $3)`,
+           VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '20 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
+           VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
         await pool.query(
@@ -872,7 +872,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // Add 15-min alert (new milestone)
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW(), $3)`,
+           VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW(), $3)`,
           [vehicleId, plate, tripId],
         );
         await pool.query(
@@ -883,7 +883,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
 
         const idlingRows = (await pool.query(
           `SELECT event_type FROM gps_telemetry
-           WHERE vehicle_id = $1 AND event_type = 'IDLING ALERT'`,
+           WHERE vehicle_id = $1 AND event_type = 'IDLING_TOO_LONG'`,
           [vehicleId],
         )).rows;
 
@@ -902,14 +902,14 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // IGNITION ON
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '15 minutes', $3)`,
+           VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '15 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
 
         // IDLING ALERT (even though GPS reports ignition=false)
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IDLING ALERT', 0, false, NOW(), $3)`,
+           VALUES ($1, $2, 'IDLING_TOO_LONG', 0, false, NOW(), $3)`,
           [vehicleId, plate, tripId],
         );
 
@@ -918,8 +918,8 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
           [vehicleId],
         )).rows.map((r: any) => r.event_type);
 
-        assert(eventTypes.includes('IDLING ALERT'), 'Should have IDLING ALERT');
-        assert(!eventTypes.includes('IGNITION OFF ALERT'), 'Should NOT have IGNITION OFF ALERT');
+        assert(eventTypes.includes('IDLING_TOO_LONG'), 'Should have IDLING ALERT');
+        assert(!eventTypes.includes('IGNITION_OFF'), 'Should NOT have IGNITION OFF ALERT');
       } finally {
         await cleanupVehicle(vehicleId);
       }
@@ -934,7 +934,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // IGNITION ON
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
+           VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '10 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
 
@@ -971,19 +971,19 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // IGNITION ON + MOVING
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW() - INTERVAL '30 minutes', $3)`,
+           VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW() - INTERVAL '30 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'MOVING ALERT', 40, true, NOW() - INTERVAL '20 minutes', $3)`,
+           VALUES ($1, $2, 'MOTION_STARTED', 40, true, NOW() - INTERVAL '20 minutes', $3)`,
           [vehicleId, plate, tripId],
         );
 
         // LOCATION UPDATE (not another MOVING)
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'LOCATION UPDATE ALERT', 45, true, NOW(), $3)`,
+           VALUES ($1, $2, 'LOCATION_UPDATE', 45, true, NOW(), $3)`,
           [vehicleId, plate, tripId],
         );
 
@@ -992,8 +992,8 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
           [vehicleId],
         )).rows.map((r: any) => r.event_type);
 
-        assertEqual(eventTypes.filter((e: string) => e === 'MOVING ALERT').length, 1, 'Should have exactly 1 MOVING ALERT');
-        assert(eventTypes.includes('LOCATION UPDATE ALERT'), 'Should have LOCATION UPDATE ALERT');
+        assertEqual(eventTypes.filter((e: string) => e === 'MOTION_STARTED').length, 1, 'Should have exactly 1 MOVING ALERT');
+        assert(eventTypes.includes('LOCATION_UPDATE'), 'Should have LOCATION UPDATE ALERT');
       } finally {
         await cleanupVehicle(vehicleId);
       }
@@ -1006,17 +1006,17 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         // No IGNITION ON — try to persist other events (should all be skipped)
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at)
-           VALUES ($1, $2, 'IDLING ALERT', 0, true, NOW())`,
+           VALUES ($1, $2, 'IDLING_TOO_LONG', 0, true, NOW())`,
           [vehicleId, plate],
         );
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at)
-           VALUES ($1, $2, 'MOVING ALERT', 50, true, NOW())`,
+           VALUES ($1, $2, 'MOTION_STARTED', 50, true, NOW())`,
           [vehicleId, plate],
         );
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at)
-           VALUES ($1, $2, 'IGNITION OFF ALERT', 0, false, NOW())`,
+           VALUES ($1, $2, 'IGNITION_OFF', 0, false, NOW())`,
           [vehicleId, plate],
         );
 
@@ -1041,7 +1041,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
       try {
         await pool.query(
           `INSERT INTO gps_telemetry (vehicle_id, plate_number, event_type, speed_kmh, ignition, recorded_at, active_trip_id)
-           VALUES ($1, $2, 'IGNITION ON ALERT', 0, true, NOW(), $3)`,
+           VALUES ($1, $2, 'IGNITION_ON', 0, true, NOW(), $3)`,
           [vehicleId, plate, randomUUID()],
         );
 
@@ -1051,7 +1051,7 @@ router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
         )).rows;
 
         assertEqual(rows.length, 1, 'Should have 1 telemetry record');
-        assertEqual(rows[0].event_type, 'IGNITION ON ALERT', 'Should be IGNITION ON ALERT');
+        assertEqual(rows[0].event_type, 'IGNITION_ON', 'Should be IGNITION ON ALERT');
         assert(rows[0].active_trip_id != null, 'active_trip_id should not be null');
       } finally {
         await cleanupVehicle(vehicleId);

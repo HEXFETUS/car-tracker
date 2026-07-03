@@ -68,6 +68,49 @@ interface TelemetryDbRow {
   active_driver_name: string | null;
 }
 
+function canonicalTelemetryEventType(eventType: string): string {
+  switch (eventType) {
+    case 'IGNITION ON ALERT':
+    case 'IGNITION_ON':
+      return 'IGNITION_ON';
+    case 'IGNITION OFF ALERT':
+    case 'IGNITION_OFF':
+      return 'IGNITION_OFF';
+    case 'LOCATION UPDATE ALERT':
+    case 'LOCATION UPDATE':
+    case 'LOCATION_UPDATE':
+      return 'LOCATION_UPDATE';
+    case 'MOVING ALERT':
+    case 'MOTION_STARTED':
+      return 'MOTION_STARTED';
+    case 'IDLING ALERT':
+    case 'IDLING TOO LONG ALERT':
+    case 'IDLING':
+    case 'IDLING_TOO_LONG':
+      return 'IDLING';
+    case 'NO_APPROVED_TRAVEL_ORDER':
+      return 'NO_APPROVED_TRAVEL_ORDER';
+    default:
+      return eventType;
+  }
+}
+
+function normalizeLocationName(value: string | null | undefined): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/,+$/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function recordedAtMinuteIso(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  date.setUTCSeconds(0, 0);
+  return date.toISOString();
+}
+
 /**
  * Get the most recent telemetry record for a vehicle.
  * Returns null if no record exists.
@@ -160,34 +203,124 @@ export async function telemetryExists(
  */
 export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted: boolean; id: string | null }> {
   const pool = getPool();
+  const eventType = canonicalTelemetryEventType(data.eventType);
+  const normalizedLocationName = normalizeLocationName(data.locationName);
+  console.log("[TELEMETRY SERVICE] insertTelemetry called with:", {
+    plate: data.plateNumber,
+    inputEventType: data.eventType,
+    canonicalEventType: eventType,
+    speed: data.speedKmh,
+    ignition: data.ignition
+  });
+  const recordedAtMinute = recordedAtMinuteIso(data.recordedAt);
   console.log(
-    `[telemetry] Before INSERT gps_telemetry vehicle=${data.vehicleId} plate=${data.plateNumber} event=${data.eventType} recorded_at=${data.recordedAt}`,
+    `[telemetry] Before INSERT gps_telemetry vehicle=${data.vehicleId} plate=${data.plateNumber} event=${eventType} recorded_at=${data.recordedAt}`,
   );
   try {
+    if (eventType === 'LOCATION_UPDATE') {
+      if (!data.ignition || Number(data.speedKmh ?? 0) <= 0) {
+        console.log(
+          `[telemetry] LOCATION_UPDATE skipped not moving vehicle=${data.vehicleId} ignition=${data.ignition} speed=${data.speedKmh}`,
+        );
+        return { inserted: false, id: null };
+      }
+
+      const latestLocationResult = await pool.query<{ location_name: string | null }>(
+        `SELECT location_name
+           FROM gps_telemetry
+          WHERE vehicle_id = $1
+            AND CASE event_type
+              WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
+              WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
+              WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+              WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+              WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
+              WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
+              WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
+              WHEN 'IDLING ALERT' THEN 'IDLING'
+              WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
+              WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+              ELSE event_type
+            END = $2
+          ORDER BY recorded_at DESC
+          LIMIT 1`,
+        [data.vehicleId, eventType],
+      );
+      const latestLocation = normalizeLocationName(latestLocationResult.rows[0]?.location_name ?? null);
+      if (latestLocation && latestLocation === normalizedLocationName) {
+        console.log(
+          `[telemetry] LOCATION_UPDATE skipped same latest location vehicle=${data.vehicleId} location=${JSON.stringify(data.locationName ?? '')}`,
+        );
+        return { inserted: false, id: null };
+      }
+    }
+
+    const duplicateResult = await pool.query<{ id: string }>(
+      `SELECT id
+         FROM gps_telemetry
+        WHERE vehicle_id = $1
+          AND CASE event_type
+            WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
+            WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
+            WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+            WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+            WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
+            WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
+            WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
+            WHEN 'IDLING ALERT' THEN 'IDLING'
+            WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
+            WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+            ELSE event_type
+          END = $2
+          AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
+          AND lower(trim(regexp_replace(regexp_replace(coalesce(location_name, ''), ',+$', ''), '\\s+', ' ', 'g'))) = $4
+        LIMIT 1`,
+      [
+        data.vehicleId,
+        eventType,
+        recordedAtMinute,
+        normalizedLocationName,
+      ],
+    );
+    if (duplicateResult.rows[0]?.id) {
+      if (data.telegramMessage) {
+        await pool.query(
+          `UPDATE gps_telemetry
+              SET telegram_message = COALESCE(telegram_message, $2)
+            WHERE id = $1`,
+          [duplicateResult.rows[0].id, data.telegramMessage],
+        );
+      }
+      console.log(
+        `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
+      );
+      return { inserted: false, id: duplicateResult.rows[0].id };
+    }
+
     const result = await pool.query<{ id: string }>(
-    `INSERT INTO gps_telemetry
+      `INSERT INTO gps_telemetry
        (vehicle_id, plate_number, event_type, latitude, longitude,
         speed_kmh, fuel_liters, ignition, location_name,
         driver_id, to_number, recorded_at, active_trip_id, telegram_message)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      ON CONFLICT DO NOTHING
      RETURNING id`,
-    [
-      data.vehicleId,
-      data.plateNumber,
-      data.eventType,
-      data.latitude,
-      data.longitude,
-      data.speedKmh,
-      data.fuelLiters,
-      data.ignition,
-      data.locationName,
-      data.driverId ?? null,
-      data.toNumber,
-      data.recordedAt,
-      data.activeTripId ?? null,
-      data.telegramMessage ?? null,
-    ],
+      [
+        data.vehicleId,
+        data.plateNumber,
+        eventType,
+        data.latitude,
+        data.longitude,
+        data.speedKmh,
+        data.fuelLiters,
+        data.ignition,
+        data.locationName,
+        data.driverId ?? null,
+        data.toNumber,
+        data.recordedAt,
+        data.activeTripId ?? null,
+        data.telegramMessage ?? null,
+      ],
     );
     const id = result.rows[0]?.id ?? null;
     if (id) {
@@ -195,14 +328,55 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
       return { inserted: true, id };
     }
     console.log(
-      `[telemetry] INSERT gps_telemetry skipped by conflict vehicle=${data.vehicleId} event=${data.eventType} active_trip_id=${data.activeTripId ?? 'null'}`,
+      `[telemetry] INSERT gps_telemetry skipped by conflict vehicle=${data.vehicleId} event=${eventType} active_trip_id=${data.activeTripId ?? 'null'}`,
     );
-    return { inserted: false, id: null };
+    const conflictResult = await pool.query<{ id: string }>(
+      `SELECT id
+         FROM gps_telemetry
+        WHERE vehicle_id = $1
+          AND CASE event_type
+            WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
+            WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
+            WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+            WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+            WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
+            WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
+            WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
+            WHEN 'IDLING ALERT' THEN 'IDLING'
+            WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
+            WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+            ELSE event_type
+          END = $2
+          AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
+          AND lower(trim(regexp_replace(regexp_replace(coalesce(location_name, ''), ',+$', ''), '\\s+', ' ', 'g'))) = $4
+        LIMIT 1`,
+      [data.vehicleId, eventType, recordedAtMinute, normalizedLocationName],
+    );
+    const conflictId = conflictResult.rows[0]?.id ?? null;
+    if (conflictId && data.telegramMessage) {
+      await pool.query(
+        `UPDATE gps_telemetry
+            SET telegram_message = COALESCE(telegram_message, $2)
+          WHERE id = $1`,
+        [conflictId, data.telegramMessage],
+      );
+    }
+    return { inserted: false, id: conflictId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[telemetry] INSERT gps_telemetry failed: ${message}`);
     throw error;
   }
+}
+
+export async function updateTelemetryTelegramMessage(id: string, telegramMessage: string): Promise<void> {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE gps_telemetry
+        SET telegram_message = $2
+      WHERE id = $1`,
+    [id, telegramMessage],
+  );
 }
 
 export interface FetchTelemetryParams {

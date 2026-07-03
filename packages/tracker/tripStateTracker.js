@@ -11,7 +11,7 @@
 //   - Return trip management (RETURN_TRIP_STARTED)
 //
 // NOT IN SCOPE (handled by tracker.js):
-//   - Idling alerts (IDLING, IDLING_TOO_LONG)
+//   - Idling alerts (IDLING)
 //   - Motion alerts
 //   - Speed/fuel alerts
 //
@@ -74,23 +74,54 @@ const DESTINATION_RADIUS_METERS = Number(process.env.DESTINATION_RADIUS_METERS) 
 // Normalized event types used across the entire telemetry pipeline.
 // These match what is actually saved in gps_telemetry.event_type.
 
-const IGNITION_ON_ALERT = 'IGNITION ON ALERT';
-const IGNITION_OFF_ALERT = 'IGNITION OFF ALERT';
-const LOCATION_UPDATE_ALERT = 'LOCATION UPDATE ALERT';
-const IDLING_ALERT = 'IDLING ALERT';
-const MOVING_ALERT = 'MOVING ALERT';
-const SPEEDING_ALERT = 'SPEEDING ALERT';
-const LOW_FUEL_ALERT = 'LOW FUEL ALERT';
+const IGNITION_ON = 'IGNITION_ON';
+const IGNITION_OFF = 'IGNITION_OFF';
+const LOCATION_UPDATE = 'LOCATION_UPDATE';
+const IDLING = 'IDLING';
+const MOTION_STARTED = 'MOTION_STARTED';
+const SPEEDING = 'SPEEDING';
+const LOW_FUEL = 'LOW_FUEL';
+
+function normalizeTelemetryEventType(eventType) {
+  switch (String(eventType || '')) {
+    case 'IGNITION ON ALERT':
+    case 'IGNITION_ON':
+      return IGNITION_ON;
+    case 'IGNITION OFF ALERT':
+    case 'IGNITION_OFF':
+      return IGNITION_OFF;
+    case 'LOCATION UPDATE ALERT':
+    case 'LOCATION UPDATE':
+    case 'LOCATION_UPDATE':
+      return LOCATION_UPDATE;
+    case 'IDLING ALERT':
+    case 'IDLING TOO LONG ALERT':
+    case 'IDLING':
+    case 'IDLING_TOO_LONG':
+      return IDLING;
+    case 'MOVING ALERT':
+    case 'MOTION_STARTED':
+      return MOTION_STARTED;
+    case 'SPEEDING ALERT':
+    case 'SPEEDING':
+      return SPEEDING;
+    case 'LOW FUEL ALERT':
+    case 'LOW_FUEL':
+      return LOW_FUEL;
+    default:
+      return String(eventType || '');
+  }
+}
 
 // Event types that indicate an active trip is in progress.
 // Used when restoring trip state after restart/state loss.
 const ACTIVE_TRIP_EVENT_TYPES = new Set([
-  IGNITION_ON_ALERT,
-  LOCATION_UPDATE_ALERT,
-  MOVING_ALERT,
-  IDLING_ALERT,
-  SPEEDING_ALERT,
-  LOW_FUEL_ALERT,
+  IGNITION_ON,
+  LOCATION_UPDATE,
+  MOTION_STARTED,
+  IDLING,
+  SPEEDING,
+  LOW_FUEL,
 ]);
 
 // ── State Keys ───────────────────────────────────────────────────
@@ -255,7 +286,7 @@ export async function processTripState(vehicle, vehicleId, latitude = null, long
     // No in-memory state — check if we have a last known state from telemetry
     const lastTelemetry = await getLatestTelemetry(vehicleId);
     if (lastTelemetry) {
-      const lastEventType = lastTelemetry.eventType;
+      const lastEventType = normalizeTelemetryEventType(lastTelemetry.eventType);
       const wasIgnitionOn = lastTelemetry.ignition === true;
       const isMoving = lastTelemetry.speedKmh > 0;
 
@@ -342,7 +373,7 @@ export async function processTripState(vehicle, vehicleId, latitude = null, long
       const dbShowsActiveTrip = lastTelemetry && (
         lastTelemetry.ignition === true ||
         lastTelemetry.speedKmh > 0 ||
-        (lastTelemetry.activeTripId !== null && lastTelemetry.eventType !== IGNITION_OFF_ALERT)
+        (lastTelemetry.activeTripId !== null && normalizeTelemetryEventType(lastTelemetry.eventType) !== IGNITION_OFF)
       );
 
       if (dbShowsActiveTrip) {

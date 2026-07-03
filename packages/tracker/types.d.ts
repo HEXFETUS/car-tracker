@@ -103,6 +103,8 @@ export function syncFleetAndAlert(options?: {
 
 export function sendTelegram(message: string): Promise<{ ok: boolean; error?: string }>;
 
+export function getVehicleEmoji(plateNumber: string): string;
+
 // ── Trip Log Transformer ──────────────────────────────────────
 
 export function extractPlateNumber(vehicle: any): string;

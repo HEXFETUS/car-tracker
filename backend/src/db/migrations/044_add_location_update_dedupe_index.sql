@@ -14,8 +14,8 @@
 -- Step 1: Clean up existing duplicates (keep only the newest row per minute/coords)
 DELETE FROM gps_telemetry a
 USING gps_telemetry b
-WHERE a.event_type = 'LOCATION UPDATE'
-  AND b.event_type = 'LOCATION UPDATE'
+WHERE a.event_type = 'LOCATION_UPDATE'
+  AND b.event_type = 'LOCATION_UPDATE'
   AND a.vehicle_id = b.vehicle_id
   AND trunc(a.latitude * 100000) = trunc(b.latitude * 100000)
   AND trunc(a.longitude * 100000) = trunc(b.longitude * 100000)
@@ -31,11 +31,11 @@ ON gps_telemetry (
   trunc(longitude * 100000),
   date_trunc('minute', recorded_at)
 )
-WHERE event_type = 'LOCATION UPDATE';
+WHERE event_type = 'LOCATION_UPDATE';
 
 -- Step 3: Verify no duplicates remain
 SELECT vehicle_id, plate_number, trunc(latitude * 100000) AS lat_r5, trunc(longitude * 100000) AS lng_r5, date_trunc('minute', recorded_at) AS minute_bucket, COUNT(*)
 FROM gps_telemetry
-WHERE event_type = 'LOCATION UPDATE'
+WHERE event_type = 'LOCATION_UPDATE'
 GROUP BY vehicle_id, plate_number, trunc(latitude * 100000), trunc(longitude * 100000), date_trunc('minute', recorded_at)
 HAVING COUNT(*) > 1;

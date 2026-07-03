@@ -33,13 +33,11 @@ import {
 export const SPEED_LIMIT_KMH = Number(process.env.SPEED_LIMIT_KMH || 80);
 export const LOW_FUEL_LITERS = Number(process.env.LOW_FUEL_LITERS || 5);
 // Idling alert thresholds in minutes (cumulative total idle time).
-// First alert at 10 minutes, then every 15 minutes after that.
-// This produces: 10, 25, 40, 55, 70, 85, ...
+// First alert at 10 minutes, next at 25, then every additional 30 minutes.
+// This produces: 10, 25, 55, 85, 115, ...
 export const IDLE_ALERT_THRESHOLDS_MINUTES = (() => {
-  const thresholds = [];
-  for (let i = 0; i < 20; i++) {
-    thresholds.push(10 + i * 15);
-  }
+  const thresholds = [10, 25];
+  for (let next = 55; thresholds.length < 20; next += 30) thresholds.push(next);
   return thresholds;
 })();
 export const IDLE_LIMIT_MINUTES = IDLE_ALERT_THRESHOLDS_MINUTES[0];
@@ -67,15 +65,15 @@ const VEHICLE_LIST_KEYS = ['data', 'vehicles', 'vehicle', 'items', 'results', 'f
 // that was sent to Telegram, never a re-classified guess.
 
 export const ALERT_TYPE_TO_EVENT_TYPE = {
-  trip_state_IGNITION_ON: 'IGNITION ON ALERT',
-  trip_state_IGNITION_OFF: 'IGNITION OFF ALERT',
-  ignition_ON: 'IGNITION ON ALERT',
-  ignition_OFF: 'IGNITION OFF ALERT',
-  speeding: 'SPEEDING ALERT',
-  low_fuel: 'LOW FUEL ALERT',
-  idling_too_long: 'IDLING ALERT',
-  motion: 'MOVING ALERT',
-  location_update: 'LOCATION UPDATE ALERT',
+  trip_state_IGNITION_ON: 'IGNITION_ON',
+  trip_state_IGNITION_OFF: 'IGNITION_OFF',
+  ignition_ON: 'IGNITION_ON',
+  ignition_OFF: 'IGNITION_OFF',
+  speeding: 'SPEEDING',
+  low_fuel: 'LOW_FUEL',
+  idling_too_long: 'IDLING',
+  motion: 'MOTION_STARTED',
+  location_update: 'LOCATION_UPDATE',
 };
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -152,6 +150,25 @@ export function toBool(value, fallback = false) {
   return Boolean(value);
 }
 
+// ── Vehicle Emoji Mapping ────────────────────────────────────
+
+export function getVehicleEmoji(plateNumber) {
+  // Extract just the plate number from the name (may include " (TO-123)" or " ()" suffix)
+  const plate = String(plateNumber || '').trim().toUpperCase();
+  const cleanPlate = plate.split(/[\(\)\s]/)[0]; // Get text before first space or parenthesis
+  
+  switch (cleanPlate) {
+    case 'KAR6558':
+      return '🚙';
+    case 'KAR6444':
+      return '🛻';
+    case 'KAR6412':
+      return '🚐';
+    default:
+      return '🚗';
+  }
+}
+
 // ── Formatting ────────────────────────────────────────────────
 
 export function formatSpeed(speed) {
@@ -226,8 +243,9 @@ export function formatSpeedingAlert(name, speed, location, eventTime, toNumber =
   const extraLines = [];
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
+  const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `🚨 SPEEDING - ${name}`,
+    `🚨 SPEEDING - ${vehicleEmoji} ${name}`,
     `⚡ Speed: ${formatSpeed(speed)} km/h (Limit: ${SPEED_LIMIT_KMH} km/h)`,
     `📈 Excess: +${formatSpeed(excess)} km/h over limit`,
     ...extraLines,
@@ -239,10 +257,24 @@ export function formatIgnitionAlert(name, ignition, location, eventTime, toNumbe
   const extraLines = [];
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
+  const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `${ignition ? '🔑 IGNITION ON' : '🔒 IGNITION OFF'} - 🛻 ${name}`,
+    `${ignition ? '🔑 IGNITION ON' : '🔒 IGNITION OFF'} - ${vehicleEmoji} ${name}`,
     ...extraLines,
     ...formatLocationTime(location, eventTime),
+  );
+}
+
+export function formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber = null, driver = null) {
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  const noToText = toNumber ? '' : ' (NO TO)';
+  const vehicleEmoji = getVehicleEmoji(name);
+  return formatAlert(
+    `🔴 IGNITION OFF - ${vehicleEmoji} ${name}${noToText}`,
+    `📍 ${location}`,
+    `⛽ Fuel: ${formatFuelLiters(fuel)}`,
+    `👤 Driver: ${driverText || 'Unassigned'}`,
+    `🕘 ${formatEventTime(eventTime)}`,
   );
 }
 
@@ -250,15 +282,17 @@ export function formatMotionAlert(name, location, eventTime, toNumber = null, dr
   const extraLines = [];
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
-  return formatAlert(`🟢 MOTION STARTED - ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
+  const vehicleEmoji = getVehicleEmoji(name);
+  return formatAlert(`🟢 MOTION STARTED - ${vehicleEmoji} ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
 }
 
 export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber = null, driver = null) {
   const extraLines = [];
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
+  const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `🗺 LOCATION UPDATE - ${name}`,
+    `🗺 LOCATION UPDATE - ${vehicleEmoji} ${name}`,
     `📍 ${location}`,
     `⚡ Speed: ${formatSpeed(speed)} km/h`,
     `⛽ Fuel: ${formatFuelLiters(fuel)}`,
@@ -271,15 +305,17 @@ export function formatIdleAlert(name, location, eventTime, toNumber = null, driv
   const extraLines = [];
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
-  return formatAlert(`⏱ IDLING - ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
+  const vehicleEmoji = getVehicleEmoji(name);
+  return formatAlert(`⏱ IDLING - ${vehicleEmoji} ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
 }
 
 export function formatIdlingTooLongAlert(name, idleMinutes, fuel, location, eventTime, toNumber = null, driver = null) {
   const extraLines = [];
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
+  const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `⏱ IDLING TOO LONG - ${name}`,
+    `⏱ IDLING TOO LONG - ${vehicleEmoji} ${name}`,
     `⏱ Idling for ${formatMinutes(idleMinutes)}`,
     `⛽ Fuel: ${formatFuelLiters(fuel)}`,
     ...extraLines,
@@ -291,8 +327,9 @@ export function formatFuelAlert(name, fuel, location, eventTime, toNumber = null
   const extraLines = [];
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
+  const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `⛽ FUEL LOW - ${name}`,
+    `⛽ FUEL LOW - ${vehicleEmoji} ${name}`,
     `Fuel: ${formatFuelLiters(fuel)} (Warning below ${LOW_FUEL_LITERS} L)`,
     ...extraLines,
     ...formatLocationTime(location, eventTime),
@@ -375,9 +412,41 @@ function getPostgresPool() {
   return postgresPool;
 }
 
+function canonicalEventType(eventType) {
+  switch (String(eventType || '')) {
+    case 'IGNITION ON ALERT':
+    case 'IGNITION_ON':
+      return 'IGNITION_ON';
+    case 'IGNITION OFF ALERT':
+    case 'IGNITION_OFF':
+      return 'IGNITION_OFF';
+    case 'MOVING ALERT':
+    case 'MOTION_STARTED':
+      return 'MOTION_STARTED';
+    case 'IDLING ALERT':
+    case 'IDLING TOO LONG ALERT':
+    case 'IDLING':
+    case 'IDLING_TOO_LONG':
+      return 'IDLING';
+    case 'LOCATION UPDATE ALERT':
+    case 'LOCATION_UPDATE':
+      return 'LOCATION_UPDATE';
+    case 'NO_APPROVED_TRAVEL_ORDER':
+      return 'NO_APPROVED_TRAVEL_ORDER';
+    case 'SPEEDING ALERT':
+    case 'SPEEDING':
+      return 'SPEEDING';
+    case 'LOW FUEL ALERT':
+    case 'LOW_FUEL':
+      return 'LOW_FUEL';
+    default:
+      return String(eventType || 'message').toUpperCase() === 'MESSAGE' ? 'TELEGRAM_MESSAGE' : String(eventType);
+  }
+}
+
 function eventTypeFromAlert(alert) {
   const eventType = alert.eventType || ALERT_TYPE_TO_EVENT_TYPE[alert.type] || alert.type || 'message';
-  return String(eventType).toUpperCase() === 'MESSAGE' ? 'TELEGRAM_MESSAGE' : String(eventType);
+  return canonicalEventType(eventType);
 }
 
 function recordedAtFromAlert(alert) {
@@ -386,41 +455,9 @@ function recordedAtFromAlert(alert) {
 }
 
 async function insertGpsTelemetry(alert) {
-  const pool = getPostgresPool();
-  const eventType = eventTypeFromAlert(alert);
-  console.log(`[telemetry] Before INSERT gps_telemetry vehicle=${alert.vehicle_id ?? 'null'} event=${eventType}`);
-  try {
-    const result = await pool.query(
-      `INSERT INTO gps_telemetry
-         (vehicle_id, plate_number, event_type, latitude, longitude,
-          speed_kmh, fuel_liters, ignition, location_name, driver_id,
-          to_number, recorded_at, active_trip_id, telegram_message)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-       RETURNING id`,
-      [
-        alert.vehicle_id ?? null,
-        alert.plate ?? '',
-        eventType,
-        alert.coordinates?.latitude ?? null,
-        alert.coordinates?.longitude ?? null,
-        alert.speed ?? 0,
-        alert.fuel ?? null,
-        Boolean(alert.ignition),
-        alert.location ?? null,
-        null,
-        alert.to_number ?? null,
-        recordedAtFromAlert(alert),
-        null,
-        alert.message,
-      ],
-    );
-    const id = result.rows[0]?.id;
-    console.log(`[telemetry] INSERT gps_telemetry succeeded id=${id}`);
-    return id;
-  } catch (error) {
-    console.error(`[telemetry] INSERT gps_telemetry failed: ${error.message}`);
-    throw error;
-  }
+  void alert;
+  console.log('[tracker] gps_telemetry persistence is handled by backend insertTelemetry(); skipping tracker direct INSERT');
+  return null;
 }
 
 export async function sendVehicleAlerts(alerts) {
@@ -435,15 +472,7 @@ export async function sendVehicleAlerts(alerts) {
       continue;
     }
 
-    let telemetryId;
-    try {
-      telemetryId = await insertGpsTelemetry(alert);
-      result.persisted += 1;
-    } catch (error) {
-      result.failed += 1;
-      console.error(`[tracker] Skipping Telegram because gps_telemetry INSERT failed: ${error.message}`);
-      continue;
-    }
+    const telemetryId = await insertGpsTelemetry(alert);
 
     console.log(`[tracker] Before Telegram send telemetry_id=${telemetryId}`);
     const telegram = await sendTelegram(alert.message);
@@ -577,10 +606,6 @@ export function getIdleStatus(ignition, moving, prev = {}, apiIdleMinutes = null
   if (!ignition || moving) return { idleStartedAt: null, idleMinutes: 0, idlingTooLong: false, idleAlertCount: 0, previousIdleAlertCount: 0 };
 
   const now = Date.now();
-  const previousMilestoneCount = prev.idling_too_long_alert_threshold_count;
-  const previousIdleAlertCount = previousMilestoneCount !== undefined && previousMilestoneCount !== null
-    ? Number(previousMilestoneCount || 0)
-    : IDLE_ALERT_THRESHOLDS_MINUTES.filter((threshold) => threshold <= Number(prev.idling_too_long_alert_count || 0) * IDLE_LIMIT_MINUTES).length;
   let idleStartedAt;
   let idleMinutes;
 
@@ -592,7 +617,27 @@ export function getIdleStatus(ignition, moving, prev = {}, apiIdleMinutes = null
     idleMinutes = Math.max(0, (now - Number(idleStartedAt)) / 60000);
   }
 
+  // Calculate how many thresholds were crossed previously based on stored idle_minutes
+  // This ensures cumulative alert counting works correctly across sync cycles
+  const previousIdleAlertCount = IDLE_ALERT_THRESHOLDS_MINUTES.filter(
+    (threshold) => threshold <= Number(prev.idle_minutes || 0)
+  ).length;
+
   const idleAlertCount = IDLE_ALERT_THRESHOLDS_MINUTES.filter((threshold) => idleMinutes >= threshold).length;
+  const nextThreshold = IDLE_ALERT_THRESHOLDS_MINUTES[idleAlertCount] || null;
+  const lastAlertThreshold = idleAlertCount > 0 ? IDLE_ALERT_THRESHOLDS_MINUTES[idleAlertCount - 1] : null;
+
+  // Diagnostic logging
+  console.log({
+    vehicleId: prev.vehicle_id || 'unknown',
+    idlingStartedAt: new Date(Number(idleStartedAt)).toISOString(),
+    elapsedMinutes: Math.round(idleMinutes * 10) / 10,
+    lastAlertThreshold,
+    nextThreshold,
+    idleAlertCount,
+    previousIdleAlertCount,
+  });
+
   return { idleStartedAt, idleMinutes, idlingTooLong: idleMinutes >= IDLE_LIMIT_MINUTES, idleAlertCount, previousIdleAlertCount };
 }
 
@@ -916,11 +961,11 @@ export async function syncFleetAndAlert(options = {}) {
       if (a.type === 'IGNITION_ON') {
         message = formatIgnitionAlert(name, true, location, eventTime, toNumber, driver);
         tripStateFiredIgnition = true;
-        pushAlert('trip_state', message, 'IGNITION ON ALERT');
+        pushAlert('trip_state', message, 'IGNITION_ON');
       } else if (a.type === 'IGNITION_OFF') {
-        message = formatIgnitionAlert(name, false, location, eventTime, toNumber, driver);
+        message = formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber, driver);
         tripStateFiredIgnition = true;
-        pushAlert('trip_state', message, 'IGNITION OFF ALERT');
+        pushAlert('trip_state', message, 'IGNITION_OFF');
       }
       tripAlerts.push({ ...a, vehicle_id: vid, message });
     });
@@ -929,19 +974,38 @@ export async function syncFleetAndAlert(options = {}) {
     const destinationData = consumeDestination(vid);
 
     if (hasPreviousState) {
-      if (ignition !== prevIgnition && !tripStateFiredIgnition) {
-        const eventType = ignition ? 'IGNITION ON ALERT' : 'IGNITION OFF ALERT';
-        pushAlert('ignition', formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver), eventType);
+      const ignitionChanged = ignition !== prevIgnition;
+      let idlingAlertEmitted = false;
+      let motionAlertEmitted = false;
+
+      if (ignitionChanged && !tripStateFiredIgnition) {
+        const eventType = ignition ? 'IGNITION_ON' : 'IGNITION_OFF';
+        const message = eventType === 'IGNITION_OFF' 
+          ? formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber, driver)
+          : formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver);
+        pushAlert('ignition', message, eventType);
       }
       if (ignition && speeding && !prevSpeeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
       if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
-      if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
-      if (ignition && moving && !prevMoving && prevIdlingTooLong) pushAlert('motion', formatMotionAlert(name, location, eventTime, toNumber, driver));
-      // Location updates are NOT sent as Telegram alerts.
-      // Raw telemetry snapshots (LOCATION UPDATE) are saved by the scheduler
-      // in STEP 1 for every vehicle with ignition=on and valid coordinates.
-      // No Telegram message is needed for normal movement.
-      // if (ignition && location !== prev.location) pushAlert('location_update', formatLocationUpdateAlert(...));
+      if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) {
+        idlingAlertEmitted = true;
+        pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
+      }
+      if (ignition && moving && !prevMoving && prevIdlingTooLong) {
+        motionAlertEmitted = true;
+        pushAlert('motion', formatMotionAlert(name, location, eventTime, toNumber, driver));
+      }
+      if (
+        ignition &&
+        moving &&
+        location !== prev.location &&
+        !tripStateFiredIgnition &&
+        !ignitionChanged &&
+        !idlingAlertEmitted &&
+        !motionAlertEmitted
+      ) {
+        pushAlert('location_update', formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber, driver));
+      }
     } else if (ignition) {
       if (speeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
       if (lowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
@@ -1045,8 +1109,9 @@ export async function syncFleetAndAlert(options = {}) {
         timestamp: ea.timestamp,
         message: ea.message,
         // Include idling milestone info for deduplication
-        idleAlertCount: ea.eventType === 'IDLING ALERT' ? idle.idleAlertCount : undefined,
-        idlingThresholdReached: ea.eventType === 'IDLING ALERT' ? IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] || null : undefined,
+        idleAlertCount: ea.eventType === 'IDLING' ? idle.idleAlertCount : undefined,
+        idlingThresholdReached: ea.eventType === 'IDLING' ? IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] || null : undefined,
+        idlingStartedAt: ea.eventType === 'IDLING' ? idle.idleStartedAt : undefined,
       });
     }
   }
