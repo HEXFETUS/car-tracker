@@ -75,6 +75,7 @@ interface GpsLogRow {
   parent_trip_id: string | null;
   coordinates_origin: string | null;
   coordinates_destination: string | null;
+  active_trip_id?: string | null;
   // Joined columns
   plate_number?: string;
   driver_full_name?: string;
@@ -163,6 +164,9 @@ router.get('/', async (req: Request, res: Response) => {
         g.destination_verified,
         COALESCE(g.trip_type, 'OUTBOUND') AS trip_type,
         g.parent_trip_id,
+        parent_trip.gps_record_no AS parent_gps_record_no,
+        paired_return.id AS paired_return_id,
+        paired_return.gps_record_no AS paired_return_gps_record_no,
         g.coordinates_origin,
         g.coordinates_destination,
         NULL::numeric AS moving_hours,
@@ -179,6 +183,14 @@ router.get('/', async (req: Request, res: Response) => {
         tel.first_recorded_at,
         tel.last_recorded_at
       FROM gps_trip_logs g
+      LEFT JOIN gps_trip_logs parent_trip ON parent_trip.id = g.parent_trip_id
+      LEFT JOIN LATERAL (
+        SELECT id, gps_record_no
+          FROM gps_trip_logs rt
+         WHERE rt.parent_trip_id = g.id
+         ORDER BY rt.departure_time_gps DESC NULLS LAST
+         LIMIT 1
+      ) paired_return ON true
       LEFT JOIN travel_orders t_order ON t_order.id = g.travel_order_id
       LEFT JOIN vehicles v ON v.id = COALESCE(t_order.vehicle_id, g.vehicle_id)
       LEFT JOIN drivers d ON d.id = COALESCE(t_order.driver_id, g.driver_id)
@@ -194,10 +206,13 @@ router.get('/', async (req: Request, res: Response) => {
         FROM gps_telemetry
         WHERE vehicle_id = COALESCE(t_order.vehicle_id, g.vehicle_id)
       ) tel ON true
-      ${whereClause}
-      ${tripStatusClause}
-      ORDER BY COALESCE(g.created_at, t_order.updated_at, t_order.created_at) DESC
-      LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}`,
+       ${whereClause}
+       ${tripStatusClause}
+       ORDER BY
+         CASE WHEN g.gps_record_no IS NULL THEN 1 ELSE 0 END,
+         CAST(SUBSTRING(g.gps_record_no FROM '[0-9]+$') AS INTEGER) DESC NULLS LAST,
+         COALESCE(g.departure_time_gps, g.created_at, t_order.updated_at, t_order.created_at) DESC
+       LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}`,
       dataParams,
     );
 
@@ -226,10 +241,26 @@ router.get('/', async (req: Request, res: Response) => {
         travelOrderId: row.travel_order_id || null,
         toStatusAuto: row.to_status_auto ?? (noTravelOrder ? 'NO TO' : row.to_status ?? null),
         anomalyFlag: row.anomaly_flag,
-        notesRemarks: row.notes_remarks || (noTravelOrder ? 'Anomaly - No TO' : null),
+        notesRemarks: row.notes_remarks || null,
         destinationVerified: row.destination_verified,
         tripType: row.trip_type,
         parentTripId: row.parent_trip_id,
+        parentGpsRecordNo: row.parent_gps_record_no || null,
+        pairedReturnId: row.paired_return_id || null,
+        pairedReturnGpsRecordNo: row.paired_return_gps_record_no || null,
+        missionDisplay: row.parent_gps_record_no
+          ? `${row.parent_gps_record_no} (Outbound)`
+          : row.paired_return_gps_record_no
+            ? `${row.paired_return_gps_record_no} (Return)`
+            : 'Standalone',
+        linkedOutboundTrip: row.parent_trip_id ? {
+          id: row.parent_trip_id,
+          gpsRecordNo: row.parent_gps_record_no || '',
+        } : null,
+        linkedReturnTrip: row.paired_return_id ? {
+          id: row.paired_return_id,
+          gpsRecordNo: row.paired_return_gps_record_no || '',
+        } : null,
         locationName: row.latest_location || null,
         vehiclePlateNo: row.plate_number ?? 'Unknown',
         driverName: row.driver_full_name ?? 'Unknown',
@@ -345,7 +376,7 @@ router.post('/ensure-log', async (req: Request, res: Response) => {
       const toData = toResult.rows[0] || {};
       const toStatus = toData?.status || null;
 
-      const gpsRecordNo = await generateGpsRecordNo();
+      const gpsRecordNo = await generateGpsRecordNo(null);
       const tripDate = new Date().toISOString().split('T')[0];
 
       const result = await pool.query<GpsLogRow>(
@@ -1313,6 +1344,9 @@ router.get('/:id/details', async (req: Request, res: Response) => {
     const tripResult = await pool.query<GpsLogRow>(
       `SELECT
         g.*,
+        parent_trip.gps_record_no AS parent_gps_record_no,
+        paired_return.id AS paired_return_id,
+        paired_return.gps_record_no AS paired_return_gps_record_no,
         v.plate_number,
         d.full_name AS driver_full_name,
         t_o.to_number AS travel_order_to_number,
@@ -1322,6 +1356,14 @@ router.get('/:id/details', async (req: Request, res: Response) => {
         t_o.lat_long_origin AS to_lat_long_origin,
         t_o.lat_long_destination AS to_lat_long_destination
       FROM gps_trip_logs g
+      LEFT JOIN gps_trip_logs parent_trip ON parent_trip.id = g.parent_trip_id
+      LEFT JOIN LATERAL (
+        SELECT id, gps_record_no
+          FROM gps_trip_logs rt
+         WHERE rt.parent_trip_id = g.id
+         ORDER BY rt.departure_time_gps DESC NULLS LAST
+         LIMIT 1
+      ) paired_return ON true
       LEFT JOIN vehicles      v   ON v.id = g.vehicle_id
       LEFT JOIN drivers       d   ON d.id = g.driver_id
       LEFT JOIN travel_orders t_o ON t_o.id = g.travel_order_id
@@ -1336,20 +1378,44 @@ router.get('/:id/details', async (req: Request, res: Response) => {
 
     const trip = tripResult.rows[0];
     const tripData = mapRow(trip);
+    const missionDisplay = tripData.parentGpsRecordNo
+      ? `Mission ${tripData.parentGpsRecordNo}`
+      : tripData.pairedReturnId
+        ? `Mission ${tripData.gpsRecordNo}`
+        : 'Standalone';
+    const linkedOutboundTrip = String(tripData.tripType ?? '').toUpperCase() === 'RETURN' && tripData.parentTripId
+      ? { id: tripData.parentTripId, gpsRecordNo: tripData.parentGpsRecordNo || '' }
+      : null;
+    const linkedReturnTrip = String(tripData.tripType ?? '').toUpperCase() !== 'RETURN' && tripData.pairedReturnId
+      ? { id: tripData.pairedReturnId, gpsRecordNo: tripData.pairedReturnGpsRecordNo || '' }
+      : null;
 
-    // Fetch GPS route points from telemetry for the same vehicle on the same trip date
-    const routeResult = await pool.query(
-      `SELECT latitude, longitude, recorded_at, speed_kmh, location_name, ignition, event_type
-       FROM gps_telemetry
-       WHERE vehicle_id = $1
-         AND DATE(recorded_at) = $2::date
-         AND latitude IS NOT NULL
-         AND longitude IS NOT NULL
-       ORDER BY recorded_at ASC`,
-      [trip.vehicle_id, trip.trip_date],
-    );
+    const rawTelemetry = trip.active_trip_id
+      ? await pool.query(
+        `SELECT latitude, longitude, recorded_at, speed_kmh, location_name, ignition, event_type
+         FROM gps_telemetry
+         WHERE vehicle_id = $1
+           AND active_trip_id = $2
+           AND latitude IS NOT NULL
+           AND longitude IS NOT NULL
+         ORDER BY recorded_at ASC`,
+        [trip.vehicle_id, trip.active_trip_id],
+      )
+      : await pool.query(
+        `SELECT latitude, longitude, recorded_at, speed_kmh, location_name, ignition, event_type
+         FROM gps_telemetry
+         WHERE vehicle_id = $1
+           AND recorded_at >= $2::timestamptz
+           AND recorded_at <= COALESCE($3::timestamptz, NOW())
+           AND latitude IS NOT NULL
+           AND longitude IS NOT NULL
+         ORDER BY recorded_at ASC`,
+        [trip.vehicle_id, trip.departure_time_gps, trip.arrival_time_gps],
+      );
 
-    const route = routeResult.rows.map((row: any) => ({
+    const rawRows = rawTelemetry.rows;
+
+    const route = rawRows.map((row: any) => ({
       lat: Number(row.latitude),
       lng: Number(row.longitude),
       timestamp: row.recorded_at,
@@ -1359,18 +1425,129 @@ router.get('/:id/details', async (req: Request, res: Response) => {
       eventType: row.event_type,
     }));
 
-    // Calculate statistics from telemetry
-    let totalDistance = 0;
-    let maxSpeed = 0;
-    let totalEngineHours = 0;
-    let movingHours = 0;
+    // Engine Hours: IGNITION_ON → IGNITION_OFF
+    let ignitionOnTime: string | null = null;
+    let ignitionOffTime: string | null = null;
+
+    const IGNORED_EVENT_TYPES = new Set([
+      'IGNITION_ON',
+      'IGNITION_OFF',
+      'IDLING',
+      'IDLING_TOO_LONG',
+      'MOTION_STARTED',
+    ]);
+
+    interface MovingTelemetryRow {
+      recorded_at: string;
+      speed_kmh: number;
+      latitude: number | null;
+      longitude: number | null;
+    }
+
+    const movingTelemetry: MovingTelemetryRow[] = [];
+
+    for (const row of rawRows) {
+      const eventType = String(row.event_type ?? '').trim().toUpperCase().replace(/\s+ALERT$/, '').replace(/\s+/g, '_');
+      if (eventType === 'IGNITION_ON') {
+        ignitionOnTime = row.recorded_at;
+        continue;
+      }
+      if (eventType === 'IGNITION_OFF') {
+        ignitionOffTime = row.recorded_at;
+        continue;
+      }
+      if (IGNORED_EVENT_TYPES.has(eventType)) {
+        continue;
+      }
+      if (eventType === 'LOCATION_UPDATE' && row.recorded_at) {
+        const speed = Number(row.speed_kmh) || 0;
+        const lat = Number(row.latitude);
+        const lng = Number(row.longitude);
+        if (speed > 0 && Number.isFinite(lat) && Number.isFinite(lng)) {
+          movingTelemetry.push({ recorded_at: row.recorded_at, speed_kmh: speed, latitude: lat, longitude: lng });
+        }
+      }
+    }
+
+    const engineHours = (() => {
+      if (!ignitionOnTime || !ignitionOffTime) return tripData.engineHours ?? null;
+      const on = new Date(ignitionOnTime).getTime();
+      const off = new Date(ignitionOffTime).getTime();
+      if (Number.isNaN(on) || Number.isNaN(off) || off <= on) return 0;
+      return Number(((off - on) / 3600000).toFixed(2));
+    })();
+
+    const MAX_GAP_MS = 2 * 60 * 1000;
+    const MIN_DISTANCE_M = 50;
+    let movingMs = 0;
+    let countedIntervals = 0;
+    let ignoredIntervals = 0;
+    let ignoredSameLocation = 0;
+    let ignoredLongGap = 0;
+    let ignoredZeroSpeed = 0;
+
+    if (movingTelemetry.length >= 2) {
+      for (let i = 1; i < movingTelemetry.length; i++) {
+        const prev = movingTelemetry[i - 1];
+        const curr = movingTelemetry[i];
+
+        const prevTime = new Date(prev.recorded_at).getTime();
+        const currTime = new Date(curr.recorded_at).getTime();
+        if (Number.isNaN(prevTime) || Number.isNaN(currTime)) {
+          ignoredIntervals += 1;
+          continue;
+        }
+
+        const gap = currTime - prevTime;
+        if (gap <= 0 || gap > MAX_GAP_MS) {
+          ignoredLongGap += 1;
+          ignoredIntervals += 1;
+          continue;
+        }
+
+        if (prev.speed_kmh <= 0 || curr.speed_kmh <= 0) {
+          ignoredZeroSpeed += 1;
+          ignoredIntervals += 1;
+          continue;
+        }
+
+        const distanceM = haversineDistance(`${prev.latitude},${prev.longitude}`, `${curr.latitude},${curr.longitude}`);
+        if (Number.isNaN(distanceM) || distanceM <= MIN_DISTANCE_M) {
+          ignoredSameLocation += 1;
+          ignoredIntervals += 1;
+          continue;
+        }
+
+        movingMs += gap;
+        countedIntervals += 1;
+      }
+    }
+
+    let movingHours = Number((movingMs / 3600000).toFixed(2));
+    if (engineHours !== null && movingHours > engineHours) {
+      console.log('[TRIP TIME WARNING] movingHours exceeded engineHours; capping as safety fallback');
+      movingHours = engineHours;
+    }
+
+    console.log(
+      '[TRIP TIME]\n\n' +
+        'engineHours\n' + (engineHours ?? 0).toFixed(2) + ' hrs\n\n' +
+        'movingHours\n' + movingHours.toFixed(2) + ' hrs\n\n' +
+        'movingRowsCount\n' + movingTelemetry.length + '\n\n' +
+        'countedIntervals\n' + countedIntervals + '\n\n' +
+        'ignoredIntervals\n' + ignoredIntervals + '\n\n' +
+        'ignoredSameLocation\n' + ignoredSameLocation + '\n\n' +
+        'ignoredLongGap\n' + ignoredLongGap + '\n\n' +
+        'ignoredZeroSpeed\n' + ignoredZeroSpeed
+    );
+
     let startTime: string | null = null;
     let arrivedTime: string | null = null;
     let endTime: string | null = null;
     let destinationMatch: any = null;
 
     if (route.length > 0) {
-      startTime = null;
+      startTime = trip.departure_time_gps;
       endTime = route[route.length - 1].timestamp;
       const destCoords = parseCoordinates(trip.to_lat_long_destination || trip.coordinates_destination);
       if (destCoords) {
@@ -1391,8 +1568,8 @@ router.get('/:id/details', async (req: Request, res: Response) => {
           linkedTO: tripData.toNumber || null,
           status: tripData.tripStatusGps || 'N/A',
           distance: tripData.gpsDistanceKm,
-          engineHours: tripData.engineHours,
-          movingHours: null,
+          engineHours: engineHours,
+          movingHours: movingHours,
           maxSpeed: tripData.maxSpeedKph,
           notes: tripData.notesRemarks,
           origin: tripData.originGpsStartPoint || '',
@@ -1407,8 +1584,16 @@ router.get('/:id/details', async (req: Request, res: Response) => {
           arrivedCoordinates: destinationMatch ? `${destinationMatch.lat},${destinationMatch.lng}` : null,
           arrivedLocation: destinationMatch?.locationName || null,
           anomalyFlag: tripData.anomalyFlag,
+          parentTripId: tripData.parentTripId,
+          parentGpsRecordNo: tripData.parentGpsRecordNo,
+          pairedReturnId: tripData.pairedReturnId,
+          pairedReturnGpsRecordNo: tripData.pairedReturnGpsRecordNo,
+          missionDisplay,
+          linkedOutboundTrip,
+          linkedReturnTrip,
           coordinatesOrigin: tripData.coordinatesOrigin || null,
           coordinatesDestination: tripData.coordinatesDestination || null,
+          tripType: tripData.tripType || 'OUTBOUND',
         },
         route,
         routeCount: route.length,
@@ -1511,6 +1696,9 @@ function mapRow(row: any) {
     destinationVerified: row.destination_verified,
     tripType: row.trip_type,
     parentTripId: row.parent_trip_id,
+    parentGpsRecordNo: row.parent_gps_record_no || null,
+    pairedReturnId: row.paired_return_id || null,
+    pairedReturnGpsRecordNo: row.paired_return_gps_record_no || null,
     locationName: row.location_name,
     vehiclePlateNo: row.plate_number ?? 'Unknown',
     driverName: row.driver_full_name ?? 'Unknown',

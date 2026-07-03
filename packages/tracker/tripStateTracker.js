@@ -83,34 +83,48 @@ const SPEEDING = 'SPEEDING';
 const LOW_FUEL = 'LOW_FUEL';
 
 function normalizeTelemetryEventType(eventType) {
-  switch (String(eventType || '')) {
+  const raw = String(eventType || '');
+  let result;
+  switch (raw) {
     case 'IGNITION ON ALERT':
     case 'IGNITION_ON':
-      return IGNITION_ON;
+      result = IGNITION_ON;
+      break;
     case 'IGNITION OFF ALERT':
     case 'IGNITION_OFF':
-      return IGNITION_OFF;
+      result = IGNITION_OFF;
+      break;
     case 'LOCATION UPDATE ALERT':
     case 'LOCATION UPDATE':
     case 'LOCATION_UPDATE':
-      return LOCATION_UPDATE;
+      result = LOCATION_UPDATE;
+      break;
     case 'IDLING ALERT':
     case 'IDLING TOO LONG ALERT':
     case 'IDLING':
     case 'IDLING_TOO_LONG':
-      return IDLING;
+      result = IDLING;
+      break;
     case 'MOVING ALERT':
     case 'MOTION_STARTED':
-      return MOTION_STARTED;
+      result = MOTION_STARTED;
+      break;
     case 'SPEEDING ALERT':
     case 'SPEEDING':
-      return SPEEDING;
+      result = SPEEDING;
+      break;
     case 'LOW FUEL ALERT':
     case 'LOW_FUEL':
-      return LOW_FUEL;
+      result = LOW_FUEL;
+      break;
     default:
-      return String(eventType || '');
+      result = raw;
+      break;
   }
+  if (raw !== result) {
+    console.log('[EVENT NORMALIZED]', { incoming: raw, saved: result });
+  }
+  return result;
 }
 
 // Event types that indicate an active trip is in progress.
@@ -430,6 +444,8 @@ export async function processTripState(vehicle, vehicleId, latitude = null, long
   // continues in a subsequent cycle.
   if (!ignition && state.tripStarted) {
     if (hasExplicitIgnition) {
+      const endedTripId = state.currentTripId;
+
       state.tripStarted = false;
       state.arrived = false;
       state.currentTripId = null;
@@ -451,7 +467,7 @@ export async function processTripState(vehicle, vehicleId, latitude = null, long
 
       console.log('[trip] END', {
         vehicle: vehicleId,
-        tripId: state.currentTripId,
+        tripId: endedTripId,
         reason: 'explicit_ignition_off',
         coordinate: currentCoord,
         timestamp: new Date(now).toISOString(),
@@ -463,7 +479,7 @@ export async function processTripState(vehicle, vehicleId, latitude = null, long
         latitude,
         longitude,
         vehicleId,
-        tripId: null,
+        tripId: endedTripId,
         timestamp: new Date(now).toISOString(),
       });
     }

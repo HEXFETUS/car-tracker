@@ -19,6 +19,12 @@ export interface EnrichedGpsTripLog {
   toOrigin?: string | null;
   toDestination?: string | null;
   departureTimeGps: string | null;
+  parentGpsRecordNo?: string | null;
+  pairedReturnId?: string | null;
+  pairedReturnGpsRecordNo?: string | null;
+  missionDisplay?: string;
+  linkedOutboundTrip?: { id: string; gpsRecordNo: string } | null;
+  linkedReturnTrip?: { id: string; gpsRecordNo: string } | null;
   arrivalTimeGps: string | null;
   gpsDistanceKm: number | null;
   engineHours: number | null;
@@ -400,6 +406,13 @@ export interface TripDetails {
   toDestination: string | null;
   toStatus: string | null;
   startTime: string | null;
+  parentTripId?: string | null;
+  parentGpsRecordNo?: string | null;
+  pairedReturnId?: string | null;
+  pairedReturnGpsRecordNo?: string | null;
+  missionDisplay: string;
+  linkedOutboundTrip?: { id: string; gpsRecordNo: string } | null;
+  linkedReturnTrip?: { id: string; gpsRecordNo: string } | null;
   arrivedTime: string | null;
   endTime: string | null;
   arrivedCoordinates: string | null;
@@ -407,6 +420,7 @@ export interface TripDetails {
   anomalyFlag: boolean;
   coordinatesOrigin: string | null;
   coordinatesDestination: string | null;
+  tripType?: string | null;
 }
 
 export interface TripDetailsResponse {
@@ -425,7 +439,7 @@ export interface TripDetailsResponse {
  */
 export async function fetchTripDetails(id: string): Promise<TripDetailsResponse> {
   let detailsId = id;
-  
+
   // If the id starts with "pending-", this is a travel_order_id fallback
   if (id.startsWith('pending-')) {
     const travelOrderId = id.replace('pending-', '');
@@ -441,7 +455,7 @@ export async function fetchTripDetails(id: string): Promise<TripDetailsResponse>
       return json;
     }
   }
-  
+
   const res = await fetch(`${API_BASE}/${detailsId}/details`);
   if (!res.ok) throw new Error('Failed to fetch trip details');
   const json = await res.json();

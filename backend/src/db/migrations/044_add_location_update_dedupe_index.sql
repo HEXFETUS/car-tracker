@@ -29,7 +29,7 @@ ON gps_telemetry (
   event_type,
   trunc(latitude * 100000),
   trunc(longitude * 100000),
-  date_trunc('minute', recorded_at)
+  floor(extract(epoch from recorded_at AT TIME ZONE 'UTC') / 60)
 )
 WHERE event_type = 'LOCATION_UPDATE';
 

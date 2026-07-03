@@ -2,8 +2,8 @@
 //
 // Dedicated page for GPS Logs functionality.
 
-import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Navigation, AlertTriangle, Eye, History, Calendar, X, Car, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Loader2, Navigation, AlertTriangle, Eye, History, Calendar, X, Car, RefreshCw, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
 import {
@@ -13,9 +13,8 @@ import {
   tableHeaderCellClass,
   tableRowClass,
   tableCellClass,
-  tablePaginationClass,
-  tablePaginationButtonClass,
 } from '@/shared/styles/table-constants';
+import { Pagination } from '@/shared/components/Pagination';
 import {
   fetchGpsLogs,
   fetchTrackedVehicles,
@@ -34,6 +33,37 @@ function formatDate(iso: string | undefined | null): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function getTripType(log: EnrichedGpsTripLog): 'RETURN' | 'OUTBOUND' {
+  return String(log.tripType ?? '').toUpperCase() === 'RETURN' ? 'RETURN' : 'OUTBOUND';
+}
+
+function getMissionDisplay(log: EnrichedGpsTripLog): string {
+  const tripType = getTripType(log);
+  if (tripType === 'RETURN') {
+    return log.parentGpsRecordNo ? `${log.parentGpsRecordNo} (Outbound)` : 'Standalone';
+  }
+  if (log.pairedReturnGpsRecordNo) {
+    return `${log.pairedReturnGpsRecordNo} (Return)`;
+  }
+  return 'Standalone';
+}
+
+function TripTypeBadge({ tripType }: { tripType: 'RETURN' | 'OUTBOUND' }) {
+  const isReturn = tripType === 'RETURN';
+  const Icon = isReturn ? ArrowDownLeft : ArrowUpRight;
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold',
+      isReturn
+        ? 'border-blue-200 bg-blue-50 text-blue-700'
+        : 'border-orange-200 bg-orange-50 text-orange-700',
+    )}>
+      <Icon className="size-3.5" />
+      {isReturn ? 'Return' : 'Outbound'}
+    </span>
+  );
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -62,6 +92,8 @@ interface LogsPageProps {
 export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilterChange, dateFilter, onDateFilterChange }: LogsPageProps) {
   const { toast } = useNotification();
 
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
   const [result, setResult] = useState<GpsLogsResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +104,11 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
   const [vehiclesLoading, setVehiclesLoading] = useState(true);
   const [tripDetailLogId, setTripDetailLogId] = useState<string | null>(null);
   const [tripDetailOpen, setTripDetailOpen] = useState(false);
+
+  const handleOpenTripDetails = (id: string) => {
+    setTripDetailLogId(id);
+    setTripDetailOpen(true);
+  };
 
   // Load tracked vehicles
   useEffect(() => {
@@ -104,11 +141,16 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
 
   useEffect(() => { loadLogs(); }, [loadLogs]);
 
+  // Clear sync banner timer on unmount
+  useEffect(() => {
+    return () => clearTimeout(syncTimerRef.current);
+  }, []);
+
   const handleSyncFromTelemetry = async () => {
-    if (!vehicleFilter) { toast('Please select a vehicle first', 'info'); return; }
     if (!dateFilter) { toast('Please select a date first', 'info'); return; }
     try {
       setSyncing(true);
+      clearTimeout(syncTimerRef.current);
       setSyncHistoryResult(null);
       const res = await fetch('/api/gps-logs/sync-from-telemetry', {
         method: 'POST',
@@ -123,10 +165,15 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
         message: `Synced GPS trip logs from telemetry. ${data.created} created, ${data.updated} updated, ${data.skipped} skipped, ${data.failed} failed.`,
         timestamp: new Date().toISOString(),
       } as any);
+      // Show toast notification (auto-dismisses via NotificationContext)
       toast(data.created + data.updated > 0
         ? `Sync complete — ${data.created} created, ${data.updated} updated`
         : 'No telemetry records found to sync.',
         data.created + data.updated > 0 ? 'success' : 'info');
+      // Auto-dismiss sync banner after 5 seconds
+      syncTimerRef.current = setTimeout(() => {
+        setSyncHistoryResult(null);
+      }, 5000);
       await loadLogs();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Sync from telemetry failed', 'error');
@@ -136,6 +183,7 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
   const handleRefresh = () => { loadLogs(); };
 
   const today = new Date().toISOString().split('T')[0];
+  const displayLogs = result?.data ?? [];
 
   function handleViewDetails(log: EnrichedGpsTripLog) {
     setTripDetailLogId(log.id);
@@ -197,10 +245,10 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
       </button>
       <button
         onClick={handleSyncFromTelemetry}
-        disabled={syncing || !vehicleFilter || !dateFilter}
+        disabled={syncing || !dateFilter}
         className={cn(
           'inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.97] h-10',
-          syncing || !vehicleFilter || !dateFilter ? 'bg-brand-teal/50 cursor-not-allowed' : 'bg-brand-teal hover:bg-brand-teal/80',
+          syncing || !dateFilter ? 'bg-brand-teal/50 cursor-not-allowed' : 'bg-brand-teal hover:bg-brand-teal/80',
         )}
       >
         {syncing ? <Loader2 className="size-4 animate-spin" /> : <History className="size-4" />}
@@ -214,6 +262,7 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
       <TripDetailsModal
         isOpen={tripDetailOpen}
         onClose={() => { setTripDetailOpen(false); setTripDetailLogId(null); }}
+        onOpenTrip={handleOpenTripDetails}
         logId={tripDetailLogId}
       />
 
@@ -227,9 +276,9 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
         />
       </div>
 
-      {/* Sync banner */}
+      {/* Sync banner — auto-dismisses after 5 seconds */}
       {syncHistoryResult && (
-        <div className={cn('rounded-lg border px-4 py-2.5 text-sm', syncHistoryResult.synced ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800')}>
+        <div className={cn('relative rounded-lg border px-4 py-2.5 pr-10 text-sm', syncHistoryResult.synced ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800')}>
           <span className="font-medium">Last sync:</span> {syncHistoryResult.message ?? 'Completed'}
           {syncHistoryResult.gps_logs_saved != null && <> — {syncHistoryResult.gps_logs_saved} logs saved</>}
           {syncHistoryResult.gps_logs_failed ? `, ${syncHistoryResult.gps_logs_failed} failed` : ''}
@@ -239,6 +288,16 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
               {syncHistoryResult.travel_order_status}
             </span>
           )}
+          <button
+            onClick={() => {
+              clearTimeout(syncTimerRef.current);
+              setSyncHistoryResult(null);
+            }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1 text-zinc-400 transition-colors hover:bg-white/60 hover:text-zinc-600"
+            aria-label="Dismiss sync banner"
+          >
+            <X className="size-4" />
+          </button>
         </div>
       )}
 
@@ -282,24 +341,32 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                 <thead>
                   <tr className={tableHeaderClass}>
                     <th className={tableHeaderCellClass}>Date</th>
+                    <th className={tableHeaderCellClass}>GPS Number</th>
                     <th className={tableHeaderCellClass}>TO Status</th>
                     <th className={tableHeaderCellClass}>Linked TO Number</th>
                     <th className={tableHeaderCellClass}>Vehicle</th>
                     <th className={tableHeaderCellClass}>Driver</th>
+                    <th className={tableHeaderCellClass}>Trip Type</th>
                     <th className={tableHeaderCellClass}>Trip Status</th>
                     <th className={cn(tableHeaderCellClass, 'text-center')}>Anomaly</th>
                     <th className={cn(tableHeaderCellClass, 'text-right')}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {result.data.map((log) => {
+                  {displayLogs.map((log) => {
                     const hasAnomaly = log.anomalyFlag && !log.toNumber;
+                    const tripType = getTripType(log);
                     const isCompleted = log.tripStatusGps === 'completed' || log.tripStatusGps === 'arrived' || (log.departureTimeGps && log.arrivalTimeGps);
                     const isOngoing = log.tripStatusGps === 'en-route' || log.tripStatusGps === 'departed' || log.tripStatusGps === 'ongoing' || log.tripStatusGps === 'tracking_started';
                     const tripStatus = isCompleted ? 'Completed' : isOngoing ? 'Ongoing' : log.tripStatusGps === 'cancelled' ? 'Cancelled' : log.tripStatusGps === 'pending' ? 'Not Synced' : 'No GPS';
                     return (
                       <tr key={log.id} className={cn(tableRowClass, hasAnomaly && 'bg-red-50/40 hover:bg-red-50/60')}>
                         <td className={tableCellClass}>{formatDate(log.toDate || log.tripDate || log.createdAt || log.departureTimeGps)}</td>
+                        <td className={tableCellClass}>
+                          <span className="font-mono text-xs text-brand-teal font-medium">
+                            {log.gpsRecordNo || '—'}
+                          </span>
+                        </td>
                         <td className={tableCellClass}>
                           {log.toStatusAuto ? <span className="text-xs text-zinc-500">{log.toStatusAuto}</span> : hasAnomaly ? <span className="text-xs text-orange-600 font-medium">NO TO</span> : <span className="text-zinc-300">—</span>}
                         </td>
@@ -313,6 +380,7 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                           </span>
                         </td>
                         <td className={cn(tableCellClass, 'max-w-32 truncate')} title={log.driverName}>{log.driverName}</td>
+                        <td className={tableCellClass}><TripTypeBadge tripType={tripType} /></td>
                         <td className={tableCellClass}>
                           <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize', STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600')}>
                             {tripStatus}
@@ -337,43 +405,52 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                 </tbody>
               </table>
             </div>
-            <div className={tablePaginationClass}>
-              <p className="text-xs text-zinc-400">
-                Showing {Math.min((page - 1) * pageSize + 1, result.total)}–{Math.min(page * pageSize, result.total)} of {result.total}
-              </p>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className={tablePaginationButtonClass}>Previous</button>
-                <span className="text-xs text-zinc-400">Page {page} of {Math.ceil(result.total / pageSize)}</span>
-                <button onClick={() => setPage((p) => Math.min(Math.ceil(result.total / pageSize), p + 1))} disabled={page >= Math.ceil(result.total / pageSize)} className={tablePaginationButtonClass}>Next</button>
-              </div>
-            </div>
+            <Pagination
+              currentPage={page}
+              totalPages={Math.ceil(result.total / pageSize)}
+              totalItems={result.total}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </div>
 
           {/* Mobile cards */}
           <div className="space-y-3 md:hidden">
-            {result.data.map((log) => {
+            {displayLogs.map((log) => {
               const hasAnomaly = log.anomalyFlag && !log.toNumber;
+              const tripType = getTripType(log);
               const isCompleted = log.tripStatusGps === 'completed' || log.tripStatusGps === 'arrived' || (log.departureTimeGps && log.arrivalTimeGps);
               const isOngoing = log.tripStatusGps === 'en-route' || log.tripStatusGps === 'departed' || log.tripStatusGps === 'ongoing' || log.tripStatusGps === 'tracking_started';
               const tripStatus = isCompleted ? 'Completed' : isOngoing ? 'Ongoing' : log.tripStatusGps === 'cancelled' ? 'Cancelled' : log.tripStatusGps === 'pending' ? 'Not Synced' : 'No GPS';
               return (
                 <div key={log.id} className={cn('rounded-xl bg-white shadow-brand border border-zinc-100 overflow-hidden', hasAnomaly && 'ring-1 ring-red-200')}>
-                  <div className="flex items-center justify-between bg-brand-cream/60 px-3 py-2.5">
+                <div className="flex items-center justify-between bg-brand-cream/60 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="text-xs text-zinc-500">{formatDate(log.toDate || log.tripDate || log.createdAt || log.departureTimeGps)}</p>
+                      <p className="text-xs font-mono text-brand-teal font-medium mt-0.5">
+                        GPS Number: {log.gpsRecordNo || '—'}
+                      </p>
                       {log.toNumber && <p className="text-xs font-mono text-brand-teal font-medium mt-0.5">{log.toNumber}</p>}
                     </div>
-                    <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize', STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600')}>
-                      {tripStatus}
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <TripTypeBadge tripType={tripType} />
+                      <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize', STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600')}>
+                        {tripStatus}
+                      </span>
+                    </div>
                   </div>
                   <div className="px-3 py-2.5 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">
-                        <Car className="size-3 text-zinc-400" />
-                        {log.vehiclePlateNo}
-                      </span>
-                      <span className="text-sm text-zinc-700 truncate">{log.driverName}</span>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">
+                          <Car className="size-3 text-zinc-400" />
+                          {log.vehiclePlateNo}
+                        </span>
+                        <span className="text-sm text-zinc-700 truncate">{log.driverName}</span>
+                      </div>
+                      <div className="rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
+                        {log.missionDisplay ?? getMissionDisplay(log)}
+                      </div>
                     </div>
                     {hasAnomaly && (
                       <div className="flex items-center gap-1 rounded-md bg-orange-50 px-3 py-1.5">
@@ -391,16 +468,13 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                 </div>
               );
             })}
-            <div className={tablePaginationClass}>
-              <p className="text-xs text-zinc-400">
-                {Math.min((page - 1) * pageSize + 1, result.total)}–{Math.min(page * pageSize, result.total)} of {result.total}
-              </p>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className={tablePaginationButtonClass}>Previous</button>
-                <span className="text-xs text-zinc-400">{page}/{Math.ceil(result.total / pageSize)}</span>
-                <button onClick={() => setPage((p) => Math.min(Math.ceil(result.total / pageSize), p + 1))} disabled={page >= Math.ceil(result.total / pageSize)} className={tablePaginationButtonClass}>Next</button>
-              </div>
-            </div>
+            <Pagination
+              currentPage={page}
+              totalPages={Math.ceil(result.total / pageSize)}
+              totalItems={result.total}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </div>
         </>
       )}

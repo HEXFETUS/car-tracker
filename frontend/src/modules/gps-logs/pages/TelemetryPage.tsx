@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Navigation, AlertTriangle, Calendar, X, Car, RefreshCw,
-  User, MapPin, Zap, Timer, Power, PowerOff, Move, Fuel, AlertCircle,
+  User, MapPin, Zap, Timer, Power, PowerOff, Activity, Fuel, AlertCircle,
 } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
@@ -17,9 +17,8 @@ import {
   tableHeaderCellClass,
   tableRowClass,
   tableCellClass,
-  tablePaginationClass,
-  tablePaginationButtonClass,
 } from '@/shared/styles/table-constants';
+import { Pagination } from '@/shared/components/Pagination';
 import {
   fetchTelemetry,
   fetchTrackedVehicles,
@@ -54,12 +53,20 @@ const EVENT_CONFIG: Record<string, { color: string; icon: React.ReactNode }> = {
     color: 'bg-zinc-100 text-zinc-600 border-zinc-300',
     icon: <PowerOff className="size-3" />,
   },
+  MOTION_STARTED: {
+    color: 'bg-blue-50 text-blue-700 border-blue-200',
+    icon: <Activity className="size-3" />,
+  },
   MOVING: {
     color: 'bg-blue-50 text-blue-700 border-blue-200',
-    icon: <Move className="size-3" />,
+    icon: <Activity className="size-3" />,
   },
   IDLING: {
     color: 'bg-amber-50 text-amber-700 border-amber-200',
+    icon: <Timer className="size-3" />,
+  },
+  IDLING_TOO_LONG: {
+    color: 'bg-orange-50 text-orange-700 border-orange-200',
     icon: <Timer className="size-3" />,
   },
   LOCATION_UPDATE: {
@@ -106,15 +113,32 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    setVehiclesLoading(true);
-    fetchTrackedVehicles()
-      .then((list) => { if (!cancelled) setVehicles(list); })
-      .catch(() => { if (!cancelled) toast('Failed to load vehicles', 'error'); })
-      .finally(() => { if (!cancelled) setVehiclesLoading(false); });
-    return () => { cancelled = true; };
-  }, [toast]);
+  // Helper: format idling duration in minutes (e.g. "10m") if available
+  function formatIdlingDuration(row: TelemetryRow): string | null {
+    if (row.eventType !== 'IDLING_TOO_LONG') return null;
+    const raw = (row as any).idlingDurationMinutes;
+    if (raw != null) return `${Number(raw)}m`;
+    if (row.recordedAt) {
+      const t1 = new Date(row.recordedAt).getTime();
+      const prev = row.ignition != null || row.speedKmh != null || row.fuelLiters != null
+        ? new Date((row as any).previousRecordedAt || row.recordedAt).getTime()
+        : NaN;
+      if (!isNaN(prev) && t1 > prev) {
+        const minutes = Math.max(1, Math.round((t1 - prev) / 60000));
+        return `${minutes}m`;
+      }
+    }
+    return null;
+  }
+
+  // Badge label helper
+  function getEventLabel(row: TelemetryRow): string {
+    if (row.eventType === 'IDLING_TOO_LONG') {
+      const dur = formatIdlingDuration(row);
+      return dur ? `IDLING TOO LONG • ${dur}` : 'IDLING TOO LONG';
+    }
+    return row.eventType.replace(/_/g, ' ');
+  }
 
   const loadTelemetry = useCallback(async () => {
     try {
@@ -145,6 +169,17 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
   const today = new Date().toISOString().split('T')[0];
 
   const handleRefresh = () => { loadTelemetry(); };
+
+  // Load tracked vehicles
+  useEffect(() => {
+    let cancelled = false;
+    setVehiclesLoading(true);
+    fetchTrackedVehicles()
+      .then((list) => { if (!cancelled) setVehicles(list); })
+      .catch(() => { if (!cancelled) toast('Failed to load vehicles', 'error'); })
+      .finally(() => { if (!cancelled) setVehiclesLoading(false); });
+    return () => { cancelled = true; };
+  }, [toast]);
 
   // ── Filters ──
   const filters = (
@@ -178,8 +213,10 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
           <option value="">All Events</option>
           <option value="IGNITION_ON">Ignition On</option>
           <option value="IGNITION_OFF">Ignition Off</option>
+          <option value="MOTION_STARTED">Motion Started</option>
           <option value="MOVING">Moving</option>
           <option value="IDLING">Idling</option>
+          <option value="IDLING_TOO_LONG">Idling Too Long</option>
           <option value="LOCATION_UPDATE">Location Update</option>
           <option value="SPEEDING">Speeding</option>
           <option value="LOW_FUEL">Low Fuel</option>
@@ -317,7 +354,7 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                         <td className={tableCellClass}>
                           <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium', evt.color)}>
                             {evt.icon}
-                            {row.eventType.replace(/_/g, ' ')}
+                            {getEventLabel(row)}
                           </span>
                         </td>
                         <td className={cn(tableCellClass, 'max-w-48 truncate')} title={row.locationName ?? ''}>
@@ -347,16 +384,13 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                 </tbody>
               </table>
             </div>
-            <div className={tablePaginationClass}>
-              <p className="text-xs text-zinc-400">
-                Showing {Math.min((page - 1) * telemetryPageSize + 1, total)}–{Math.min(page * telemetryPageSize, total)} of {total}
-              </p>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className={tablePaginationButtonClass}>Previous</button>
-                <span className="text-xs text-zinc-400">Page {page} of {Math.ceil(total / telemetryPageSize)}</span>
-                <button onClick={() => setPage((p) => Math.min(Math.ceil(total / telemetryPageSize), p + 1))} disabled={page >= Math.ceil(total / telemetryPageSize)} className={tablePaginationButtonClass}>Next</button>
-              </div>
-            </div>
+            <Pagination
+              currentPage={page}
+              totalPages={Math.ceil(total / telemetryPageSize)}
+              totalItems={total}
+              pageSize={telemetryPageSize}
+              onPageChange={setPage}
+            />
           </div>
 
           {/* Mobile cards */}
@@ -372,7 +406,7 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                     </div>
                     <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', evt.color)}>
                       {evt.icon}
-                      {row.eventType.replace(/_/g, ' ')}
+                      {getEventLabel(row)}
                     </span>
                   </div>
                   <div className="px-3 py-2.5 space-y-2">
@@ -408,16 +442,13 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                 </div>
               );
             })}
-            <div className={tablePaginationClass}>
-              <p className="text-xs text-zinc-400">
-                {Math.min((page - 1) * telemetryPageSize + 1, total)}–{Math.min(page * telemetryPageSize, total)} of {total}
-              </p>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className={tablePaginationButtonClass}>Previous</button>
-                <span className="text-xs text-zinc-400">{page}/{Math.ceil(total / telemetryPageSize)}</span>
-                <button onClick={() => setPage((p) => Math.min(Math.ceil(total / telemetryPageSize), p + 1))} disabled={page >= Math.ceil(total / telemetryPageSize)} className={tablePaginationButtonClass}>Next</button>
-              </div>
-            </div>
+            <Pagination
+              currentPage={page}
+              totalPages={Math.ceil(total / telemetryPageSize)}
+              totalItems={total}
+              pageSize={telemetryPageSize}
+              onPageChange={setPage}
+            />
           </div>
         </>
       )}

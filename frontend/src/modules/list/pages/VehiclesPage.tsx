@@ -10,6 +10,7 @@ import {
   tableRowClass,
   tableCellClass,
 } from '@/shared/styles/table-constants';
+import { Pagination } from '@/shared/components/Pagination';
 import { AddVehicleModal } from '../components/AddVehicleModal';
 import { VehicleDetailsModal } from '../components/VehicleDetailsModal';
 import { fetchVehicles, createVehicle } from '../api/vehicles-api';
@@ -26,6 +27,8 @@ export function VehiclesPage({ searchQuery = '' }: VehiclesPageProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
 
   const loadVehicles = useCallback(async () => {
     try {
@@ -102,6 +105,10 @@ export function VehiclesPage({ searchQuery = '' }: VehiclesPageProps) {
     return { total, active, underRepair };
   }, [vehicles]);
 
+  // ── Pagination ──
+  const totalPages = Math.ceil(filteredVehicles.length / pageSize);
+  const paginatedVehicles = filteredVehicles.slice((page - 1) * pageSize, page * pageSize);
+
   // ── Empty state ──
   if (loading) {
     return (
@@ -166,8 +173,8 @@ export function VehiclesPage({ searchQuery = '' }: VehiclesPageProps) {
                   <th className={cn(tableHeaderCellClass, 'text-right')}>Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                {filteredVehicles.map((vehicle) => (
+                  <tbody>
+                {paginatedVehicles.map((vehicle) => (
                   <tr key={vehicle.id} className={tableRowClass}>
                     <td className={tableCellClass}>{vehicle.plateNumber}</td>
                     <td className={tableCellClass}>{vehicle.make} {vehicle.model}</td>
@@ -207,7 +214,7 @@ export function VehiclesPage({ searchQuery = '' }: VehiclesPageProps) {
 
           {/* ── Mobile Cards ── */}
           <div className="space-y-3 md:hidden">
-            {filteredVehicles.map((vehicle) => (
+            {paginatedVehicles.map((vehicle) => (
               <div key={vehicle.id} className="rounded-xl bg-white p-4 shadow-brand border border-zinc-100">
                 <div className="flex items-center justify-between mb-2">
                   <div>
@@ -240,6 +247,15 @@ export function VehiclesPage({ searchQuery = '' }: VehiclesPageProps) {
                 </button>
               </div>
             ))}
+          {filteredVehicles.length > 0 && (
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              totalItems={filteredVehicles.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
+          )}
           </div>
         </>
       )}

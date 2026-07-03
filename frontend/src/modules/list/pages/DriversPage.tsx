@@ -10,6 +10,7 @@ import {
   tableRowClass,
   tableCellClass,
 } from '@/shared/styles/table-constants';
+import { Pagination } from '@/shared/components/Pagination';
 import { AddDriverModal } from '../components/AddDriverModal';
 import { DriverDetailsModal } from '../components/DriverDetailsModal';
 import { fetchDrivers, createDriver } from '../api/drivers-api';
@@ -46,6 +47,8 @@ export function DriversPage({ searchQuery = '' }: DriversPageProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
 
   const loadDrivers = useCallback(async () => {
     try {
@@ -111,6 +114,10 @@ export function DriversPage({ searchQuery = '' }: DriversPageProps) {
         (d.address && d.address.toLowerCase().includes(q)),
     );
   }, [drivers, searchQuery]);
+
+  // ── Pagination ──
+  const totalPages = Math.ceil(filteredDrivers.length / pageSize);
+  const paginatedDrivers = filteredDrivers.slice((page - 1) * pageSize, page * pageSize);
 
   // ── Stats ──
   const stats = useMemo(() => {
@@ -194,8 +201,8 @@ export function DriversPage({ searchQuery = '' }: DriversPageProps) {
                   <th className={cn(tableHeaderCellClass, 'text-right')}>Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                {filteredDrivers.map((driver) => {
+                  <tbody>
+                {paginatedDrivers.map((driver) => {
                   const expired = isExpired(driver.expiryDate);
                   const badge = STATUS_BADGES[driver.status ?? 'active'] || STATUS_BADGES.active;
                   return (
@@ -247,7 +254,7 @@ export function DriversPage({ searchQuery = '' }: DriversPageProps) {
 
           {/* ── Mobile Cards ── */}
           <div className="space-y-3 md:hidden">
-            {filteredDrivers.map((driver) => {
+            {paginatedDrivers.map((driver) => {
               const expired = isExpired(driver.expiryDate);
               const badge = STATUS_BADGES[driver.status ?? 'active'] || STATUS_BADGES.active;
               return (
@@ -285,6 +292,15 @@ export function DriversPage({ searchQuery = '' }: DriversPageProps) {
                 </div>
               );
             })}
+          {filteredDrivers.length > 0 && (
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              totalItems={filteredDrivers.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
+          )}
           </div>
         </>
       )}

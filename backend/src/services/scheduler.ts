@@ -68,36 +68,50 @@ const EVENT_TYPE = {
 } as const;
 
 function canonicalEventType(sourceEventType: string): string | null {
+  let result: string | null;
   switch (sourceEventType) {
     case 'IGNITION ON ALERT':
     case 'IGNITION_ON':
-      return EVENT_TYPE.IGNITION_ON;
+      result = EVENT_TYPE.IGNITION_ON;
+      break;
     case 'IGNITION OFF ALERT':
     case 'IGNITION_OFF':
-      return EVENT_TYPE.IGNITION_OFF;
+      result = EVENT_TYPE.IGNITION_OFF;
+      break;
     case 'LOCATION UPDATE ALERT':
     case 'LOCATION UPDATE':
     case 'LOCATION_UPDATE':
-      return EVENT_TYPE.LOCATION_UPDATE;
+      result = EVENT_TYPE.LOCATION_UPDATE;
+      break;
     case 'IDLING ALERT':
     case 'IDLING TOO LONG ALERT':
     case 'IDLING':
     case 'IDLING_TOO_LONG':
-      return EVENT_TYPE.IDLING;
+      result = EVENT_TYPE.IDLING;
+      break;
     case 'MOVING ALERT':
     case 'MOTION_STARTED':
-      return EVENT_TYPE.MOTION_STARTED;
+      result = EVENT_TYPE.MOTION_STARTED;
+      break;
     case 'SPEEDING ALERT':
     case 'SPEEDING':
-      return EVENT_TYPE.SPEEDING;
+      result = EVENT_TYPE.SPEEDING;
+      break;
     case 'LOW FUEL ALERT':
     case 'LOW_FUEL':
-      return EVENT_TYPE.LOW_FUEL;
+      result = EVENT_TYPE.LOW_FUEL;
+      break;
     case 'NO_APPROVED_TRAVEL_ORDER':
-      return EVENT_TYPE.NO_APPROVED_TRAVEL_ORDER;
+      result = EVENT_TYPE.NO_APPROVED_TRAVEL_ORDER;
+      break;
     default:
-      return null;
+      result = null;
+      break;
   }
+  if (sourceEventType !== result) {
+    console.log('[EVENT NORMALIZED]', { incoming: sourceEventType, saved: result });
+  }
+  return result;
 }
 
 // ── Public API ─────────────────────────────────────────────────
@@ -446,6 +460,7 @@ async function runCycle(): Promise<void> {
       toNumber: string | null;
       timestamp: string;
       message: string;
+      tripId?: string | null;
       idleAlertCount?: number;
       idlingThresholdReached?: number | null;
       idlingStartedAt?: string | null;
@@ -612,6 +627,12 @@ async function runCycle(): Promise<void> {
             telemetrySkipped += 1;
             continue;
           }
+          console.log("[SCHEDULER RECEIVED]", {
+            eventType,
+            tripId: alert.tripId ?? null,
+            vehicleId,
+            timestamp: alert.timestamp
+          });
 
           const spd = Number(alert.speed || 0);
           const ign = alert.ignition;
@@ -630,15 +651,21 @@ async function runCycle(): Promise<void> {
           const rounded = new Date(Math.floor(now / intervalMs) * intervalMs).toISOString();
           const recordedAt = rounded;
 
-          let activeTripId: string | null = null;
+          let activeTripId: string | null = alert.tripId ?? null;
           if (finalEventType === EVENT_TYPE.IGNITION_ON) {
-            activeTripId = await getLatestActiveTripId(vehicleId) ?? randomUUID();
+            // ── IMPORTANT: Always generate a NEW UUID for each IGNITION_ON ──
+            // DO NOT reuse an activeTripId from a previous trip cycle.
+            // A new ignition cycle = a brand new trip = a brand new UUID.
+            // The alert.tripId from tripStateTracker is non-UUID format,
+            // and getLatestActiveTripId() would return the OLD trip's UUID.
+            activeTripId = randomUUID();
+            console.log(`[ACTIVE TRIP] Created UUID ${activeTripId} for vehicle=${vehicleId} IGNITION_ON`);
           } else if (finalEventType === EVENT_TYPE.IGNITION_OFF) {
-            activeTripId = await getLatestActiveTripId(vehicleId);
+            activeTripId = activeTripId ?? await getLatestActiveTripId(vehicleId);
           } else if (finalEventType === EVENT_TYPE.IDLING || finalEventType === EVENT_TYPE.MOTION_STARTED || finalEventType === EVENT_TYPE.LOCATION_UPDATE) {
-            activeTripId = await getLatestActiveTripId(vehicleId) ?? randomUUID();
+            activeTripId = activeTripId ?? await getLatestActiveTripId(vehicleId) ?? randomUUID();
           } else {
-            activeTripId = await getLatestActiveTripId(vehicleId);
+            activeTripId = activeTripId ?? await getLatestActiveTripId(vehicleId);
             if (!activeTripId) {
               console.log(`[scheduler] SKIPPING ${finalEventType} for ${vehicleId} - no active trip found`);
               telemetrySkipped += 1;
@@ -647,10 +674,10 @@ async function runCycle(): Promise<void> {
           }
 
           if (finalEventType === EVENT_TYPE.IGNITION_ON && activeTripId) {
-            const alreadySavedOn = await telemetryTripEventExists(vehicleId, activeTripId, EVENT_TYPE.IGNITION_ON);
-            if (alreadySavedOn) {
+            const latestTripEventType = await getLatestCanonicalTripEventType(vehicleId, activeTripId);
+            if (latestTripEventType === EVENT_TYPE.IGNITION_ON) {
               telemetrySkipped += 1;
-              console.log(`[scheduler] SKIPPING IGNITION_ON for ${vehicleId} - already saved in this trip`);
+              console.log(`[scheduler] SKIPPING IGNITION_ON for ${vehicleId} - latest trip event is already IGNITION_ON`);
               continue;
             }
           }
@@ -662,10 +689,10 @@ async function runCycle(): Promise<void> {
               console.log(`[scheduler] SKIPPING IGNITION_OFF for ${vehicleId} - no active trip found`);
               continue;
             }
-            const alreadySavedOff = await telemetryTripEventExists(vehicleId, activeTripId, EVENT_TYPE.IGNITION_OFF);
-            if (alreadySavedOff) {
+            const latestTripEventType = await getLatestCanonicalTripEventType(vehicleId, activeTripId);
+            if (latestTripEventType === EVENT_TYPE.IGNITION_OFF) {
               telemetrySkipped += 1;
-              console.log(`[scheduler] SKIPPING IGNITION_OFF for ${vehicleId} - already saved in this trip`);
+              console.log(`[scheduler] SKIPPING IGNITION_OFF for ${vehicleId} - latest trip event is already IGNITION_OFF`);
               continue;
             }
             // IGNITION_OFF always proceeds to save and send
@@ -748,6 +775,11 @@ async function runCycle(): Promise<void> {
             speed: spd,
             ignition: effectiveIgnition,
             message: alert.message?.slice(0, 80)
+          });
+          console.log("[DB INSERT]", {
+            finalEventType,
+            tripId: activeTripId,
+            vehicleId
           });
 
           const savedTelemetry = await insertTelemetry({
@@ -894,6 +926,40 @@ async function telemetryTripEventExists(
     [vehicleId, activeTripId, eventType],
   );
   return result.rows.length > 0;
+}
+
+async function getLatestCanonicalTripEventType(
+  vehicleId: string,
+  activeTripId: string,
+): Promise<string | null> {
+  const pool = getPool();
+  const result = await pool.query<{ event_type: string }>(
+    `SELECT CASE trim(event_type)
+        WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+        WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+        WHEN 'IGNITION_ON' THEN 'IGNITION_ON'
+        WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
+        WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
+        WHEN 'IGNITION_OFF' THEN 'IGNITION_OFF'
+        WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
+        WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
+        WHEN 'LOCATION_UPDATE' THEN 'LOCATION_UPDATE'
+        WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
+        WHEN 'MOTION_STARTED' THEN 'MOTION_STARTED'
+        WHEN 'IDLING ALERT' THEN 'IDLING'
+        WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
+        WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+        WHEN 'IDLING' THEN 'IDLING'
+        ELSE trim(event_type)
+      END AS event_type
+       FROM gps_telemetry
+      WHERE vehicle_id = $1
+        AND active_trip_id = $2
+      ORDER BY recorded_at DESC
+      LIMIT 1`,
+    [vehicleId, activeTripId],
+  );
+  return result.rows[0]?.event_type ?? null;
 }
 
 

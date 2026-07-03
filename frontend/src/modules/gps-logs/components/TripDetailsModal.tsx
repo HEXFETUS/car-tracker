@@ -16,6 +16,8 @@ import {
   ClipboardCheck,
   MapPinned,
   Activity,
+  ArrowUpRight,
+  ArrowDownLeft,
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -33,6 +35,7 @@ L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
 interface TripDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenTrip?: (id: string) => void;
   logId: string | null;
 }
 
@@ -53,15 +56,7 @@ function formatNumber(val: number | null | undefined, decimals = 2): string {
   return Number(val).toFixed(decimals);
 }
 
-function TripStatusBadge({ status, anomalyFlag }: { status: string; anomalyFlag: boolean }) {
-  if (anomalyFlag) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
-        Anomaly Detected
-      </span>
-    );
-  }
-
+function TripStatusBadge({ status }: { status: string }) {
   const config: Record<string, { label: string; className: string }> = {
     completed: { label: 'Trip Completed', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
     arrived: { label: 'Trip Completed', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
@@ -86,7 +81,32 @@ function TripStatusBadge({ status, anomalyFlag }: { status: string; anomalyFlag:
   );
 }
 
-export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalProps) {
+function TripDirectionBadge({ tripType }: { tripType: string | null | undefined }) {
+  const isReturn = String(tripType ?? '').toUpperCase() === 'RETURN';
+  const Icon = isReturn ? ArrowDownLeft : ArrowUpRight;
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold',
+      isReturn
+        ? 'border-blue-200 bg-blue-50 text-blue-700'
+        : 'border-orange-200 bg-orange-50 text-orange-700',
+    )}>
+      <Icon className="size-3.5" />
+      {isReturn ? 'Return Trip' : 'Outbound Trip'}
+    </span>
+  );
+}
+
+function AnomalyBadge({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
+      No TO
+    </span>
+  );
+}
+
+export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDetailsModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<TripDetailsResponse['data'] | null>(null);
@@ -216,8 +236,8 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
   // Compute display status for the modal badge
   const modalStatus =
     trip?.status === 'completed' ||
-    trip?.status === 'arrived' ||
-    (trip?.startTime && trip?.arrivedTime)
+      trip?.status === 'arrived' ||
+      (trip?.startTime && trip?.arrivedTime)
       ? 'Completed'
       : trip?.status === 'cancelled'
         ? 'Cancelled'
@@ -241,8 +261,10 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
               )}
             </div>
             {trip && (
-              <div className="ml-4">
-                <TripStatusBadge status={modalStatus} anomalyFlag={trip.anomalyFlag} />
+              <div className="ml-4 flex flex-wrap items-center gap-2">
+                <TripDirectionBadge tripType={trip.tripType} />
+                <TripStatusBadge status={modalStatus} />
+                <AnomalyBadge show={trip.anomalyFlag && !trip.linkedTO} />
               </div>
             )}
           </div>
@@ -318,26 +340,76 @@ export function TripDetailsModal({ isOpen, onClose, logId }: TripDetailsModalPro
                     </div>
                   </InfoSection>
 
-                  <InfoSection title="Destination / Arrival" icon={<Flag className="size-4 text-red-600" />}>
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                      <InfoField label="Address" value={trip.destination || '—'} />
-                      <InfoField label="Arrived Time" value={formatDateTime(trip.arrivedTime)} />
-                      <InfoField label="Arrived Coordinates" value={trip.arrivedCoordinates || '—'} />
-                      <InfoField label="Arrived Location" value={trip.arrivedLocation || '—'} />
-                    </div>
-                  </InfoSection>
+                   <InfoSection title="Destination / Arrival" icon={<Flag className="size-4 text-red-600" />}>
+                     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                       <InfoField label="Address" value={trip.destination || '—'} />
+                       <InfoField label="Arrived Time" value={formatDateTime(trip.arrivedTime)} />
+                       <InfoField label="Arrived Coordinates" value={trip.arrivedCoordinates || '—'} />
+                       <InfoField label="Arrived Location" value={trip.arrivedLocation || '—'} />
+                       <InfoField label="End Coordinates" value={trip.coordinatesDestination || '—'} />
+                     </div>
+                   </InfoSection>
 
-                  <InfoSection title="Trip Summary" icon={<BarChart3 className="size-4 text-brand-teal" />}>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      <MetricTile icon={<Route className="size-4" />} label="Route Taken" value={trip.routeRoadTaken || 'GPS Route Available'} />
-                      <MetricTile icon={<MapPinned className="size-4" />} label="Distance" value={trip.distance != null ? `${formatNumber(trip.distance, 1)} km` : '—'} />
-                      <MetricTile icon={<Timer className="size-4" />} label="Engine Hours" value={trip.engineHours != null ? `${formatNumber(trip.engineHours, 1)} hrs` : '—'} />
-                      <MetricTile icon={<Clock3 className="size-4" />} label="Moving Hours" value={trip.movingHours != null ? `${formatNumber(trip.movingHours, 1)} hrs` : '—'} />
-                      <MetricTile icon={<Gauge className="size-4" />} label="Max Speed" value={trip.maxSpeed != null ? `${formatNumber(trip.maxSpeed, 0)} kph` : '—'} />
-                      <MetricTile icon={<Activity className="size-4" />} label="End Time" value={formatDateTime(trip.endTime)} />
-                      <MetricTile icon={<MapPin className="size-4" />} label="End Coordinates" value={trip.coordinatesDestination || '—'} />
-                      <MetricTile icon={<Link2 className="size-4" />} label="Linked TO" value={trip.linkedTO || '—'} />
-                      <MetricTile icon={<ClipboardCheck className="size-4" />} label="TO Status" value={trip.toStatus || '—'} />
+                   <InfoSection title="Trip Summary" icon={<BarChart3 className="size-4 text-brand-teal" />}>
+                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                       <MetricTile icon={<Route className="size-4" />} label="Route Taken" value={trip.routeRoadTaken || 'GPS Route Available'} />
+                       <MetricTile icon={<MapPinned className="size-4" />} label="Distance" value={trip.distance != null ? `${formatNumber(trip.distance, 1)} km` : '—'} />
+                       <MetricTile icon={<Timer className="size-4" />} label="Engine Hours" value={trip.engineHours != null ? `${formatNumber(trip.engineHours, 1)} hrs` : '—'} />
+                       <MetricTile icon={<Clock3 className="size-4" />} label="Moving Hours" value={trip.movingHours != null ? `${formatNumber(trip.movingHours, 1)} hrs` : '—'} />
+                       <MetricTile icon={<Gauge className="size-4" />} label="Max Speed" value={trip.maxSpeed != null ? `${formatNumber(trip.maxSpeed, 0)} kph` : '—'} />
+                       <MetricTile icon={<Activity className="size-4" />} label="End Time" value={formatDateTime(trip.endTime)} />
+                       <MetricTile icon={<Link2 className="size-4" />} label="Linked TO" value={trip.linkedTO || '—'} />
+                       <MetricTile icon={<ClipboardCheck className="size-4" />} label="TO Status" value={trip.toStatus || '—'} />
+                     </div>
+                   </InfoSection>
+                  <InfoSection title="Linked Trip" icon={<Navigation className="size-4 text-brand-teal" />}>
+                    <div className="space-y-3">
+                      <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
+                        <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.missionDisplay || 'Standalone'}</p>
+                      </div>
+                      {trip.linkedOutboundTrip && (
+                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
+                              <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.linkedOutboundTrip.gpsRecordNo} (Outbound)</p>
+                            </div>
+                            {onOpenTrip && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onOpenTrip(trip.linkedOutboundTrip!.id);
+                                }}
+                                className="rounded-lg border border-brand-teal bg-brand-teal/5 px-3 py-2 text-xs font-semibold text-brand-teal hover:bg-brand-teal/10 transition-colors"
+                              >
+                                View Details
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {trip.linkedReturnTrip && (
+                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
+                              <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.linkedReturnTrip.gpsRecordNo} (Return)</p>
+                            </div>
+                            {onOpenTrip && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onOpenTrip(trip.linkedReturnTrip!.id);
+                                }}
+                                className="rounded-lg border border-brand-teal bg-brand-teal/5 px-3 py-2 text-xs font-semibold text-brand-teal hover:bg-brand-teal/10 transition-colors"
+                              >
+                                View Details
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </InfoSection>
                 </div>

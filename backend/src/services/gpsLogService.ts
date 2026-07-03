@@ -510,25 +510,25 @@ export async function saveGpsTripLog(logData: GpsLogInsertData): Promise<{ id: s
                parent_trip_id = COALESCE($17, parent_trip_id)
          WHERE id = $1
          RETURNING id`,
-       [
-         existingTrip.rows[0].id,
-         logData.driverId,
-         logData.originGpsStartPoint,
-         logData.destinationGpsEndPoint,
-         logData.coordinatesOrigin ?? null,
-         logData.coordinatesDestination ?? null,
-         logData.actualRouteRoadTaken,
-         logData.gpsDistanceKm,
-         logData.engineHours,
-         logData.maxSpeedKph,
-         logData.tripStatusGps,
-         logData.travelOrderId,
-         logData.toStatusAuto,
-         logData.anomalyFlag,
-         logData.notesRemarks,
-         logData.destinationVerified ?? false,
-         logData.parentTripId ?? null,
-       ],
+      [
+        existingTrip.rows[0].id,
+        logData.driverId,
+        logData.originGpsStartPoint,
+        logData.destinationGpsEndPoint,
+        logData.coordinatesOrigin ?? null,
+        logData.coordinatesDestination ?? null,
+        logData.actualRouteRoadTaken,
+        logData.gpsDistanceKm,
+        logData.engineHours,
+        logData.maxSpeedKph,
+        logData.tripStatusGps,
+        logData.travelOrderId,
+        logData.toStatusAuto,
+        logData.anomalyFlag,
+        logData.notesRemarks,
+        logData.destinationVerified ?? false,
+        logData.parentTripId ?? null,
+      ],
     );
     return result.rows[0];
   }
@@ -742,19 +742,41 @@ export interface TripLogRecord {
 }
 
 /**
- * Generate a GPS record number in the format GPS-{YEAR}-{SEQUENTIAL}
- * by querying the max existing sequence number for the current year.
+ * Generate a GPS record number in the format GPS-{YEAR}-{SEQUENTIAL}.
+ *
+ * The sequence is computed based on chronological order of trips:
+ * - Ordered by departure_time_gps ASC, then created_at ASC, then id ASC
+ * - Newer trips (by departure_time_gps) receive higher sequence numbers.
+ * - The numbering resets per calendar year extracted from the trip's own
+ *   departure time rather than from the clock at insert time.
+ *
+ * If `departureTimeGps` is null, the current local date is used as a
+ * fallback.
  */
-export async function generateGpsRecordNo(): Promise<string> {
+export async function generateGpsRecordNo(departureTimeGps: string | null): Promise<string> {
   const pool = getPool();
-  const year = new Date().getFullYear();
-  const result = await pool.query<{ max_seq: string | null }>(
-    `SELECT MAX(CAST(SPLIT_PART(gps_record_no, '-', 3) AS INTEGER)) AS max_seq
+  const tripDate = departureTimeGps ? new Date(departureTimeGps) : new Date();
+  const year = tripDate.getFullYear();
+
+  // Find the next sequence number by counting existing trips in chronological order
+  // for the same year. This ensures new trips get the correct sequence based on
+  // departure_time_gps ASC, created_at ASC, id ASC ordering.
+  const countResult = await pool.query<{ cnt: string }>(
+    `WITH year_trips AS (
+       SELECT 
+         ROW_NUMBER() OVER (
+           ORDER BY 
+             departure_time_gps ASC NULLS LAST,
+             created_at ASC,
+             id ASC
+         ) AS seq
        FROM gps_trip_logs
-      WHERE gps_record_no LIKE $1`,
-    [`GPS-${year}-%`],
+       WHERE EXTRACT(YEAR FROM COALESCE(departure_time_gps, trip_date, created_at)) = $1
+     )
+     SELECT COUNT(*) AS cnt FROM year_trips`,
+    [year],
   );
-  const nextSeq = (parseInt(result.rows[0]?.max_seq || '0', 10)) + 1;
+  const nextSeq = (parseInt(countResult.rows[0]?.cnt || '0', 10)) + 1;
   return `GPS-${year}-${String(nextSeq).padStart(4, '0')}`;
 }
 
@@ -850,9 +872,6 @@ export async function persistGpsTripLogs(
       const anomalyFlag = tripLog.anomalyFlag || noTravelOrder || unauthorizedMovement || noDriverAssigned;
 
       const anomalyNotes: string[] = [];
-      if (noTravelOrder) {
-        anomalyNotes.push('Anomaly - No TO');
-      }
       if (noDriverAssigned) {
         anomalyNotes.push('No driver assigned to this vehicle');
       }
@@ -912,7 +931,7 @@ export async function persistGpsTripLogs(
         continue;
       }
 
-      const gpsRecordNo = await generateGpsRecordNo();
+      const gpsRecordNo = await generateGpsRecordNo(tripLog.departureTimeGps);
 
       await saveGpsTripLog({
         gpsRecordNo,
@@ -993,12 +1012,291 @@ interface TelemetryGroup {
   pointCount: number;
 }
 
+type TelemetryRow = {
+  vehicle_id: string | null;
+  plate_number: string | null;
+  event_type: string | null;
+  latitude: number | string | null;
+  longitude: number | string | null;
+  speed_kmh: number | string | null;
+  location_name: string | null;
+  recorded_at: string | Date | null;
+  active_trip_id: string | null;
+};
+
+type TripCandidate = {
+  ignitionOn: TelemetryRow;
+  activeTripId: string | null;
+  locationUpdates: TelemetryRow[];
+  movingRows: TelemetryRow[];
+  maxSpeedKph: number;
+};
+
+const HOME_BASE_RADIUS_M = 100;
+const HOME_BASE_COORDINATES = [
+  { label: 'Trade St base', coordinates: '8.455012,124.623291' },
+  { label: 'Granvia St base', coordinates: '8.454818,124.62394' },
+] as const;
+
+function normalizeTelemetryEvent(eventType: string | null | undefined): string {
+  return String(eventType ?? '').trim().toUpperCase().replace(/\s+ALERT$/, '').replace(/\s+/g, '_');
+}
+
+function timestampToIso(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+
+function tripDateFromTimestamp(value: string | Date | null | undefined): string {
+  const iso = timestampToIso(value);
+  return iso ? iso.slice(0, 10) : new Date().toISOString().slice(0, 10);
+}
+
+function coordinatesFromTelemetry(row: TelemetryRow | null | undefined): string | null {
+  if (!row || row.latitude == null || row.longitude == null) return null;
+  const lat = Number(row.latitude);
+  const lng = Number(row.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? `${lat},${lng}` : null;
+}
+
+function calculateRouteDistanceKm(points: TelemetryRow[]): number {
+  let meters = 0;
+  let previousCoord: string | null = null;
+
+  for (const point of points) {
+    const coord = coordinatesFromTelemetry(point);
+    if (!coord) continue;
+    if (previousCoord) {
+      const segment = haversineDistance(previousCoord, coord);
+      if (Number.isFinite(segment)) meters += segment;
+    }
+    previousCoord = coord;
+  }
+
+  return meters / 1000;
+}
+
+async function findExistingTelemetryTripLog(params: {
+  vehicleId: string;
+  tripDate: string;
+  departureTimeGps: string;
+  arrivalTimeGps: string | null;
+  activeTripId: string | null;
+}): Promise<{ id: string } | null> {
+  const pool = getPool();
+
+  // Primary upsert key: active_trip_id (unique per trip when not null)
+  if (params.activeTripId) {
+    const existing = await pool.query<{ id: string }>(
+      `SELECT id FROM gps_trip_logs WHERE active_trip_id = $1 LIMIT 1`,
+      [params.activeTripId],
+    );
+    if (existing.rows[0]) return existing.rows[0];
+  }
+
+  // Fallback: vehicle_id + departure_time_gps + arrival_time_gps
+  // (for cases where active_trip_id is null)
+  if (params.departureTimeGps) {
+    const existing = await pool.query<{ id: string }>(
+      `SELECT id
+         FROM gps_trip_logs
+        WHERE vehicle_id = $1
+          AND trip_date = $2::date
+          AND departure_time_gps IS NOT DISTINCT FROM $3::timestamptz
+          AND arrival_time_gps IS NOT DISTINCT FROM $4::timestamptz
+          AND active_trip_id IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [params.vehicleId, params.tripDate, params.departureTimeGps, params.arrivalTimeGps],
+    );
+    if (existing.rows[0]) return existing.rows[0];
+  }
+
+  return null;
+}
+
+async function pairReturnTrip(returnLogId: string, vehicleId: string, departureTimeGps: string | null): Promise<boolean> {
+  if (!departureTimeGps) {
+    console.log('[MISSION] Skipping outbound search because return trip has no departure_time_gps');
+    return false;
+  }
+
+  console.log('[MISSION] Searching outbound...', { vehicleId, returnLogId, departureTimeGps });
+  const pool = getPool();
+  const candidate = await pool.query<{ id: string }>(
+    `SELECT id
+       FROM gps_trip_logs
+      WHERE vehicle_id = $1
+        AND trip_type = 'OUTBOUND'
+        AND parent_trip_id IS NULL
+        AND departure_time_gps IS NOT NULL
+        AND departure_time_gps < $2::timestamptz
+      ORDER BY departure_time_gps DESC
+      LIMIT 1`,
+    [vehicleId, departureTimeGps],
+  );
+
+  if (!candidate.rows[0]) {
+    console.log('[MISSION] No outbound found');
+    return false;
+  }
+
+  const outboundId = candidate.rows[0].id;
+  const updateResult = await pool.query(
+    `UPDATE gps_trip_logs
+        SET parent_trip_id = $1
+      WHERE id = $2
+        AND parent_trip_id IS NULL`,
+    [outboundId, returnLogId],
+  );
+
+  if (updateResult.rowCount === 0) {
+    console.log('[MISSION] Outbound found but return already paired or skipped');
+    return false;
+  }
+
+  console.log('[MISSION] Matched outbound', outboundId);
+  console.log('[MISSION] Mission paired');
+  return true;
+}
+
+async function upsertTelemetryTripLog(params: {
+  vehicleId: string;
+  driverId: string | null;
+  activeTripId: string | null;
+  tripDate: string;
+  originGpsStartPoint: string;
+  destinationGpsEndPoint: string;
+  coordinatesOrigin: string | null;
+  coordinatesDestination: string | null;
+  departureTimeGps: string;
+  arrivalTimeGps: string | null;
+  gpsDistanceKm: number;
+  engineHours: number;
+  maxSpeedKph: number;
+  tripStatusGps: string;
+  travelOrderId: string | null;
+  toStatusAuto: string | null;
+  anomalyFlag: boolean;
+  notesRemarks: string | null;
+  tripType: 'OUTBOUND' | 'RETURN';
+}): Promise<{ status: 'created' | 'updated'; id: string }> {
+  const pool = getPool();
+  const existingLog = await findExistingTelemetryTripLog(params);
+
+  if (existingLog) {
+    const result = await pool.query<{ id: string }>(
+      `UPDATE gps_trip_logs
+          SET driver_id = $2,
+              origin_gps_start_point = $3,
+              destination_gps_end_point = $4,
+              coordinates_origin = $5,
+              coordinates_destination = $6,
+              departure_time_gps = $7,
+              arrival_time_gps = $8,
+              gps_distance_km = $9,
+              engine_hours = $10,
+              max_speed_kph = $11,
+              trip_status_gps = $12,
+              travel_order_id = $13,
+              to_status_auto = $14,
+              anomaly_flag = $15,
+              notes_remarks = $16,
+              active_trip_id = COALESCE($17, active_trip_id),
+              trip_type = $18,
+              destination_verified = false
+        WHERE id = $1
+        RETURNING id`,
+      [
+        existingLog.id,
+        params.driverId,
+        params.originGpsStartPoint,
+        params.destinationGpsEndPoint,
+        params.coordinatesOrigin,
+        params.coordinatesDestination,
+        params.departureTimeGps,
+        params.arrivalTimeGps,
+        params.gpsDistanceKm,
+        params.engineHours,
+        params.maxSpeedKph,
+        params.tripStatusGps,
+        params.travelOrderId,
+        params.toStatusAuto,
+        params.anomalyFlag,
+        params.notesRemarks,
+        params.activeTripId,
+        params.tripType,
+      ],
+    );
+    if (params.tripType === 'RETURN') {
+      await pairReturnTrip(result.rows[0].id, params.vehicleId, params.departureTimeGps);
+    }
+    return { status: 'updated', id: result.rows[0].id };
+  }
+
+  const gpsRecordNo = await generateGpsRecordNo(params.departureTimeGps);
+  const insertResult = await pool.query<{ id: string }>(
+    `INSERT INTO gps_trip_logs
+       (gps_record_no, trip_date, vehicle_id, driver_id,
+        origin_gps_start_point, destination_gps_end_point,
+        coordinates_origin, coordinates_destination,
+        actual_route_road_taken, departure_time_gps, arrival_time_gps,
+        gps_distance_km, engine_hours, max_speed_kph,
+        trip_status_gps, travel_order_id, to_status_auto,
+        anomaly_flag, notes_remarks, active_trip_id, trip_type,
+        destination_verified, parent_trip_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+     RETURNING id`,
+    [
+      gpsRecordNo,
+      params.tripDate,
+      params.vehicleId,
+      params.driverId,
+      params.originGpsStartPoint,
+      params.destinationGpsEndPoint,
+      params.coordinatesOrigin,
+      params.coordinatesDestination,
+      '',
+      params.departureTimeGps,
+      params.arrivalTimeGps,
+      params.gpsDistanceKm,
+      params.engineHours,
+      params.maxSpeedKph,
+      params.tripStatusGps,
+      params.travelOrderId,
+      params.toStatusAuto,
+      params.anomalyFlag,
+      params.notesRemarks,
+      params.activeTripId,
+      params.tripType,
+      false,
+      null,
+    ],
+  );
+  if (params.tripType === 'RETURN') {
+    await pairReturnTrip(insertResult.rows[0].id, params.vehicleId, params.departureTimeGps);
+  }
+  return { status: 'created', id: insertResult.rows[0].id };
+}
+
+async function determineTripType(params: {
+  coordinatesOrigin: string | null;
+}): Promise<'OUTBOUND' | 'RETURN'> {
+  if (!params.coordinatesOrigin) return 'OUTBOUND';
+
+  const startsNearHome = HOME_BASE_COORDINATES.some((base) => (
+    haversineDistance(base.coordinates, params.coordinatesOrigin) <= HOME_BASE_RADIUS_M
+  ));
+
+  return startsNearHome ? 'OUTBOUND' : 'RETURN';
+}
+
 /**
  * Sync GPS trip logs from gps_telemetry records.
  *
- * Reads ALL telemetry records ordered by vehicle, active_trip_id, and recorded_at,
- * groups them by (active_trip_id OR vehicle_id+date), derives trip fields,
- * resolves travel orders, and upserts into gps_trip_logs.
+ * Reads telemetry records ordered by vehicle and recorded_at, walks each
+ * vehicle's ignition sequence, and upserts one gps_trip_logs row per real trip.
  *
  * @returns Summary of created, updated, skipped, and failed counts.
  */
@@ -1021,7 +1319,8 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
         gt.*,
         to_data.to_number AS active_to_number,
         to_data.status AS active_to_status,
-        d.full_name AS active_driver_name
+        d.full_name AS active_driver_name,
+        to_data.driver_id AS active_driver_id
       FROM gps_telemetry gt
       LEFT JOIN LATERAL (
         SELECT to_number, status, driver_id
@@ -1034,7 +1333,7 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
       ) to_data ON true
       LEFT JOIN drivers d ON d.id = to_data.driver_id
       WHERE gt.recorded_at IS NOT NULL
-      ORDER BY gt.vehicle_id, COALESCE(gt.active_trip_id, gt.vehicle_id || '::date::' || DATE(gt.recorded_at)::text), gt.recorded_at ASC`,
+      ORDER BY gt.vehicle_id, gt.recorded_at ASC`,
     );
     rows = result.rows;
   } catch (err) {
@@ -1046,188 +1345,152 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
     return { created: 0, updated: 0, skipped: 0, failed: 0 };
   }
 
-  // Group telemetry rows by composite key
-  const groups = new Map<string, any[]>();
+  const rowsByVehicle = new Map<string, TelemetryRow[]>();
   for (const row of rows) {
-    const groupKey = row.active_trip_id
-      ? `trip:${row.vehicle_id}:${row.active_trip_id}`
-      : `date:${row.vehicle_id}:${String(row.recorded_at).split('T')[0]}`;
-    if (!groups.has(groupKey)) {
-      groups.set(groupKey, []);
+    if (!row.vehicle_id) {
+      skipped += 1;
+      continue;
     }
-    groups.get(groupKey)!.push(row);
+    if (!rowsByVehicle.has(row.vehicle_id)) {
+      rowsByVehicle.set(row.vehicle_id, []);
+    }
+    rowsByVehicle.get(row.vehicle_id)!.push(row);
   }
 
-  console.log(`[syncGpsTripLogsFromTelemetry] ${rows.length} telemetry rows grouped into ${groups.size} trip groups`);
+  console.log(`[GPS TRIP] Telemetry rows=${rows.length} vehicle_streams=${rowsByVehicle.size}`);
 
-  for (const [_key, telemetryRows] of groups) {
-    try {
-      const first = telemetryRows[0];
-      const last = telemetryRows[telemetryRows.length - 1];
+  const finalizeCandidate = async (candidate: TripCandidate, ignitionOff: TelemetryRow | null) => {
+    const vehicleId = candidate.ignitionOn.vehicle_id;
+    if (!vehicleId) {
+      skipped += 1;
+      return;
+    }
 
-      // Derive vehicle_id and plate_number from first row
-      const vehicleId: string | null = first.vehicle_id ?? null;
-      if (!vehicleId) {
-        skipped += 1;
-        continue;
-      }
+    const departureTimeGps = timestampToIso(candidate.ignitionOn.recorded_at);
+    if (!departureTimeGps) {
+      skipped += 1;
+      return;
+    }
 
-      const plateNumber: string = first.plate_number ?? 'Unknown';
-      const activeTripId: string | null = first.active_trip_id ?? null;
+    if (candidate.movingRows.length === 0) {
+      console.log(`[GPS TRIP] Skipped (no movement) vehicle=${vehicleId} active_trip_id=${candidate.activeTripId ?? 'null'} departure=${departureTimeGps}`);
+      skipped += 1;
+      return;
+    }
 
-      // Trip dates
-      const firstRecordedAt: string | null = first.recorded_at ?? null;
-      const lastRecordedAt: string | null = last.recorded_at ?? null;
-      const tripDate = firstRecordedAt ? String(firstRecordedAt).split('T')[0] : new Date().toISOString().split('T')[0];
-      const departureTimeGps = firstRecordedAt;
-      const arrivalTimeGps = lastRecordedAt;
+    const lastLocationUpdate = candidate.locationUpdates[candidate.locationUpdates.length - 1];
+    const tripDate = tripDateFromTimestamp(candidate.ignitionOn.recorded_at);
+    const arrivalTimeGps = ignitionOff ? timestampToIso(lastLocationUpdate.recorded_at) : null;
+    const tripStatusGps = ignitionOff ? 'completed' : 'en-route';
+    const endTimeForEngine = timestampToIso(ignitionOff?.recorded_at ?? lastLocationUpdate.recorded_at);
 
-      // Derive origin/destination from first/last locations
-      const originGpsStartPoint = first.location_name || '';
-      const destinationGpsEndPoint = last.location_name || '';
-      const coordinatesOrigin = first.latitude != null && first.longitude != null
-        ? `${first.latitude},${first.longitude}`
-        : null;
-      const coordinatesDestination = last.latitude != null && last.longitude != null
-        ? `${last.latitude},${last.longitude}`
-        : null;
+    const coordinatesOrigin = coordinatesFromTelemetry(candidate.ignitionOn);
+    const coordinatesDestination = coordinatesFromTelemetry(lastLocationUpdate);
+    const gpsDistanceKm = calculateRouteDistanceKm(candidate.locationUpdates);
+    const startMs = new Date(departureTimeGps).getTime();
+    const endMs = endTimeForEngine ? new Date(endTimeForEngine).getTime() : startMs;
+    const engineHours = Math.max(0, (endMs - startMs) / 3600000);
 
-      // Calculate distance approx from first/last coordinates
-      let gpsDistanceKm = 0;
-      if (coordinatesOrigin && coordinatesDestination) {
-        gpsDistanceKm = haversineDistance(coordinatesOrigin, coordinatesDestination) / 1000;
-      }
+    const travelOrder = await findTravelOrderForGpsTrip(
+      vehicleId,
+      tripDate,
+      departureTimeGps,
+      arrivalTimeGps ?? endTimeForEngine,
+      coordinatesDestination,
+    );
+    const travelOrderId = travelOrder?.id ?? null;
+    const noTravelOrder = !travelOrderId;
+    const notesRemarks = null;
+    const tripType = await determineTripType({
+      coordinatesOrigin,
+    });
 
-      // Max speed across group
-      let maxSpeedKph = 0;
-      for (const row of telemetryRows) {
-        if (Number(row.speed_kmh) > maxSpeedKph) maxSpeedKph = Number(row.speed_kmh);
-      }
+    const result = await upsertTelemetryTripLog({
+      vehicleId,
+      driverId: travelOrder?.driver_id ?? null,
+      activeTripId: candidate.activeTripId,
+      tripDate,
+      originGpsStartPoint: candidate.ignitionOn.location_name || '',
+      destinationGpsEndPoint: lastLocationUpdate.location_name || '',
+      coordinatesOrigin,
+      coordinatesDestination,
+      departureTimeGps,
+      arrivalTimeGps,
+      gpsDistanceKm,
+      engineHours,
+      maxSpeedKph: candidate.maxSpeedKph,
+      tripStatusGps,
+      travelOrderId,
+      toStatusAuto: noTravelOrder ? 'NO TO' : (travelOrder?.status ?? null),
+      anomalyFlag: noTravelOrder,
+      notesRemarks,
+      tripType,
+    });
 
-      // Determine trip status based on event types in the group
-      const eventTypes = new Set(telemetryRows.map((r: any) => r.event_type));
-      const hasIgnitionOff = eventTypes.has('IGNITION OFF ALERT') || eventTypes.has('IGNITION_OFF');
-      const hasMoving = eventTypes.has('MOVING ALERT') || eventTypes.has('LOCATION UPDATE ALERT') || eventTypes.has('LOCATION_UPDATE');
-      const hasIdling = eventTypes.has('IDLING ALERT') || eventTypes.has('IDLING');
-      const hasIgnitionOn = eventTypes.has('IGNITION ON ALERT');
+    if (result.status === 'created') created += 1;
+    else updated += 1;
 
-      let tripStatusGps: string;
-      if (hasIgnitionOff) tripStatusGps = 'completed';
-      else if (hasMoving) tripStatusGps = 'en-route';
-      else if (hasIdling) tripStatusGps = 'en-route';
-      else if (hasIgnitionOn) tripStatusGps = 'departed';
-      else tripStatusGps = 'en-route';
+    console.log(`[GPS TRIP] Completed vehicle=${vehicleId} active_trip_id=${candidate.activeTripId ?? 'null'} departure=${departureTimeGps} arrival=${arrivalTimeGps ?? 'null'}`);
+    console.log(`[GPS TRIP] Trip Type ${tripType} active_trip_id=${candidate.activeTripId ?? 'null'}`);
+    console.log(`[GPS TRIP] GPS Log ${result.status === 'created' ? 'Inserted' : 'Updated'} active_trip_id=${candidate.activeTripId ?? 'null'} noTO=${noTravelOrder}`);
+  };
 
-      // Driver name from telemetry (enriched via LEFT JOIN)
-      const driverName: string | null = first.active_driver_name ?? null;
+  for (const [vehicleId, telemetryRows] of rowsByVehicle) {
+    let candidate: TripCandidate | null = null;
 
-      // Resolve travel order
-      const travelOrder = await findApprovedTravelOrderForDate(vehicleId, tripDate);
-      const travelOrderId = travelOrder?.id ?? null;
-      const toNumber: string | null = first.active_to_number ?? null;
-
-      const noTravelOrder = !travelOrderId;
-      const noDriverAssigned = !driverName;
-      const anomalyFlag = noTravelOrder || noDriverAssigned;
-
-      const anomalyNotes: string[] = [];
-      if (noTravelOrder) anomalyNotes.push('Anomaly - No TO');
-      if (noDriverAssigned) anomalyNotes.push('No driver assigned to this vehicle');
-      const notesRemarks = anomalyNotes.length > 0 ? anomalyNotes.join('; ') : null;
-      const resolvedToStatusAuto = noTravelOrder ? 'NO TO' : (travelOrder?.status ?? null);
-
-      // Engine hours estimated from telemetry span
-      const startMs = firstRecordedAt ? new Date(firstRecordedAt).getTime() : Date.now();
-      const endMs = lastRecordedAt ? new Date(lastRecordedAt).getTime() : Date.now();
-      const engineHours = Math.max(0, (endMs - startMs) / 3600000);
-
-      // Look for existing trip log by active_trip_id or by vehicle+date+departure
-      let existingLog: { id: string } | null = null;
-
-      if (activeTripId) {
-        const existing = await pool.query<{ id: string }>(
-          `SELECT id FROM gps_trip_logs WHERE active_trip_id = $1 LIMIT 1`,
-          [activeTripId],
-        );
-        existingLog = existing.rows[0] ?? null;
-      }
-
-      if (!existingLog) {
-        // Fallback: find by vehicle + date + approximate departure
-        const existing = await pool.query<{ id: string }>(
-          `SELECT id FROM gps_trip_logs
-           WHERE vehicle_id = $1
-             AND trip_date = $2::date
-             AND departure_time_gps IS NOT DISTINCT FROM $3::timestamptz
-           LIMIT 1`,
-          [vehicleId, tripDate, departureTimeGps],
-        );
-        existingLog = existing.rows[0] ?? null;
-      }
-
-      if (existingLog) {
-        // Update existing log
-        await updateGpsTripLog(existingLog.id, {
-          arrivalTimeGps,
-          destinationGpsEndPoint: destinationGpsEndPoint || undefined,
-          gpsDistanceKm,
-          engineHours,
-          maxSpeedKph,
-          tripStatusGps,
-          anomalyFlag,
-          notesRemarks,
-          travelOrderId,
-          toStatusAuto: resolvedToStatusAuto,
-        });
-        updated += 1;
-        continue;
-      }
-
-      // Create new gps_trip_logs row
-      const pool2 = getPool();
-      const gpsRecordNo = await generateGpsRecordNo();
-
-      // Insert with active_trip_id and all derived fields
+    for (const row of telemetryRows) {
       try {
-        await pool2.query(
-          `INSERT INTO gps_trip_logs
-             (gps_record_no, trip_date, vehicle_id, driver_id,
-              origin_gps_start_point, destination_gps_end_point,
-              coordinates_origin, coordinates_destination,
-              departure_time_gps, arrival_time_gps,
-              gps_distance_km, engine_hours, max_speed_kph,
-              trip_status_gps, travel_order_id, to_status_auto,
-              anomaly_flag, notes_remarks, active_trip_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-           ON CONFLICT (gps_record_no) DO UPDATE SET
-             gps_distance_km = EXCLUDED.gps_distance_km,
-             max_speed_kph = EXCLUDED.max_speed_kph,
-             engine_hours = EXCLUDED.engine_hours,
-             arrival_time_gps = EXCLUDED.arrival_time_gps,
-             trip_status_gps = EXCLUDED.trip_status_gps,
-             anomaly_flag = EXCLUDED.anomaly_flag,
-             notes_remarks = EXCLUDED.notes_remarks
-           RETURNING id`,
-          [
-            gpsRecordNo, tripDate, vehicleId, null,
-            originGpsStartPoint, destinationGpsEndPoint,
-            coordinatesOrigin, coordinatesDestination,
-            departureTimeGps, arrivalTimeGps,
-            gpsDistanceKm, engineHours, maxSpeedKph,
-            tripStatusGps, travelOrderId, resolvedToStatusAuto,
-            anomalyFlag, notesRemarks,
-            activeTripId,
-          ],
-        );
-        created += 1;
-      } catch (insertErr) {
-        // If unique constraint fails (active_trip_id), it was created by another process
-        console.log(`[syncGpsTripLogsFromTelemetry] Insert conflict (likely duplicate active_trip_id): ${(insertErr as Error).message}`);
-        skipped += 1;
+        const eventType = normalizeTelemetryEvent(row.event_type);
+
+        if (eventType === 'IGNITION_ON') {
+          if (candidate) {
+            console.log(
+              `[GPS TRIP] Started vehicle=${vehicleId} active_trip_id=${row.active_trip_id ?? 'null'} previous_active_trip_id=${candidate.activeTripId ?? 'null'} previousDeparture=${timestampToIso(candidate.ignitionOn.recorded_at)}`,
+            );
+          }
+          candidate = {
+            ignitionOn: row,
+            activeTripId: row.active_trip_id ?? null,
+            locationUpdates: [],
+            movingRows: [],
+            maxSpeedKph: 0,
+          };
+          console.log(`[GPS TRIP] Started vehicle=${vehicleId} active_trip_id=${row.active_trip_id ?? 'null'} recorded_at=${timestampToIso(row.recorded_at)}`);
+          continue;
+        }
+
+        if (!candidate) continue;
+
+        const speed = Number(row.speed_kmh) || 0;
+        candidate.maxSpeedKph = Math.max(candidate.maxSpeedKph, speed);
+
+        if (eventType === 'LOCATION_UPDATE' || eventType === 'MOVING') {
+          candidate.locationUpdates.push(row);
+
+          if (speed > 0) {
+            candidate.movingRows.push(row);
+            console.log(`[GPS TRIP] Movement detected vehicle=${vehicleId} active_trip_id=${candidate.activeTripId ?? 'null'} recorded_at=${timestampToIso(row.recorded_at)} speed=${speed}`);
+          }
+          continue;
+        }
+
+        if (eventType === 'IGNITION_OFF') {
+          await finalizeCandidate(candidate, row);
+          candidate = null;
+        }
+      } catch (rowErr) {
+        console.error('[syncGpsTripLogsFromTelemetry] Error processing telemetry row:', (rowErr as Error).message);
+        failed += 1;
       }
-    } catch (groupErr) {
-      console.error('[syncGpsTripLogsFromTelemetry] Error processing group:', (groupErr as Error).message);
-      failed += 1;
+    }
+
+    if (candidate) {
+      try {
+        await finalizeCandidate(candidate, null);
+      } catch (openTripErr) {
+        console.error('[syncGpsTripLogsFromTelemetry] Error processing open trip:', (openTripErr as Error).message);
+        failed += 1;
+      }
     }
   }
 

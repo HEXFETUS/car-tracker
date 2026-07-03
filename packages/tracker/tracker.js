@@ -413,35 +413,51 @@ function getPostgresPool() {
 }
 
 function canonicalEventType(eventType) {
-  switch (String(eventType || '')) {
+  const raw = String(eventType || '');
+  let result;
+  switch (raw) {
     case 'IGNITION ON ALERT':
     case 'IGNITION_ON':
-      return 'IGNITION_ON';
+      result = 'IGNITION_ON';
+      break;
     case 'IGNITION OFF ALERT':
     case 'IGNITION_OFF':
-      return 'IGNITION_OFF';
+      result = 'IGNITION_OFF';
+      break;
     case 'MOVING ALERT':
     case 'MOTION_STARTED':
-      return 'MOTION_STARTED';
+      result = 'MOTION_STARTED';
+      break;
     case 'IDLING ALERT':
     case 'IDLING TOO LONG ALERT':
     case 'IDLING':
     case 'IDLING_TOO_LONG':
-      return 'IDLING';
+      result = 'IDLING';
+      break;
     case 'LOCATION UPDATE ALERT':
+    case 'LOCATION UPDATE':
     case 'LOCATION_UPDATE':
-      return 'LOCATION_UPDATE';
+      result = 'LOCATION_UPDATE';
+      break;
     case 'NO_APPROVED_TRAVEL_ORDER':
-      return 'NO_APPROVED_TRAVEL_ORDER';
+      result = 'NO_APPROVED_TRAVEL_ORDER';
+      break;
     case 'SPEEDING ALERT':
     case 'SPEEDING':
-      return 'SPEEDING';
+      result = 'SPEEDING';
+      break;
     case 'LOW FUEL ALERT':
     case 'LOW_FUEL':
-      return 'LOW_FUEL';
+      result = 'LOW_FUEL';
+      break;
     default:
-      return String(eventType || 'message').toUpperCase() === 'MESSAGE' ? 'TELEGRAM_MESSAGE' : String(eventType);
+      result = raw.toUpperCase() === 'MESSAGE' ? 'TELEGRAM_MESSAGE' : raw;
+      break;
   }
+  if (raw !== result) {
+    console.log('[EVENT NORMALIZED]', { incoming: raw, saved: result });
+  }
+  return result;
 }
 
 function eventTypeFromAlert(alert) {
@@ -923,7 +939,7 @@ export async function syncFleetAndAlert(options = {}) {
 
     const alerts = [];
     const vehicleEmittedAlerts = [];
-    function pushAlert(type, message, eventType = null) {
+    function pushAlert(type, message, eventType = null, extra = {}) {
       if (!eventType) {
         eventType = ALERT_TYPE_TO_EVENT_TYPE[type] || null;
       }
@@ -941,7 +957,15 @@ export async function syncFleetAndAlert(options = {}) {
         to_number: toNumber,
         timestamp: eventTime,
         plate: plateNumber,
+        ...extra,
       };
+      console.log("[TRACKER ALERT]", {
+        vehicle: plateNumber,
+        eventType,
+        tripId: alert.tripId ?? null,
+        telemetryEvent: type,
+        alert
+      });
       alerts.push(alert);
       if (eventType) {
         vehicleEmittedAlerts.push(alert);
@@ -961,11 +985,11 @@ export async function syncFleetAndAlert(options = {}) {
       if (a.type === 'IGNITION_ON') {
         message = formatIgnitionAlert(name, true, location, eventTime, toNumber, driver);
         tripStateFiredIgnition = true;
-        pushAlert('trip_state', message, 'IGNITION_ON');
+        pushAlert('trip_state', message, 'IGNITION_ON', { tripId: a.tripId ?? null });
       } else if (a.type === 'IGNITION_OFF') {
         message = formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber, driver);
         tripStateFiredIgnition = true;
-        pushAlert('trip_state', message, 'IGNITION_OFF');
+        pushAlert('trip_state', message, 'IGNITION_OFF', { tripId: a.tripId ?? null });
       }
       tripAlerts.push({ ...a, vehicle_id: vid, message });
     });
@@ -1106,6 +1130,7 @@ export async function syncFleetAndAlert(options = {}) {
         ignition: ea.ignition,
         driver: ea.driver,
         toNumber: ea.to_number,
+        tripId: ea.tripId ?? null,
         timestamp: ea.timestamp,
         message: ea.message,
         // Include idling milestone info for deduplication

@@ -70,10 +70,12 @@ export interface EmittedAlert {
   ignition: boolean;
   driver: string | null;
   toNumber: string | null;
+  tripId: string | null;
   timestamp: string;
   message: string;
   idleAlertCount?: number;
   idlingThresholdReached?: number | null;
+  idlingStartedAt?: string | null;
 }
 
 /** Result returned by syncFleetAndAlert(). */

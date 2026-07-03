@@ -69,30 +69,42 @@ interface TelemetryDbRow {
 }
 
 function canonicalTelemetryEventType(eventType: string): string {
+  let result: string;
   switch (eventType) {
     case 'IGNITION ON ALERT':
     case 'IGNITION_ON':
-      return 'IGNITION_ON';
+      result = 'IGNITION_ON';
+      break;
     case 'IGNITION OFF ALERT':
     case 'IGNITION_OFF':
-      return 'IGNITION_OFF';
+      result = 'IGNITION_OFF';
+      break;
     case 'LOCATION UPDATE ALERT':
     case 'LOCATION UPDATE':
     case 'LOCATION_UPDATE':
-      return 'LOCATION_UPDATE';
+      result = 'LOCATION_UPDATE';
+      break;
     case 'MOVING ALERT':
     case 'MOTION_STARTED':
-      return 'MOTION_STARTED';
+      result = 'MOTION_STARTED';
+      break;
     case 'IDLING ALERT':
     case 'IDLING TOO LONG ALERT':
     case 'IDLING':
     case 'IDLING_TOO_LONG':
-      return 'IDLING';
+      result = 'IDLING';
+      break;
     case 'NO_APPROVED_TRAVEL_ORDER':
-      return 'NO_APPROVED_TRAVEL_ORDER';
+      result = 'NO_APPROVED_TRAVEL_ORDER';
+      break;
     default:
-      return eventType;
+      result = eventType;
+      break;
   }
+  if (eventType !== result) {
+    console.log('[EVENT NORMALIZED]', { incoming: eventType, saved: result });
+  }
+  return result;
 }
 
 function normalizeLocationName(value: string | null | undefined): string {
