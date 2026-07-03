@@ -4,6 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/modules/auth/context/auth-context';
 import { ProtectedRoute, PublicRoute } from '@/modules/auth/components/ProtectedRoute';
 import { NotificationProvider } from '@/shared/context/NotificationContext';
+import { DrawerProvider } from '@/shared/context/DrawerContext';
+import { RecentActivityProvider } from '@/shared/context/RecentActivityContext';
+import { FavoritesProvider } from '@/shared/context/FavoritesContext';
 import { ConfirmationModal } from '@/shared/components/ConfirmationModal';
 import { ToastContainer } from '@/shared/components/ToastContainer';
 import { AppLayout } from '@/shared/components/AppLayout';
@@ -116,10 +119,16 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <NotificationProvider>
-            <AppRoutes />
-            {/* Global overlays — rendered outside page layouts */}
-            <ConfirmationModal />
-            <ToastContainer />
+            <DrawerProvider>
+              <RecentActivityProvider>
+                <FavoritesProvider>
+                  <AppRoutes />
+                  {/* Global overlays — rendered outside page layouts */}
+                  <ConfirmationModal />
+                  <ToastContainer />
+                </FavoritesProvider>
+              </RecentActivityProvider>
+            </DrawerProvider>
           </NotificationProvider>
         </AuthProvider>
       </BrowserRouter>

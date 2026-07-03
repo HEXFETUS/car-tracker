@@ -134,6 +134,7 @@ router.get('/', async (_req: Request, res: Response) => {
         v.plate_number,
         COALESCE(d.full_name, 'Unassigned') AS driver_name,
         to_.to_number AS current_travel_order,
+        to_.id AS current_travel_order_id,
         to_.origin_location AS origin,
         to_.destination_target AS destination,
         to_.scheduled_departure AS departure_time,
@@ -142,7 +143,25 @@ router.get('/', async (_req: Request, res: Response) => {
         COALESCE((
           SELECT SUM(gps_distance_km) FROM gps_trip_logs
           WHERE vehicle_id = v.id AND travel_order_id = to_.id
-        ), 0) AS distance_traveled
+        ), 0) AS distance_traveled,
+        (
+          SELECT t.latitude FROM gps_telemetry t
+          WHERE t.vehicle_id = v.id
+          ORDER BY t.recorded_at DESC
+          LIMIT 1
+        ) AS latitude,
+        (
+          SELECT t.longitude FROM gps_telemetry t
+          WHERE t.vehicle_id = v.id
+          ORDER BY t.recorded_at DESC
+          LIMIT 1
+        ) AS longitude,
+        (
+          SELECT t.recorded_at FROM gps_telemetry t
+          WHERE t.vehicle_id = v.id
+          ORDER BY t.recorded_at DESC
+          LIMIT 1
+        ) AS last_seen
       FROM vehicles v
       LEFT JOIN LATERAL (
         SELECT * FROM travel_orders

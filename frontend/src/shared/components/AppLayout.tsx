@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import { NavLink, useLocation } from 'react-router';
 import {
@@ -14,12 +14,19 @@ import {
   ClipboardCheck,
   KeyRound,
   User,
+  Star,
+  History,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
-import { useState } from 'react';
 import { PasswordModal, AccountModal } from './UserModals';
 import { canAccessNav } from '@/shared/config/role-access';
 import { NotificationBell } from '@/modules/notifications/components/NotificationBell';
+import { GlobalSearch } from './GlobalSearch';
+import { CommandPalette } from './CommandPalette';
+import { DashboardDrawer } from './DashboardDrawer';
+import { useDrawer } from '@/shared/context/DrawerContext';
+import { useRecentActivity } from '@/shared/context/RecentActivityContext';
+import { useFavorites } from '@/shared/context/FavoritesContext';
 
 const ALL_NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -30,6 +37,94 @@ const ALL_NAV_ITEMS = [
   { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
+
+// ── Favorites Sidebar Section ──────────────────────────────────
+
+function FavoritesSidebarSection() {
+  const { items } = useFavorites();
+  const { openDrawer } = useDrawer();
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <Star className="size-3.5 text-amber-500" />
+        <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Pinned</span>
+      </div>
+      {items.slice(0, 5).map((item) => (
+        <button
+          key={`${item.type}-${item.id}`}
+          onClick={() => {
+            switch (item.type) {
+              case 'vehicle':
+                openDrawer({ type: 'vehicle', vehicleId: item.id, plateNumber: item.label });
+                break;
+              case 'driver':
+                openDrawer({ type: 'driver', driverId: item.id, driverName: item.label });
+                break;
+              case 'trip':
+                openDrawer({ type: 'trip', tripId: item.id, toNumber: item.label });
+                break;
+              case 'travel-order':
+                openDrawer({ type: 'travel-order', orderId: item.id, toNumber: item.label });
+                break;
+            }
+          }}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs text-zinc-600 transition-colors hover:bg-brand-cream hover:text-brand-teal"
+        >
+          <Star className="size-3 shrink-0 text-amber-400" fill="currentColor" />
+          <span className="truncate">{item.label}</span>
+          {item.subtitle && <span className="truncate text-[10px] text-zinc-400">{item.subtitle}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Recent Activity Sidebar Section ────────────────────────────
+
+function RecentActivitySidebarSection() {
+  const { items } = useRecentActivity();
+  const { openDrawer } = useDrawer();
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <History className="size-3.5 text-brand-teal" />
+        <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Recent</span>
+      </div>
+      {items.slice(0, 5).map((item) => (
+        <button
+          key={`${item.type}-${item.id}`}
+          onClick={() => {
+            switch (item.type) {
+              case 'vehicle':
+                openDrawer({ type: 'vehicle', vehicleId: item.id, plateNumber: item.label });
+                break;
+              case 'driver':
+                openDrawer({ type: 'driver', driverId: item.id, driverName: item.label });
+                break;
+              case 'trip':
+                openDrawer({ type: 'trip', tripId: item.id, toNumber: item.label });
+                break;
+              case 'travel-order':
+                openDrawer({ type: 'travel-order', orderId: item.id, toNumber: item.label });
+                break;
+            }
+          }}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs text-zinc-600 transition-colors hover:bg-brand-cream hover:text-brand-teal"
+        >
+          <History className="size-3 shrink-0 text-zinc-400" />
+          <span className="truncate">{item.label}</span>
+          {item.subtitle && <span className="truncate text-[10px] text-zinc-400">{item.subtitle}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -92,6 +187,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
               </NavLink>
             );
           })}
+
+          {/* ── Favorites Section ─────────────────────── */}
+          <FavoritesSidebarSection />
+          
+          {/* ── Recent Activity Section ───────────────── */}
+          <RecentActivitySidebarSection />
         </nav>
 
         {/* User area at bottom */}
@@ -134,8 +235,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
             </span>
           </div>
 
-          {/* Spacer for desktop (pushes actions to the right) */}
-          <div className="hidden lg:block flex-1" />
+          {/* Global Search (desktop) */}
+          <div className="hidden lg:block flex-1 max-w-md mx-auto">
+            <GlobalSearch />
+          </div>
 
           {/* Right: Actions */}
           <div className="flex items-center gap-1.5 lg:gap-3 ml-auto">
@@ -212,6 +315,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
         {/* Page content */}
         <main className="flex-1 p-4 lg:p-10">{children}</main>
+
+        {/* Dashboard Drawer (global) */}
+        <DashboardDrawer />
+        
+        {/* Command Palette (Ctrl+K) */}
+        <CommandPalette />
 
         {/* Modals */}
         <PasswordModal

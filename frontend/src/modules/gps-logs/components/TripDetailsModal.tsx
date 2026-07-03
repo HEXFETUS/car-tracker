@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import {
   X,
-  Loader2,
   Navigation,
   MapPin,
   StickyNote,
@@ -278,9 +277,12 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
 
         {/* Loading */}
         {loading && (
-          <div className="flex flex-col items-center justify-center px-6 py-20">
-            <Loader2 className="size-8 text-brand-teal animate-spin mb-3" />
-            <p className="text-sm font-medium text-zinc-500">Loading trip details...</p>
+          <div className="space-y-4 px-6 py-10">
+            <div className="h-56 animate-pulse rounded-xl bg-zinc-100" />
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="h-24 animate-pulse rounded-xl bg-zinc-100" />
+              <div className="h-24 animate-pulse rounded-xl bg-zinc-100" />
+            </div>
           </div>
         )}
 
@@ -340,28 +342,28 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
                     </div>
                   </InfoSection>
 
-                   <InfoSection title="Destination / Arrival" icon={<Flag className="size-4 text-red-600" />}>
-                     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                       <InfoField label="Address" value={trip.destination || '—'} />
-                       <InfoField label="Arrived Time" value={formatDateTime(trip.arrivedTime)} />
-                       <InfoField label="Arrived Coordinates" value={trip.arrivedCoordinates || '—'} />
-                       <InfoField label="Arrived Location" value={trip.arrivedLocation || '—'} />
-                       <InfoField label="End Coordinates" value={trip.coordinatesDestination || '—'} />
-                     </div>
-                   </InfoSection>
+                  <InfoSection title="Destination / Arrival" icon={<Flag className="size-4 text-red-600" />}>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <InfoField label="Address" value={trip.destination || '—'} />
+                      <InfoField label="Arrived Time" value={formatDateTime(trip.arrivedTime)} />
+                      <InfoField label="Arrived Coordinates" value={trip.arrivedCoordinates || '—'} />
+                      <InfoField label="Arrived Location" value={trip.arrivedLocation || '—'} />
+                      <InfoField label="End Coordinates" value={trip.coordinatesDestination || '—'} />
+                    </div>
+                  </InfoSection>
 
-                   <InfoSection title="Trip Summary" icon={<BarChart3 className="size-4 text-brand-teal" />}>
-                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                       <MetricTile icon={<Route className="size-4" />} label="Route Taken" value={trip.routeRoadTaken || 'GPS Route Available'} />
-                       <MetricTile icon={<MapPinned className="size-4" />} label="Distance" value={trip.distance != null ? `${formatNumber(trip.distance, 1)} km` : '—'} />
-                       <MetricTile icon={<Timer className="size-4" />} label="Engine Hours" value={trip.engineHours != null ? `${formatNumber(trip.engineHours, 1)} hrs` : '—'} />
-                       <MetricTile icon={<Clock3 className="size-4" />} label="Moving Hours" value={trip.movingHours != null ? `${formatNumber(trip.movingHours, 1)} hrs` : '—'} />
-                       <MetricTile icon={<Gauge className="size-4" />} label="Max Speed" value={trip.maxSpeed != null ? `${formatNumber(trip.maxSpeed, 0)} kph` : '—'} />
-                       <MetricTile icon={<Activity className="size-4" />} label="End Time" value={formatDateTime(trip.endTime)} />
-                       <MetricTile icon={<Link2 className="size-4" />} label="Linked TO" value={trip.linkedTO || '—'} />
-                       <MetricTile icon={<ClipboardCheck className="size-4" />} label="TO Status" value={trip.toStatus || '—'} />
-                     </div>
-                   </InfoSection>
+                  <InfoSection title="Trip Summary" icon={<BarChart3 className="size-4 text-brand-teal" />}>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <MetricTile icon={<Route className="size-4" />} label="Route Taken" value={trip.routeRoadTaken || 'GPS Route Available'} />
+                      <MetricTile icon={<MapPinned className="size-4" />} label="Distance" value={trip.distance != null ? `${formatNumber(trip.distance, 1)} km` : '—'} />
+                      <MetricTile icon={<Timer className="size-4" />} label="Engine Hours" value={trip.engineHours != null ? `${formatNumber(trip.engineHours, 1)} hrs` : '—'} />
+                      <MetricTile icon={<Clock3 className="size-4" />} label="Moving Hours" value={trip.movingHours != null ? `${formatNumber(trip.movingHours, 1)} hrs` : '—'} />
+                      <MetricTile icon={<Gauge className="size-4" />} label="Max Speed" value={trip.maxSpeed != null ? `${formatNumber(trip.maxSpeed, 0)} kph` : '—'} />
+                      <MetricTile icon={<Activity className="size-4" />} label="End Time" value={formatDateTime(trip.endTime)} />
+                      <MetricTile icon={<Link2 className="size-4" />} label="Linked TO" value={trip.linkedTO || '—'} />
+                      <MetricTile icon={<ClipboardCheck className="size-4" />} label="TO Status" value={trip.toStatus || '—'} />
+                    </div>
+                  </InfoSection>
                   <InfoSection title="Linked Trip" icon={<Navigation className="size-4 text-brand-teal" />}>
                     <div className="space-y-3">
                       <div className="rounded-2xl border border-zinc-200 bg-white p-4">
@@ -429,7 +431,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
                       )}
                     >
                       {notesSaving ? (
-                        <><Loader2 className="size-3 animate-spin" /> Saving…</>
+                        <>Saving…</>
                       ) : (
                         <><StickyNote className="size-3.5" /> Save Notes</>
                       )}

@@ -51,12 +51,16 @@ export interface LiveMonitoringRow {
   plate_number: string;
   driver_name: string;
   current_travel_order: string | null;
+  current_travel_order_id: string | null;
   origin: string | null;
   destination: string | null;
   departure_time: string | null;
   arrival_time: string | null;
   trip_status: string | null;
   distance_traveled: number;
+  latitude: number | null;
+  longitude: number | null;
+  last_seen: string | null;
 }
 
 export interface AlertRow {
@@ -233,6 +237,8 @@ function normalizeDashboardData(data: DashboardData): DashboardData {
       liveMonitoring: data.tables.liveMonitoring.map((row) => ({
         ...row,
         distance_traveled: toNumber(row.distance_traveled),
+        latitude: row.latitude === null ? null : toNumber(row.latitude),
+        longitude: row.longitude === null ? null : toNumber(row.longitude),
       })),
       recentAlerts: data.tables.recentAlerts,
       recentlyCompleted: data.tables.recentlyCompleted.map((row) => ({
