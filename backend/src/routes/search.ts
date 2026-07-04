@@ -6,7 +6,9 @@ const router: ExpressRouter = express.Router();
 // GET /api/search?q= — Global search across vehicles, drivers, travel orders, GPS telemetry
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const q = (req.query.q as string || '').trim();
+    const q = String(req.query.q || '').trim();
+    console.log('[search] query', q);
+
     if (!q) {
       res.json({ success: true, data: [], message: 'No query provided' });
       return;
@@ -15,20 +17,18 @@ router.get('/', async (req: Request, res: Response) => {
     const pool = getPool();
     const searchPattern = `%${q}%`;
 
-    // Search vehicles
+    // Search vehicles — includes plate_number, make, model
     const vehiclesPromise = pool.query(`
       SELECT
         id,
         plate_number,
         make,
-        model,
-        gps_number
+        model
       FROM vehicles
       WHERE
         plate_number ILIKE $1
         OR make ILIKE $1
         OR model ILIKE $1
-        OR gps_number ILIKE $1
       LIMIT 5
     `, [searchPattern]);
 
@@ -80,40 +80,20 @@ router.get('/', async (req: Request, res: Response) => {
       LIMIT 5
     `, [searchPattern]);
 
-    // Search GPS telemetry — latest location per vehicle
+    // Search GPS telemetry — latest record per plate_number (directly on gps_telemetry)
     const gpsTelemetryPromise = pool.query(`
-      WITH latest_telemetry AS (
-        SELECT DISTINCT ON (vehicle_id)
-          vehicle_id,
-          speed_kmh,
-          ignition,
-          recorded_at,
-          location_name,
-          latitude,
-          longitude,
-          fuel_liters
-        FROM gps_telemetry
-        ORDER BY vehicle_id, recorded_at DESC
-      )
-      SELECT
-        lt.vehicle_id,
-        v.plate_number,
-        lt.speed_kmh,
-        lt.ignition,
-        lt.recorded_at,
-        lt.location_name,
-        lt.latitude,
-        lt.longitude,
-        lt.fuel_liters,
-        v.gps_number
-      FROM latest_telemetry lt
-      JOIN vehicles v ON v.id = lt.vehicle_id
-      WHERE
-        v.plate_number ILIKE $1
-        OR v.gps_number ILIKE $1
-        OR lt.location_name ILIKE $1
+      SELECT DISTINCT ON (plate_number)
+        vehicle_id,
+        plate_number,
+        location_name,
+        speed_kmh,
+        ignition,
+        recorded_at
+      FROM gps_telemetry
+      WHERE plate_number ILIKE '%' || $1 || '%'
+      ORDER BY plate_number, recorded_at DESC
       LIMIT 5
-    `, [searchPattern]);
+    `, [q]);
 
     const [vehiclesResult, driversResult, travelOrdersResult, gpsTelemetryResult] = await Promise.all([
       vehiclesPromise,
@@ -131,10 +111,12 @@ router.get('/', async (req: Request, res: Response) => {
         id: `v-${row.id}`,
         type: 'vehicle',
         label: row.plate_number,
+        title: row.plate_number,
         subtitle: subtitle || 'Vehicle',
         dbId: row.id,
+        vehicle_id: row.id,
+        plate_number: row.plate_number,
         plateNumber: row.plate_number,
-        gpsNumber: row.gps_number,
       });
     }
 
@@ -175,20 +157,20 @@ router.get('/', async (req: Request, res: Response) => {
         id: `gps-${row.vehicle_id}`,
         type: 'gps',
         label: row.plate_number,
-        subtitle: `GPS #${row.gps_number || '—'} · ${loc}${speed}`,
+        title: row.plate_number,
+        subtitle: `GPS · ${loc}${speed}`,
         dbId: row.vehicle_id,
+        vehicle_id: row.vehicle_id,
+        plate_number: row.plate_number,
         plateNumber: row.plate_number,
-        gpsNumber: row.gps_number,
-        latitude: row.latitude,
-        longitude: row.longitude,
         speedKmh: row.speed_kmh,
         ignition: row.ignition,
         recordedAt: row.recorded_at,
         locationName: row.location_name,
-        fuelLiters: row.fuel_liters,
       });
     }
 
+    console.log('[search] results', results.length);
     res.json({ success: true, data: results.slice(0, 15), message: 'Search results retrieved' });
   } catch (error) {
     console.error('GET /api/search error:', error instanceof Error ? error.message : String(error));

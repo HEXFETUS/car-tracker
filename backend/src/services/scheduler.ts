@@ -428,6 +428,161 @@ async function getLatestActiveTripId(vehicleId: string): Promise<string | null> 
   return result.rows[0]?.active_trip_id ?? null;
 }
 
+// ── Unified Alert Pipeline ─────────────────────────────────────
+//
+// All alert types (LOCATION_UPDATE, IDLING_TOO_LONG, MOTION_STARTED,
+// IGNITION_ON, IGNITION_OFF, SPEEDING, LOW_FUEL) use this single
+// function to persist telemetry and send Telegram notifications.
+
+interface SaveAndSendTelemetryAlertParams {
+  eventType: string;
+  vehicleId: string;
+  plateNumber: string;
+  activeTripId: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  speedKmh: number;
+  fuelLiters: number | null;
+  ignition: boolean;
+  locationName: string | null;
+  recordedAt: string;
+  telegramMessage: string | null;
+  allowDuplicate?: boolean;
+}
+
+interface SaveAndSendTelemetryAlertResult {
+  savedTelemetry: { inserted: boolean; updated: boolean; id: string | null };
+  telegramSent: boolean;
+  telegramError: string | null;
+}
+
+async function saveAndSendTelemetryAlert(params: SaveAndSendTelemetryAlertParams): Promise<SaveAndSendTelemetryAlertResult> {
+  const { eventType, vehicleId, plateNumber, activeTripId, latitude, longitude, speedKmh, fuelLiters, ignition, locationName, recordedAt, telegramMessage } = params;
+
+  console.log(`[alert-pipeline] attempt ${eventType} ${plateNumber} ${activeTripId}`);
+
+  const savedTelemetry = await insertTelemetry({
+    vehicleId,
+    plateNumber,
+    eventType,
+    latitude,
+    longitude,
+    speedKmh,
+    fuelLiters,
+    ignition,
+    locationName,
+    driverId: null,
+    toNumber: null,
+    recordedAt,
+    activeTripId,
+    telegramMessage,
+  });
+
+  if (!savedTelemetry.id) {
+    console.log(`[alert-pipeline] saved ${eventType} null inserted=${savedTelemetry.inserted} updated=${savedTelemetry.updated} skippedReason=missing_id`);
+    return { savedTelemetry, telegramSent: false, telegramError: 'missing_id' };
+  }
+
+  // Log the result
+  const action = savedTelemetry.inserted ? 'inserted' : savedTelemetry.updated ? 'updated' : 'skipped';
+  console.log(`[alert-pipeline] saved ${eventType} ${savedTelemetry.id} inserted=${savedTelemetry.inserted} updated=${savedTelemetry.updated} skippedReason=${action === 'skipped' ? 'duplicate' : 'none'}`);
+
+  // Send Telegram whenever savedTelemetry.id exists and telegramMessage is provided
+  let telegramSent = false;
+  let telegramError: string | null = null;
+
+  if (telegramMessage) {
+    console.log(`[alert-pipeline] telegram attempt ${eventType} ${savedTelemetry.id}`);
+    try {
+      const tg = await sendTelegram(telegramMessage);
+      if (tg?.ok) {
+        telegramSent = true;
+        console.log(`[alert-pipeline] telegram result ${eventType} ok sent`);
+      } else {
+        telegramError = tg?.error ?? 'telegram_not_ok';
+        console.error(`[alert-pipeline] telegram result ${eventType} fail ${telegramError}`);
+      }
+    } catch (err) {
+      telegramError = errorMessage(err);
+      console.error(`[alert-pipeline] telegram result ${eventType} exception ${telegramError}`);
+    }
+  } else {
+    console.log(`[alert-pipeline] telegram skipped ${eventType} ${savedTelemetry.id} reason=no_message`);
+  }
+
+  return { savedTelemetry, telegramSent, telegramError };
+}
+
+// ── Helper: Check whether an ignition boundary event already exists for a trip ──
+async function telemetryTripEventExists(
+  vehicleId: string,
+  activeTripId: string,
+  eventType: string,
+): Promise<boolean> {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT 1
+       FROM gps_telemetry
+      WHERE vehicle_id = $1
+        AND active_trip_id = $2
+        AND event_type = $3
+      LIMIT 1`,
+    [vehicleId, activeTripId, eventType],
+  );
+  return result.rows.length > 0;
+}
+
+async function getLatestCanonicalTripEventType(
+  vehicleId: string,
+  activeTripId: string,
+): Promise<string | null> {
+  const pool = getPool();
+  const result = await pool.query<{ event_type: string }>(
+    `SELECT CASE trim(event_type)
+        WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+        WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+        WHEN 'IGNITION_ON' THEN 'IGNITION_ON'
+        WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
+        WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
+        WHEN 'IGNITION_OFF' THEN 'IGNITION_OFF'
+        WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
+        WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
+        WHEN 'LOCATION_UPDATE' THEN 'LOCATION_UPDATE'
+        WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
+        WHEN 'MOTION_STARTED' THEN 'MOTION_STARTED'
+        WHEN 'IDLING ALERT' THEN 'IDLING'
+        WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
+        WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+        WHEN 'IDLING' THEN 'IDLING'
+        ELSE trim(event_type)
+      END AS event_type
+       FROM gps_telemetry
+      WHERE vehicle_id = $1
+        AND active_trip_id = $2
+      ORDER BY recorded_at DESC
+      LIMIT 1`,
+    [vehicleId, activeTripId],
+  );
+  return result.rows[0]?.event_type ?? null;
+}
+
+// ── Helper: Get latest LOCATION_UPDATE for same vehicle_id + active_trip_id ──
+// Returns the location_name of the most recent LOCATION_UPDATE, or null.
+async function getLatestLocationUpdateLocation(vehicleId: string, activeTripId: string | null): Promise<string | null> {
+  const pool = getPool();
+  const result = await pool.query<{ location_name: string | null }>(
+    `SELECT location_name
+       FROM gps_telemetry
+      WHERE vehicle_id = $1
+        AND active_trip_id IS NOT DISTINCT FROM $2
+        AND event_type = 'LOCATION_UPDATE'
+      ORDER BY recorded_at DESC, created_at DESC
+      LIMIT 1`,
+    [vehicleId, activeTripId],
+  );
+  return result.rows[0]?.location_name ?? null;
+}
+
 async function runCycle(): Promise<void> {
   if (state.paused) {
     console.log('[scheduler] Paused — skipping cycle');
@@ -525,10 +680,10 @@ async function runCycle(): Promise<void> {
 
     // ── GPS Telemetry Persistence ──────────────────────────────
     //
-    // LOCATION UPDATE and other telemetry events are persisted
-    // exclusively via emitted alerts from tracker.js.
-    // Raw location snapshot persistence has been removed to prevent
-    // duplicate 'LOCATION UPDATE' records.
+    // All telemetry events are persisted via the unified alert pipeline
+    // (saveAndSendTelemetryAlert). This includes DB-backed detection
+    // (ignition transitions, idling, location updates) and emitted alerts
+    // from tracker.js.
     let telemetrySaved = 0;
     let telemetrySkipped = 0;
 
@@ -555,7 +710,7 @@ async function runCycle(): Promise<void> {
 
     const vehicles = result.data as unknown as Array<Record<string, unknown>> | undefined;
 
-    console.log('[scheduler] Telemetry persistence via emitted alerts only');
+    console.log('[scheduler] Telemetry persistence via unified alert pipeline');
 
     // ── Unauthorized Travel Alert Detection ────────────────────
     // After telemetry is saved, check for vehicles traveling without
@@ -644,57 +799,44 @@ async function runCycle(): Promise<void> {
             finalEventType: EVENT_TYPE.NO_APPROVED_TRAVEL_ORDER,
             message,
           });
-          const telegramMessage = message || null;
-          const savedTelemetry = await insertTelemetry({
+
+          const result = await saveAndSendTelemetryAlert({
+            eventType: EVENT_TYPE.NO_APPROVED_TRAVEL_ORDER,
             vehicleId: vid,
             plateNumber: plate ?? 'Unknown',
-            eventType: EVENT_TYPE.NO_APPROVED_TRAVEL_ORDER,
+            activeTripId,
             latitude,
             longitude,
             speedKmh: speed,
             fuelLiters: latestTelemetry?.fuelLiters ?? null,
             ignition: latestTelemetry?.ignition ?? speed > 0,
             locationName,
-            driverId: null,
-            toNumber: null,
             recordedAt: new Date().toISOString(),
-            activeTripId,
-            telegramMessage,
+            telegramMessage: message,
           });
 
-          if (!savedTelemetry.id) {
+          if (!result.savedTelemetry.id) {
             telemetrySkipped += 1;
             console.log(`[scheduler] DB insert failed missing_id NO_APPROVED_TRAVEL_ORDER vehicle=${vid}`);
             continue;
           }
 
-          if (savedTelemetry.updated) {
+          if (result.savedTelemetry.updated) {
             telemetrySkipped += 1;
-            console.log(`[scheduler] NO_APPROVED_TRAVEL_ORDER telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vid}`);
+            console.log(`[scheduler] NO_APPROVED_TRAVEL_ORDER telemetry duplicate existing_id=${result.savedTelemetry.id} vehicle=${vid}`);
             continue;
           }
 
           telemetrySaved += 1;
           unauthorizedTravelAlertsCreated += 1;
           unauthorizedTravelAlertVehicleIds.add(vid);
-          try {
-            console.log(`[scheduler] Before Telegram send telemetry_id=${savedTelemetry.id} vehicle=${vid} event=NO_APPROVED_TRAVEL_ORDER`);
-            const telegram = await sendTelegram(telegramMessage as string);
-            if (telegram?.ok) {
-              console.log(`[scheduler] Telegram send succeeded telemetry_id=${savedTelemetry.id} vehicle=${vid} event=NO_APPROVED_TRAVEL_ORDER`);
-            } else {
-              console.error(`[scheduler] Telegram send failed telemetry_id=${savedTelemetry.id} vehicle=${vid} event=NO_APPROVED_TRAVEL_ORDER: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
-            }
-          } catch (telegramError) {
-            console.error(`[scheduler] Failed to send Telegram alert for ${vid}:`, errorMessage(telegramError));
-          }
         } catch (err) {
           console.error(`[scheduler] Failed to check/save unauthorized travel for ${String(vehicle.id)}:`, errorMessage(err));
         }
       }
     }
 
-      // ── DB-backed Telemetry From Current Fleet Snapshot ────────
+    // ── DB-backed Telemetry From Current Fleet Snapshot ────────
     //
     // External cron services don't maintain warm in-memory state.
     // Persist IGNITION_ON/IGNITION_OFF, LOCATION_UPDATE, and IDLING here
@@ -737,40 +879,32 @@ async function runCycle(): Promise<void> {
             const eventTripId = latestActiveTripId ?? randomUUID();
             const message = formatIgnitionAlert(plateNumber, false, locationName || 'Unknown location', recordedAt, toNumber, driverName);
             console.log(`[scheduler] DB-backed IGNITION_OFF detected vehicle=${vehicleId} plate=${plateNumber} prevIgnition=${prevIgnition} currentIgnition=${currentIgnition}`);
-            const savedTelemetry = await insertTelemetry({
+
+            const result = await saveAndSendTelemetryAlert({
+              eventType: EVENT_TYPE.IGNITION_OFF,
               vehicleId,
               plateNumber,
-              eventType: EVENT_TYPE.IGNITION_OFF,
+              activeTripId: eventTripId,
               latitude,
               longitude,
               speedKmh: speed,
               fuelLiters,
               ignition: false,
               locationName,
-              driverId: null,
-              toNumber,
               recordedAt,
-              activeTripId: eventTripId,
               telegramMessage: message,
             });
 
-            if (!savedTelemetry.id) {
+            if (!result.savedTelemetry.id) {
               telemetrySkipped += 1;
               console.log(`[scheduler] DB-backed IGNITION_OFF insert skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${eventTripId}`);
             } else {
-              if (savedTelemetry.inserted) {
+              if (result.savedTelemetry.inserted) {
                 telemetrySaved += 1;
-                console.log(`[scheduler] DB-backed IGNITION_OFF saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
+                console.log(`[scheduler] DB-backed IGNITION_OFF saved telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
               } else {
                 telemetrySkipped += 1;
-                console.log(`[scheduler] DB-backed IGNITION_OFF insert skipped reason=duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
-              }
-              // Send Telegram whenever savedTelemetry.id exists
-              const telegram = await sendTelegram(message);
-              if (telegram?.ok) {
-                console.log(`[scheduler] DB-backed IGNITION_OFF telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
-              } else {
-                console.error(`[scheduler] DB-backed IGNITION_OFF telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
+                console.log(`[scheduler] DB-backed IGNITION_OFF insert skipped reason=duplicate existing_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
               }
             }
 
@@ -786,40 +920,32 @@ async function runCycle(): Promise<void> {
             const eventTripId = randomUUID();
             const message = formatIgnitionAlert(plateNumber, true, locationName || 'Unknown location', recordedAt, toNumber, driverName);
             console.log(`[scheduler] DB-backed IGNITION_ON detected vehicle=${vehicleId} plate=${plateNumber} prevIgnition=${prevIgnition} currentIgnition=${currentIgnition}`);
-            const savedTelemetry = await insertTelemetry({
+
+            const result = await saveAndSendTelemetryAlert({
+              eventType: EVENT_TYPE.IGNITION_ON,
               vehicleId,
               plateNumber,
-              eventType: EVENT_TYPE.IGNITION_ON,
+              activeTripId: eventTripId,
               latitude,
               longitude,
               speedKmh: speed,
               fuelLiters,
               ignition: true,
               locationName,
-              driverId: null,
-              toNumber,
               recordedAt,
-              activeTripId: eventTripId,
               telegramMessage: message,
             });
 
-            if (!savedTelemetry.id) {
+            if (!result.savedTelemetry.id) {
               telemetrySkipped += 1;
               console.log(`[scheduler] DB-backed IGNITION_ON insert skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${eventTripId}`);
             } else {
-              if (savedTelemetry.inserted) {
+              if (result.savedTelemetry.inserted) {
                 telemetrySaved += 1;
-                console.log(`[scheduler] DB-backed IGNITION_ON saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
+                console.log(`[scheduler] DB-backed IGNITION_ON saved telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
               } else {
                 telemetrySkipped += 1;
-                console.log(`[scheduler] DB-backed IGNITION_ON insert skipped reason=duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
-              }
-              // Send Telegram whenever savedTelemetry.id exists
-              const telegram = await sendTelegram(message);
-              if (telegram?.ok) {
-                console.log(`[scheduler] DB-backed IGNITION_ON telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
-              } else {
-                console.error(`[scheduler] DB-backed IGNITION_ON telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
+                console.log(`[scheduler] DB-backed IGNITION_ON insert skipped reason=duplicate existing_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
               }
             }
             // Fall through to continue processing LOCATION_UPDATE/IDLING below
@@ -837,109 +963,100 @@ async function runCycle(): Promise<void> {
           const activeTripId = latestActiveTripId ?? activeIdlingSession?.activeTripId ?? randomUUID();
 
           if (isMoving) {
-            let idlingTripToCloseAfterMoving: string | null = null;
+            // ── MOTION_STARTED check (before LOCATION_UPDATE) ──
+            // If active idling session has last_alerted_duration_minutes >= 10:
+            // save/send MOTION_STARTED, close idling session, skip LOCATION_UPDATE
             if (activeIdlingSession?.activeTripId && Number(activeIdlingSession.lastAlertedDurationMinutes ?? 0) >= 10) {
               const motionTripId = activeIdlingSession.activeTripId;
               const message = `🟢 MOTION STARTED - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
-              const savedTelemetry = await insertTelemetry({
+
+              const result = await saveAndSendTelemetryAlert({
+                eventType: EVENT_TYPE.MOTION_STARTED,
                 vehicleId,
                 plateNumber,
-                eventType: EVENT_TYPE.MOTION_STARTED,
+                activeTripId: motionTripId,
                 latitude,
                 longitude,
                 speedKmh: speed,
                 fuelLiters,
                 ignition: currentIgnition,
                 locationName,
-                driverId: null,
-                toNumber,
                 recordedAt,
-                activeTripId: motionTripId,
                 telegramMessage: message,
               });
 
-              if (savedTelemetry.id) {
-                if (savedTelemetry.inserted) {
+              if (result.savedTelemetry.id) {
+                if (result.savedTelemetry.inserted) {
                   telemetrySaved += 1;
-                  console.log(`[scheduler] DB-backed MOTION_STARTED saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
+                  console.log(`[motion-started] action=saved vehicle=${vehicleId} trip=${motionTripId}`);
                 } else {
                   telemetrySkipped += 1;
-                  console.log(`[scheduler] DB-backed MOTION_STARTED telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
+                  console.log(`[motion-started] action=skipped reason=duplicate vehicle=${vehicleId} trip=${motionTripId}`);
                 }
                 await closeIdlingDedupDb(vehicleId, motionTripId);
-                const telegram = await sendTelegram(message);
-                if (telegram?.ok) {
-                  console.log(`[scheduler] DB-backed MOTION_STARTED telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
-                } else {
-                  console.error(`[scheduler] DB-backed MOTION_STARTED telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
-                }
                 console.log(`[scheduler] LOCATION_UPDATE skipped because MOTION_STARTED was saved vehicle=${vehicleId} trip=${motionTripId}`);
                 continue;
               } else {
                 telemetrySkipped += 1;
-                console.log(`[scheduler] DB-backed MOTION_STARTED skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${motionTripId}`);
+                console.log(`[motion-started] action=skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${motionTripId}`);
               }
             } else if (activeIdlingSession?.activeTripId) {
-              idlingTripToCloseAfterMoving = activeIdlingSession.activeTripId;
+              console.log(`[motion-started] action=skipped reason=idling_duration_below_10min vehicle=${vehicleId} lastAlerted=${activeIdlingSession.lastAlertedDurationMinutes}`);
             } else {
-              console.log(`[scheduler] DB-backed MOTION_STARTED skipped reason=no_active_idling_session vehicle=${vehicleId}`);
+              console.log(`[motion-started] action=skipped reason=no_active_idling_session vehicle=${vehicleId}`);
             }
 
-            const previousLocationName = latestTelemetry?.locationName || null;
+            // ── LOCATION_UPDATE ─────────────────────────────────
+            // Rule: compare by location_name only (same vehicle_id + active_trip_id).
+            // If no previous LOCATION_UPDATE: save/send new LOCATION_UPDATE.
+            // If current location_name is different from previous: save/send new LOCATION_UPDATE.
+            // If current location_name is same: skip.
+            // Ignore latitude/longitude changes completely.
+            // Never update an existing LOCATION_UPDATE row.
+            const previousLocationName = await getLatestLocationUpdateLocation(vehicleId, activeTripId);
+            const currentLocationName = locationName;
             const locationNameChanged = Boolean(
-              locationName &&
-              locationName.trim() &&
-              previousLocationName !== locationName,
+              currentLocationName &&
+              currentLocationName.trim() &&
+              previousLocationName !== currentLocationName,
             );
-            const hasCurrentCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
-            const hasPreviousCoordinates = Number.isFinite(latestTelemetry?.latitude) && Number.isFinite(latestTelemetry?.longitude);
-            const distanceMeters = hasCurrentCoordinates && hasPreviousCoordinates
-              ? haversineDistanceMeters(latitude as number, longitude as number, latestTelemetry?.latitude as number, latestTelemetry?.longitude as number)
-              : null;
-            const locationChanged = (distanceMeters !== null && distanceMeters >= 20) || locationNameChanged;
 
-            if (!locationChanged) {
+            console.log(`[location-update] previous=${previousLocationName ?? 'null'} current=${currentLocationName ?? 'null'} action=${!previousLocationName ? 'insert' : locationNameChanged ? 'insert' : 'skip_same_location'}`);
+
+            if (previousLocationName && !locationNameChanged) {
               telemetrySkipped += 1;
-              console.log(`[scheduler] SKIPPING DB-backed LOCATION_UPDATE for ${vehicleId} reason=location_not_changed distance=${distanceMeters === null ? 'unknown' : distanceMeters.toFixed(1)}m`);
-              if (idlingTripToCloseAfterMoving) {
-                await closeIdlingDedupDb(vehicleId, idlingTripToCloseAfterMoving);
-              }
+              console.log(`[scheduler] SKIPPING DB-backed LOCATION_UPDATE for ${vehicleId} reason=same_location_name`);
               continue;
             }
 
             const message = `🗺 LOCATION UPDATE - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n📍 ${locationName}\n⚡ Speed: ${speed} km/h\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
-            const savedTelemetry = await insertTelemetry({
+
+            const result = await saveAndSendTelemetryAlert({
+              eventType: EVENT_TYPE.LOCATION_UPDATE,
               vehicleId,
               plateNumber,
-              eventType: EVENT_TYPE.LOCATION_UPDATE,
+              activeTripId,
               latitude,
               longitude,
               speedKmh: speed,
               fuelLiters,
               ignition: currentIgnition,
               locationName,
-              driverId: null,
-              toNumber,
               recordedAt,
-              activeTripId,
-              telegramMessage: null,
+              telegramMessage: message,
             });
 
-            if (savedTelemetry.updated) {
-              telemetrySkipped += 1;
-              console.log(`[scheduler] DB-backed LOCATION_UPDATE updated telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} (no Telegram)`);
-            } else if (savedTelemetry.inserted) {
-              telemetrySaved += 1;
-              console.log(`[scheduler] DB-backed LOCATION_UPDATE saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId}`);
-              const telegram = await sendTelegram(message);
-              if (telegram?.ok && savedTelemetry.id) {
-                await updateTelemetryTelegramMessage(savedTelemetry.id, message);
+            if (result.savedTelemetry.id) {
+              if (result.savedTelemetry.inserted) {
+                telemetrySaved += 1;
+                console.log(`[scheduler] DB-backed LOCATION_UPDATE saved telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId}`);
+              } else {
+                telemetrySkipped += 1;
+                console.log(`[scheduler] DB-backed LOCATION_UPDATE skipped telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} reason=${result.savedTelemetry.updated ? 'updated' : 'duplicate'}`);
               }
             } else {
               telemetrySkipped += 1;
-            }
-            if (idlingTripToCloseAfterMoving) {
-              await closeIdlingDedupDb(vehicleId, idlingTripToCloseAfterMoving);
+              console.log(`[scheduler] DB-backed LOCATION_UPDATE skipped reason=missing_id vehicle=${vehicleId}`);
             }
             continue;
           }
@@ -955,56 +1072,51 @@ async function runCycle(): Promise<void> {
 
             if (thresholdMinutes === null) {
               telemetrySkipped += 1;
-              console.log(`[idling-alert] IDLING Waiting elapsed=${elapsedMinutes.toFixed(1)}min vehicle=${vehicleId} trip=${activeTripId}`);
+              console.log(`[idling] threshold=${idlingThresholdForMinutes(elapsedMinutes) ?? 'none'} action=waiting elapsed=${elapsedMinutes.toFixed(1)}min vehicle=${vehicleId} trip=${activeTripId}`);
               continue;
             }
 
             const shouldPersist = await shouldPersistIdlingAlertDb(vehicleId, activeTripId, thresholdMinutes);
             if (!shouldPersist) {
               telemetrySkipped += 1;
-              console.log(`[idling-alert] Skipping DB-backed IDLING threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId} reason=already_alerted`);
+              console.log(`[idling] threshold=${thresholdMinutes} action=skipped reason=already_alerted vehicle=${vehicleId} trip=${activeTripId}`);
               continue;
             }
 
             const message = `⏱ IDLING TOO LONG - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n⏱ Idling for ${Math.round(elapsedMinutes * 10) / 10} minutes\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
-            const savedTelemetry = await insertTelemetry({
+
+            const result = await saveAndSendTelemetryAlert({
+              eventType: EVENT_TYPE.IDLING,
               vehicleId,
               plateNumber,
-              eventType: EVENT_TYPE.IDLING,
+              activeTripId,
               latitude,
               longitude,
               speedKmh: speed,
               fuelLiters,
               ignition: currentIgnition,
               locationName,
-              driverId: null,
-              toNumber,
               recordedAt,
-              activeTripId,
               telegramMessage: message,
             });
 
-            if (!savedTelemetry.id) {
+            if (!result.savedTelemetry.id) {
               telemetrySkipped += 1;
-              console.log(`[idling-alert] DB-backed IDLING insert skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${activeTripId}`);
+              console.log(`[idling] threshold=${thresholdMinutes} action=skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${activeTripId}`);
               continue;
             }
 
-            if (savedTelemetry.inserted) {
+            if (result.savedTelemetry.inserted) {
               telemetrySaved += 1;
-              console.log(`[idling-alert] DB-backed IDLING telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
+              console.log(`[idling] threshold=${thresholdMinutes} action=saved telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
             } else {
               telemetrySkipped += 1;
-              console.log(`[idling-alert] DB-backed IDLING telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
+              console.log(`[idling] threshold=${thresholdMinutes} action=skipped reason=duplicate telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
             }
+
+            // Mark idling dedup AFTER savedTelemetry.id exists
             await markIdlingAlertDb(vehicleId, activeTripId, idlingStartedAt, thresholdMinutes);
-            console.log(`[idling-alert] DB-backed IDLING dedup marked threshold=${thresholdMinutes}min telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
-            const telegram = await sendTelegram(message);
-            if (telegram?.ok) {
-              console.log(`[idling-alert] DB-backed IDLING telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
-            } else {
-              console.error(`[idling-alert] DB-backed IDLING telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
-            }
+            console.log(`[idling-dedup] Marked threshold=${thresholdMinutes}min telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
           }
         } catch (err) {
           console.error(`[scheduler] Failed DB-backed telemetry persistence for ${vehicleId}:`, errorMessage(err));
@@ -1146,36 +1258,20 @@ async function runCycle(): Promise<void> {
               continue;
             }
 
-            // Location deduplication: save when the name changes or coordinates move at least 20m.
-            const lastTelemetry = await getLatestTelemetry(vehicleId);
-            const previousLocationName = lastTelemetry?.locationName || null;
+            // Location deduplication: compare by location_name only (same vehicle_id + active_trip_id)
+            const previousLocationName = await getLatestLocationUpdateLocation(vehicleId, activeTripId);
             const currentLocationName = locationName;
-            const locationNameChanged = currentLocationName !== null &&
-              currentLocationName !== undefined &&
-              currentLocationName.trim() !== '' &&
-              previousLocationName !== currentLocationName;
-            const hasCurrentCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
-            const hasPreviousCoordinates = Number.isFinite(lastTelemetry?.latitude) && Number.isFinite(lastTelemetry?.longitude);
-            const distanceMeters = hasCurrentCoordinates && hasPreviousCoordinates
-              ? haversineDistanceMeters(latitude, longitude, lastTelemetry?.latitude ?? null, lastTelemetry?.longitude ?? null)
-              : null;
-            const locationChanged = locationNameChanged || (distanceMeters !== null && distanceMeters >= 20);
+            const locationNameChanged = Boolean(
+              currentLocationName &&
+              currentLocationName.trim() &&
+              previousLocationName !== currentLocationName,
+            );
 
-            console.log("[LOCATION CHECK]", {
-              vehicle: plateNumber,
-              previousLocation: previousLocationName,
-              currentLocation: currentLocationName,
-              locationNameChanged,
-              distanceMeters,
-              locationChanged,
-              speed: spd,
-              ignition: effectiveIgnition,
-              willInsert: locationChanged
-            });
+            console.log(`[location-update] previous=${previousLocationName ?? 'null'} current=${currentLocationName ?? 'null'} action=${!previousLocationName ? 'insert' : locationNameChanged ? 'insert' : 'skip_same_location'}`);
 
-            if (!locationChanged) {
+            if (previousLocationName && !locationNameChanged) {
               telemetrySkipped += 1;
-              console.log(`[scheduler] SKIPPING LOCATION_UPDATE for ${vehicleId} reason=location_not_changed`);
+              console.log(`[scheduler] SKIPPING LOCATION_UPDATE for ${vehicleId} reason=same_location_name`);
               continue;
             }
           }
@@ -1202,41 +1298,37 @@ async function runCycle(): Promise<void> {
           });
 
           const telegramMessage = alert.message || null;
-          const savedTelemetry = await insertTelemetry({
+          const result = await saveAndSendTelemetryAlert({
+            eventType: finalEventType,
             vehicleId,
             plateNumber,
-            eventType: finalEventType,
+            activeTripId,
             latitude,
             longitude,
             speedKmh: spd,
             fuelLiters,
             ignition: effectiveIgnition,
             locationName,
-            driverId: null,
-            toNumber,
             recordedAt,
-            activeTripId,
-            telegramMessage
+            telegramMessage,
           });
 
-          if (!savedTelemetry.id) {
+          if (!result.savedTelemetry.id) {
             telemetrySkipped += 1;
             console.log(`[idling-alert] DB insert failed missing_id vehicle=${vehicleId} event=${finalEventType} trip=${activeTripId ?? 'null'}`);
             continue;
           }
 
           // ── Track telemetry counts ──────────────────────────────
-          // For LOCATION_UPDATE, updated rows are not new inserts.
-          // For all other alert types, any id means it was saved.
-          if (savedTelemetry.updated) {
+          if (result.savedTelemetry.updated) {
             telemetrySkipped += 1;
-            console.log(`[idling-alert] ${finalEventType} LOCATION_UPDATE updated telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
-          } else if (savedTelemetry.inserted) {
+            console.log(`[idling-alert] ${finalEventType} LOCATION_UPDATE updated telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+          } else if (result.savedTelemetry.inserted) {
             telemetrySaved += 1;
-            console.log(`[idling-alert] ${finalEventType} telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+            console.log(`[idling-alert] ${finalEventType} telemetry inserted telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
           } else {
             telemetrySkipped += 1;
-            console.log(`[idling-alert] ${finalEventType} telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+            console.log(`[idling-alert] ${finalEventType} telemetry duplicate existing_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
           }
 
           if (finalEventType === EVENT_TYPE.IDLING && activeTripId) {
@@ -1245,41 +1337,13 @@ async function runCycle(): Promise<void> {
               // Use the actual idling start time from tracker state (preserves original timer)
               const idlingStartedAt = alert.idlingStartedAt || new Date(Date.now() - thresholdMinutes * 60 * 1000).toISOString();
               await markIdlingAlertDb(vehicleId, activeTripId, idlingStartedAt, thresholdMinutes);
-              console.log(`[idling-alert] IDLING dedup marked threshold=${thresholdMinutes}min telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
+              console.log(`[idling-alert] IDLING dedup marked threshold=${thresholdMinutes}min telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
             }
           }
 
           if (finalEventType === EVENT_TYPE.MOTION_STARTED || finalEventType === EVENT_TYPE.IGNITION_OFF) {
             await closeIdlingDedupDb(vehicleId, activeTripId);
             console.log(`[idling-alert] Closed active idling state vehicle=${vehicleId} trip=${activeTripId ?? 'null'} event=${finalEventType}`);
-          }
-
-          // ── Determine whether to send Telegram ─────────────────
-          // For LOCATION_UPDATE: only send Telegram on new inserts (updated rows already had their Telegram sent).
-          // For all other alert types (IDLING_TOO_LONG, MOTION_STARTED, IGNITION_ON, IGNITION_OFF, etc.):
-          //   send Telegram whenever savedTelemetry.id exists, regardless of inserted/updated/duplicate status.
-          //   The DB/telemetry dedupe already prevents duplicate alerts; we must not suppress Telegram here.
-          const isLocationUpdate = finalEventType === EVENT_TYPE.LOCATION_UPDATE;
-          const shouldSendTelegram = !isLocationUpdate || savedTelemetry.inserted;
-          const reasonIfSkipped = shouldSendTelegram ? '' : 'LOCATION_UPDATE updated (Telegram already sent for this row)';
-
-          console.log("[telegram] attempting", { eventType: finalEventType, telemetryId: savedTelemetry.id, plateNumber, shouldSendTelegram, reasonIfSkipped });
-
-          if (shouldSendTelegram && telegramMessage) {
-            try {
-              console.log(`[telegram] before send telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}`);
-              const tg = await sendTelegram(telegramMessage as string);
-              console.log("[telegram] result", { eventType: finalEventType, telemetryId: savedTelemetry.id, ok: tg?.ok, error: tg?.error });
-              if (tg?.ok) {
-                console.log(`[telegram] send succeeded telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}`);
-              } else {
-                console.error(`[telegram] send failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}: ${tg?.error ?? 'telegram_not_ok'} (message kept in DB)`);
-              }
-            } catch (telegramError) {
-              console.error(`[telegram] send exception telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}:`, errorMessage(telegramError));
-            }
-          } else {
-            console.log(`[telegram] skipped vehicle=${vehicleId} event=${finalEventType} reason=${reasonIfSkipped || 'no message'}`);
           }
         } catch (err) {
           console.error(`[scheduler] Failed to save telemetry for ${alert.vehicleId}:`, errorMessage(err));
@@ -1321,57 +1385,4 @@ async function runCycle(): Promise<void> {
 
     console.error(`[scheduler] Cycle ${cycleLabel} failed — ${message}`);
   }
-}
-
-// ── Helper: Check whether an ignition boundary event already exists for a trip ──
-async function telemetryTripEventExists(
-  vehicleId: string,
-  activeTripId: string,
-  eventType: string,
-): Promise<boolean> {
-  const pool = getPool();
-  const result = await pool.query(
-    `SELECT 1
-       FROM gps_telemetry
-      WHERE vehicle_id = $1
-        AND active_trip_id = $2
-        AND event_type = $3
-      LIMIT 1`,
-    [vehicleId, activeTripId, eventType],
-  );
-  return result.rows.length > 0;
-}
-
-async function getLatestCanonicalTripEventType(
-  vehicleId: string,
-  activeTripId: string,
-): Promise<string | null> {
-  const pool = getPool();
-  const result = await pool.query<{ event_type: string }>(
-    `SELECT CASE trim(event_type)
-        WHEN 'IGNITION ON' THEN 'IGNITION_ON'
-        WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
-        WHEN 'IGNITION_ON' THEN 'IGNITION_ON'
-        WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
-        WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
-        WHEN 'IGNITION_OFF' THEN 'IGNITION_OFF'
-        WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
-        WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
-        WHEN 'LOCATION_UPDATE' THEN 'LOCATION_UPDATE'
-        WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
-        WHEN 'MOTION_STARTED' THEN 'MOTION_STARTED'
-        WHEN 'IDLING ALERT' THEN 'IDLING'
-        WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
-        WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
-        WHEN 'IDLING' THEN 'IDLING'
-        ELSE trim(event_type)
-      END AS event_type
-       FROM gps_telemetry
-      WHERE vehicle_id = $1
-        AND active_trip_id = $2
-      ORDER BY recorded_at DESC
-      LIMIT 1`,
-    [vehicleId, activeTripId],
-  );
-  return result.rows[0]?.event_type ?? null;
 }
