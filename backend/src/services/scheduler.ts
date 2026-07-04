@@ -247,12 +247,45 @@ function haversineDistanceMeters(
 // dedicated database table (gps_idling_dedup) so they survive
 // restarts and are shared across cycles.
 // Composite key: vehicle_id + active_trip_id + threshold_minutes
+let idlingSchemaReady = false;
+
+async function ensureIdlingDedupSchema(): Promise<void> {
+  if (idlingSchemaReady) return;
+  const pool = getPool();
+  await pool.query(`
+    ALTER TABLE gps_idling_dedup
+      ALTER COLUMN threshold_minutes DROP NOT NULL;
+
+    ALTER TABLE gps_idling_dedup
+      ADD COLUMN IF NOT EXISTS idling_started_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS last_alerted_duration_minutes INTEGER,
+      ADD COLUMN IF NOT EXISTS last_alerted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
+
+    UPDATE gps_idling_dedup
+       SET idling_started_at = COALESCE(idling_started_at, created_at),
+           last_alerted_duration_minutes = COALESCE(last_alerted_duration_minutes, threshold_minutes),
+           last_alerted_at = COALESCE(last_alerted_at, created_at),
+           is_active = COALESCE(is_active, true)
+     WHERE idling_started_at IS NULL
+        OR last_alerted_duration_minutes IS NULL
+        OR last_alerted_at IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_gps_idling_dedup_active_trip
+      ON gps_idling_dedup (vehicle_id, active_trip_id, is_active);
+  `);
+  idlingSchemaReady = true;
+}
+
 async function getActiveIdlingDedupDb(vehicleId: string, activeTripId: string): Promise<{
+  idlingStartedAt: string | null;
   lastAlertedDurationMinutes: number | null;
 } | null> {
+  await ensureIdlingDedupSchema();
   const pool = getPool();
-  const result = await pool.query<{ last_alerted_duration_minutes: number | null }>(
-    `SELECT last_alerted_duration_minutes
+  const result = await pool.query<{ idling_started_at: string | null; last_alerted_duration_minutes: number | null }>(
+    `SELECT idling_started_at, last_alerted_duration_minutes
        FROM gps_idling_dedup
      WHERE vehicle_id = $1
        AND active_trip_id = $2
@@ -262,7 +295,10 @@ async function getActiveIdlingDedupDb(vehicleId: string, activeTripId: string): 
     [vehicleId, activeTripId],
   );
   const row = result.rows[0];
-  return row ? { lastAlertedDurationMinutes: row.last_alerted_duration_minutes } : null;
+  return row ? {
+    idlingStartedAt: row.idling_started_at,
+    lastAlertedDurationMinutes: row.last_alerted_duration_minutes,
+  } : null;
 }
 
 async function shouldPersistIdlingAlertDb(vehicleId: string, activeTripId: string, thresholdMinutes: number): Promise<boolean> {
@@ -270,7 +306,57 @@ async function shouldPersistIdlingAlertDb(vehicleId: string, activeTripId: strin
   return Number(stateRow?.lastAlertedDurationMinutes ?? 0) < thresholdMinutes;
 }
 
+async function getActiveIdlingSessionForVehicle(vehicleId: string): Promise<{
+  activeTripId: string;
+  idlingStartedAt: string | null;
+  lastAlertedDurationMinutes: number | null;
+} | null> {
+  await ensureIdlingDedupSchema();
+  const pool = getPool();
+  const result = await pool.query<{ active_trip_id: string; idling_started_at: string | null; last_alerted_duration_minutes: number | null }>(
+    `SELECT active_trip_id, idling_started_at, last_alerted_duration_minutes
+       FROM gps_idling_dedup
+      WHERE vehicle_id = $1
+        AND is_active = true
+      ORDER BY COALESCE(last_alerted_at, idling_started_at, created_at) DESC
+      LIMIT 1`,
+    [vehicleId],
+  );
+  const row = result.rows[0];
+  return row ? {
+    activeTripId: row.active_trip_id,
+    idlingStartedAt: row.idling_started_at,
+    lastAlertedDurationMinutes: row.last_alerted_duration_minutes,
+  } : null;
+}
+
+async function ensureIdlingSessionDb(vehicleId: string, activeTripId: string, idlingStartedAt: string): Promise<string> {
+  await ensureIdlingDedupSchema();
+  const pool = getPool();
+  const existing = await getActiveIdlingDedupDb(vehicleId, activeTripId);
+  if (existing?.idlingStartedAt) return new Date(existing.idlingStartedAt).toISOString();
+
+  await pool.query(
+    `INSERT INTO gps_idling_dedup
+       (vehicle_id, active_trip_id, threshold_minutes, idling_started_at, last_alerted_duration_minutes, last_alerted_at, is_active)
+     VALUES ($1, $2, NULL, $3, NULL, NULL, true)
+     ON CONFLICT DO NOTHING`,
+    [vehicleId, activeTripId, idlingStartedAt],
+  );
+  return idlingStartedAt;
+}
+
+function idlingThresholdForMinutes(minutes: number): number | null {
+  if (minutes < 10) return null;
+  if (minutes < 30) return 10;
+  if (minutes < 60) return 30;
+  if (minutes < 90) return 60;
+  if (minutes < 120) return 90;
+  return Math.floor(minutes / 30) * 30;
+}
+
 async function markIdlingAlertDb(vehicleId: string, activeTripId: string, idlingStartedAt: string, thresholdMinutes: number): Promise<void> {
+  await ensureIdlingDedupSchema();
   const pool = getPool();
   // Only update the alert timestamp and threshold, NEVER update idling_started_at
   // The idling_started_at marks when idling began and should persist until the trip ends
@@ -293,7 +379,7 @@ async function markIdlingAlertDb(vehicleId: string, activeTripId: string, idling
   await pool.query(
     `INSERT INTO gps_idling_dedup
        (vehicle_id, active_trip_id, threshold_minutes, idling_started_at, last_alerted_duration_minutes, last_alerted_at, is_active)
-     VALUES ($1, $2, $3, $4, $4, now(), true)
+     VALUES ($1, $2, $3, $4, $3, now(), true)
      ON CONFLICT DO NOTHING`,
     [vehicleId, activeTripId, thresholdMinutes, idlingStartedAt],
   );
@@ -301,6 +387,7 @@ async function markIdlingAlertDb(vehicleId: string, activeTripId: string, idling
 }
 
 async function closeIdlingDedupDb(vehicleId: string, activeTripId?: string | null): Promise<void> {
+  await ensureIdlingDedupSchema();
   const pool = getPool();
   if (activeTripId) {
     await pool.query(
@@ -601,6 +688,198 @@ async function runCycle(): Promise<void> {
       }
     }
 
+    // ── DB-backed Telemetry From Current Fleet Snapshot ────────
+    //
+    // Vercel/serverless invocations do not reliably keep tracker.js's
+    // in-memory previous-state Map warm. Persist LOCATION_UPDATE and
+    // IDLING here from database state so external cron invocations still
+    // save telemetry even when each request lands on a fresh function.
+    if (vehicles && vehicles.length > 0) {
+      for (const vehicle of vehicles) {
+        const vehicleId = String(vehicle.id ?? '');
+        if (!vehicleId) continue;
+
+        try {
+          const speed = Number(vehicle.speed ?? 0);
+          const ignition = vehicle.ignition === true;
+          const isMoving = ignition && speed > 0;
+          const isIdling = ignition && speed <= 0;
+          const latestTelemetry = await getLatestTelemetry(vehicleId);
+          const latestActiveTripId = latestTelemetry?.eventType === EVENT_TYPE.IGNITION_OFF
+            ? null
+            : latestTelemetry?.activeTripId ?? null;
+          const activeIdlingSession = await getActiveIdlingSessionForVehicle(vehicleId);
+          const activeTripId = latestActiveTripId ?? activeIdlingSession?.activeTripId ?? randomUUID();
+          const plateNumber = String(vehicle.name ?? '').split(' ')[0] || String(vehicleId);
+          const locationName = String(vehicle.location ?? '').trim() || null;
+          const coordinates = vehicle.coordinates as { latitude?: unknown; longitude?: unknown } | null | undefined;
+          const latitude = coordinates?.latitude == null ? null : Number(coordinates.latitude);
+          const longitude = coordinates?.longitude == null ? null : Number(coordinates.longitude);
+          const fuelLiters = vehicle.fuel == null ? null : Number(vehicle.fuel);
+          const driverName = typeof vehicle.driver === 'string' ? vehicle.driver : null;
+          const toNumber = typeof vehicle.to_number === 'string' ? vehicle.to_number : null;
+          const recordedAt = new Date().toISOString();
+
+          if (!ignition) {
+            await closeIdlingDedupDb(vehicleId, latestActiveTripId);
+            continue;
+          }
+
+          if (isMoving) {
+            let idlingTripToCloseAfterMoving: string | null = null;
+            if (activeIdlingSession?.activeTripId && Number(activeIdlingSession.lastAlertedDurationMinutes ?? 0) >= 10) {
+              const motionTripId = activeIdlingSession.activeTripId;
+              const message = `🟢 MOTION STARTED - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+              const savedTelemetry = await insertTelemetry({
+                vehicleId,
+                plateNumber,
+                eventType: EVENT_TYPE.MOTION_STARTED,
+                latitude,
+                longitude,
+                speedKmh: speed,
+                fuelLiters,
+                ignition,
+                locationName,
+                driverId: null,
+                toNumber,
+                recordedAt,
+                activeTripId: motionTripId,
+                telegramMessage: null,
+              });
+
+              if (savedTelemetry.inserted) {
+                telemetrySaved += 1;
+                console.log(`[scheduler] DB-backed MOTION_STARTED saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
+                const telegram = await sendTelegram(message);
+                if (telegram?.ok && savedTelemetry.id) {
+                  await updateTelemetryTelegramMessage(savedTelemetry.id, message);
+                }
+              } else {
+                telemetrySkipped += 1;
+              }
+              await closeIdlingDedupDb(vehicleId, motionTripId);
+            } else if (activeIdlingSession?.activeTripId) {
+              idlingTripToCloseAfterMoving = activeIdlingSession.activeTripId;
+            } else {
+              console.log(`[scheduler] DB-backed MOTION_STARTED skipped reason=no_active_idling_session vehicle=${vehicleId}`);
+            }
+
+            const previousLocationName = latestTelemetry?.locationName || null;
+            const locationNameChanged = Boolean(
+              locationName &&
+              locationName.trim() &&
+              previousLocationName !== locationName,
+            );
+            const hasCurrentCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
+            const hasPreviousCoordinates = Number.isFinite(latestTelemetry?.latitude) && Number.isFinite(latestTelemetry?.longitude);
+            const distanceMeters = hasCurrentCoordinates && hasPreviousCoordinates
+              ? haversineDistanceMeters(latitude as number, longitude as number, latestTelemetry?.latitude as number, latestTelemetry?.longitude as number)
+              : null;
+            const locationChanged = (distanceMeters !== null && distanceMeters >= 20) || locationNameChanged;
+
+            if (!locationChanged) {
+              telemetrySkipped += 1;
+              console.log(`[scheduler] SKIPPING DB-backed LOCATION_UPDATE for ${vehicleId} reason=location_not_changed distance=${distanceMeters === null ? 'unknown' : distanceMeters.toFixed(1)}m`);
+              if (idlingTripToCloseAfterMoving) {
+                await closeIdlingDedupDb(vehicleId, idlingTripToCloseAfterMoving);
+              }
+              continue;
+            }
+
+            const message = `🗺 LOCATION UPDATE - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n📍 ${locationName}\n⚡ Speed: ${speed} km/h\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+            const savedTelemetry = await insertTelemetry({
+              vehicleId,
+              plateNumber,
+              eventType: EVENT_TYPE.LOCATION_UPDATE,
+              latitude,
+              longitude,
+              speedKmh: speed,
+              fuelLiters,
+              ignition,
+              locationName,
+              driverId: null,
+              toNumber,
+              recordedAt,
+              activeTripId,
+              telegramMessage: null,
+            });
+
+            if (savedTelemetry.inserted) {
+              telemetrySaved += 1;
+              console.log(`[scheduler] DB-backed LOCATION_UPDATE saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId}`);
+              const telegram = await sendTelegram(message);
+              if (telegram?.ok && savedTelemetry.id) {
+                await updateTelemetryTelegramMessage(savedTelemetry.id, message);
+              }
+            } else {
+              telemetrySkipped += 1;
+            }
+            if (idlingTripToCloseAfterMoving) {
+              await closeIdlingDedupDb(vehicleId, idlingTripToCloseAfterMoving);
+            }
+            continue;
+          }
+
+          if (isIdling) {
+            const fallbackStartedAt = new Date().toISOString();
+            const idlingStartedAt = await ensureIdlingSessionDb(vehicleId, activeTripId, fallbackStartedAt);
+            const apiIdleMinutes = Number(vehicle.idle_minutes ?? NaN);
+            const elapsedMinutes = Number.isFinite(apiIdleMinutes)
+              ? apiIdleMinutes
+              : Math.max(0, (Date.now() - new Date(idlingStartedAt).getTime()) / 60000);
+            const thresholdMinutes = idlingThresholdForMinutes(elapsedMinutes);
+
+            if (thresholdMinutes === null) {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] IDLING Waiting elapsed=${elapsedMinutes.toFixed(1)}min vehicle=${vehicleId} trip=${activeTripId}`);
+              continue;
+            }
+
+            const shouldPersist = await shouldPersistIdlingAlertDb(vehicleId, activeTripId, thresholdMinutes);
+            if (!shouldPersist) {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] Skipping DB-backed IDLING threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId} reason=already_alerted`);
+              continue;
+            }
+
+            const message = `⏱ IDLING TOO LONG - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n⏱ Idling for ${Math.round(elapsedMinutes * 10) / 10} minutes\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+            const savedTelemetry = await insertTelemetry({
+              vehicleId,
+              plateNumber,
+              eventType: EVENT_TYPE.IDLING,
+              latitude,
+              longitude,
+              speedKmh: speed,
+              fuelLiters,
+              ignition,
+              locationName,
+              driverId: null,
+              toNumber,
+              recordedAt,
+              activeTripId,
+              telegramMessage: null,
+            });
+
+            if (!savedTelemetry.inserted) {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] DB-backed IDLING insert skipped vehicle=${vehicleId} trip=${activeTripId}`);
+              continue;
+            }
+
+            telemetrySaved += 1;
+            await markIdlingAlertDb(vehicleId, activeTripId, idlingStartedAt, thresholdMinutes);
+            console.log(`[idling-alert] DB-backed IDLING saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId} threshold=${thresholdMinutes}min`);
+            const telegram = await sendTelegram(message);
+            if (telegram?.ok && savedTelemetry.id) {
+              await updateTelemetryTelegramMessage(savedTelemetry.id, message);
+            }
+          }
+        } catch (err) {
+          console.error(`[scheduler] Failed DB-backed telemetry persistence for ${vehicleId}:`, errorMessage(err));
+        }
+      }
+    }
+
     // ── STEP 2: Persist Emitted Alerts as GPS Telemetry ────────
     // This saves the actual alert types that were sent to Telegram.
     // The eventType comes directly from tracker.js's canonical mapping.
@@ -729,25 +1008,33 @@ async function runCycle(): Promise<void> {
               return candidateEventType === EVENT_TYPE.IGNITION_ON ||
                 candidateEventType === EVENT_TYPE.MOTION_STARTED;
             });
-            if (!effectiveIgnition || spd <= 0 || hasHigherPriorityEvent || unauthorizedTravelAlertVehicleIds.has(vehicleId)) {
+            if (!effectiveIgnition || spd <= 0 || hasHigherPriorityEvent) {
               telemetrySkipped += 1;
-              console.log(`[scheduler] SKIPPING LOCATION_UPDATE for ${vehicleId} reason=${!effectiveIgnition ? 'ignition_off' : spd <= 0 ? 'not_moving' : hasHigherPriorityEvent ? 'higher_priority_event' : 'no_approved_travel_order'}`);
+              console.log(`[scheduler] SKIPPING LOCATION_UPDATE for ${vehicleId} reason=${!effectiveIgnition ? 'ignition_off' : spd <= 0 ? 'not_moving' : 'higher_priority_event'}`);
               continue;
             }
 
-            // Location deduplication: only save if location_name actually changed
+            // Location deduplication: save when the name changes or coordinates move at least 20m.
             const lastTelemetry = await getLatestTelemetry(vehicleId);
             const previousLocationName = lastTelemetry?.locationName || null;
             const currentLocationName = locationName;
-            const locationChanged = currentLocationName !== null &&
+            const locationNameChanged = currentLocationName !== null &&
               currentLocationName !== undefined &&
               currentLocationName.trim() !== '' &&
               previousLocationName !== currentLocationName;
+            const hasCurrentCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
+            const hasPreviousCoordinates = Number.isFinite(lastTelemetry?.latitude) && Number.isFinite(lastTelemetry?.longitude);
+            const distanceMeters = hasCurrentCoordinates && hasPreviousCoordinates
+              ? haversineDistanceMeters(latitude, longitude, lastTelemetry?.latitude ?? null, lastTelemetry?.longitude ?? null)
+              : null;
+            const locationChanged = locationNameChanged || (distanceMeters !== null && distanceMeters >= 20);
 
             console.log("[LOCATION CHECK]", {
               vehicle: plateNumber,
               previousLocation: previousLocationName,
               currentLocation: currentLocationName,
+              locationNameChanged,
+              distanceMeters,
               locationChanged,
               speed: spd,
               ignition: effectiveIgnition,

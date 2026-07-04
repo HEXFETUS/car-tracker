@@ -296,7 +296,19 @@ function normalizeDashboardData(data: DashboardData): DashboardData {
  */
 export async function fetchDashboardData(): Promise<DashboardData> {
   const res = await fetch(API_BASE);
-  if (!res.ok) throw new Error('Failed to fetch dashboard data');
+  if (!res.ok) {
+    let message = `Failed to fetch dashboard data (HTTP ${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = String(body.error);
+    } catch {
+      // Keep the status-based message if the response is not JSON.
+    }
+    throw new Error(message);
+  }
   const json: DashboardResponse = await res.json();
+  if (!json.success || !json.data) {
+    throw new Error(json.message || 'Dashboard response did not include data');
+  }
   return normalizeDashboardData(json.data);
 }

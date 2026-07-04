@@ -5,10 +5,12 @@ const router: ExpressRouter = express.Router();
 
 // GET /api/dashboard — Aggregated dashboard data
 router.get('/', async (_req: Request, res: Response) => {
+  let dashboardStep = 'initializing';
   try {
     const pool = getPool();
 
     // ── Row 1: Executive Summary KPIs ──────────────────────────
+    dashboardStep = 'fleet KPIs';
     const fleetKpis = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM vehicles) AS total_vehicles,
@@ -20,6 +22,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 2: Travel Orders KPIs ──────────────────────────────
+    dashboardStep = 'travel order KPIs';
     const travelOrderKpis = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM travel_orders WHERE status = 'PENDING') AS pending_approval,
@@ -30,6 +33,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 3: GPS Tracking KPIs ──────────────────────────────
+    dashboardStep = 'GPS KPIs';
     const gpsKpis = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS trips_recorded_today,
@@ -40,6 +44,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 4: Alert Counts ────────────────────────────────────
+    dashboardStep = 'alert counts';
     const alertCounts = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM gps_alerts WHERE alert_type = 'IGNITION_ON' AND DATE(created_at) = CURRENT_DATE) AS ignition_on_alerts,
@@ -50,6 +55,7 @@ router.get('/', async (_req: Request, res: Response) => {
 
     // ── Row 2: Vehicle Status Distribution (Doughnut) ───────────
     // Infer status: assigned if has active/approved travel order
+    dashboardStep = 'vehicle status distribution';
     const vehicleStatusDistribution = await pool.query(`
       WITH vehicle_status AS (
         SELECT
@@ -78,6 +84,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 3: Travel Orders by Status (Bar Chart) ─────────────
+    dashboardStep = 'travel orders by status';
     const travelOrdersByStatus = await pool.query(`
       SELECT
         CASE status
@@ -106,6 +113,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 4: Distance Traveled Last 30 Days (Line Chart) ─────
+    dashboardStep = 'distance last 30 days';
     const distanceLast30Days = await pool.query(`
       SELECT
         trip_date AS date,
@@ -117,6 +125,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 4: Trips Per Day Last 30 Days (Area Chart) ─────────
+    dashboardStep = 'trips per day';
     const tripsPerDay = await pool.query(`
       SELECT
         trip_date AS date,
@@ -128,6 +137,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 5: Live Vehicle Monitoring ──────────────────────────
+    dashboardStep = 'live vehicle monitoring';
     const liveMonitoring = await pool.query(`
       SELECT
         v.id AS vehicle_id,
@@ -177,6 +187,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 6: Recent GPS Alerts ───────────────────────────────
+    dashboardStep = 'recent GPS alerts';
     const recentAlerts = await pool.query(`
       SELECT
         a.id,
@@ -195,6 +206,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 7: Driver Performance Leaderboard ──────────────────
+    dashboardStep = 'driver performance leaderboard';
     const driverLeaderboard = await pool.query(`
       SELECT
         d.id AS driver_id,
@@ -213,6 +225,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Row 8: Maintenance Overview ────────────────────────────
+    dashboardStep = 'maintenance overview';
     const maintenanceOverview = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM maintenance WHERE date >= CURRENT_DATE) AS scheduled_maintenance,
@@ -221,6 +234,7 @@ router.get('/', async (_req: Request, res: Response) => {
         (SELECT COALESCE(SUM(cost), 0) FROM maintenance WHERE date >= DATE_TRUNC('month', CURRENT_DATE)) AS maintenance_cost
     `);
 
+    dashboardStep = 'maintenance trends';
     const maintenanceTrends = await pool.query(`
       SELECT
         TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') AS month,
@@ -233,6 +247,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Admin: Travel Order Matching Accuracy ──────────────────
+    dashboardStep = 'travel order matching accuracy';
     const matchingAccuracy = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM gps_trip_logs WHERE travel_order_id IS NOT NULL) AS gps_logs_linked_to_to,
@@ -242,7 +257,9 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Admin: Fleet Utilization ───────────────────────────────
+    dashboardStep = 'total vehicle count';
     const totalVehicles = (await pool.query(`SELECT COUNT(*) AS cnt FROM vehicles`)).rows[0].cnt;
+    dashboardStep = 'fleet utilization';
     const fleetUtilization = await pool.query(`
       WITH daily_active AS (
         SELECT
@@ -262,6 +279,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `, [totalVehicles]);
 
     // ── Real-Time: Currently Moving / Idling ───────────────────
+    dashboardStep = 'real-time vehicle status';
     const realTimeStatus = await pool.query(`
       WITH latest_telemetry AS (
         SELECT DISTINCT ON (vehicle_id)
@@ -279,6 +297,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Recently Completed Trips ───────────────────────────────
+    dashboardStep = 'recently completed trips';
     const recentlyCompleted = await pool.query(`
       SELECT
         g.id,
@@ -300,6 +319,7 @@ router.get('/', async (_req: Request, res: Response) => {
     `);
 
     // ── Active Trips (for real-time section) ───────────────────
+    dashboardStep = 'active trips';
     const activeTrips = await pool.query(`
       SELECT
         to_.id,
@@ -365,8 +385,13 @@ router.get('/', async (_req: Request, res: Response) => {
       message: 'Dashboard data retrieved successfully',
     });
   } catch (error) {
-    console.error('GET /api/dashboard error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`GET /api/dashboard error at ${dashboardStep}:`, message);
+    res.status(500).json({
+      success: false,
+      data: null,
+      error: `Dashboard query failed at ${dashboardStep}`,
+    });
   }
 });
 

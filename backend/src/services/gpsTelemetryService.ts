@@ -123,6 +123,17 @@ function recordedAtMinuteIso(value: string): string {
   return date.toISOString();
 }
 
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
 /**
  * Get the most recent telemetry record for a vehicle.
  * Returns null if no record exists.
@@ -230,15 +241,15 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
   );
   try {
     if (eventType === 'LOCATION_UPDATE') {
-      if (!data.ignition || Number(data.speedKmh ?? 0) <= 0) {
+      if (data.ignition !== true || Number(data.speedKmh ?? 0) <= 0) {
         console.log(
           `[telemetry] LOCATION_UPDATE skipped not moving vehicle=${data.vehicleId} ignition=${data.ignition} speed=${data.speedKmh}`,
         );
         return { inserted: false, id: null };
       }
 
-      const latestLocationResult = await pool.query<{ location_name: string | null }>(
-        `SELECT location_name
+      const latestLocationResult = await pool.query<{ location_name: string | null; latitude: number | null; longitude: number | null }>(
+        `SELECT location_name, latitude, longitude
            FROM gps_telemetry
           WHERE vehicle_id = $1
             AND CASE event_type
@@ -258,17 +269,27 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
           LIMIT 1`,
         [data.vehicleId, eventType],
       );
-      const latestLocation = normalizeLocationName(latestLocationResult.rows[0]?.location_name ?? null);
-      if (latestLocation && latestLocation === normalizedLocationName) {
+      const latestLocationRow = latestLocationResult.rows[0];
+      const latestLocation = normalizeLocationName(latestLocationRow?.location_name ?? null);
+      const hasCurrentCoordinates = Number.isFinite(data.latitude) && Number.isFinite(data.longitude);
+      const hasPreviousCoordinates = Number.isFinite(latestLocationRow?.latitude) && Number.isFinite(latestLocationRow?.longitude);
+      const distanceMeters = latestLocationRow && hasCurrentCoordinates && hasPreviousCoordinates
+        ? haversineMeters(data.latitude as number, data.longitude as number, latestLocationRow.latitude as number, latestLocationRow.longitude as number)
+        : null;
+      const locationNameChanged = Boolean(normalizedLocationName && latestLocation !== normalizedLocationName);
+      const locationChanged = (distanceMeters !== null && distanceMeters >= 20) || locationNameChanged;
+      if (latestLocationRow && !locationChanged) {
         console.log(
-          `[telemetry] LOCATION_UPDATE skipped same latest location vehicle=${data.vehicleId} location=${JSON.stringify(data.locationName ?? '')}`,
+          `[telemetry] LOCATION_UPDATE skipped same latest location vehicle=${data.vehicleId} location=${JSON.stringify(data.locationName ?? '')} distance=${distanceMeters === null ? 'unknown' : distanceMeters.toFixed(1)}m`,
         );
         return { inserted: false, id: null };
       }
     }
 
-    const duplicateResult = await pool.query<{ id: string }>(
+    const duplicateResult = await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
       `SELECT id
+            , latitude
+            , longitude
          FROM gps_telemetry
         WHERE vehicle_id = $1
           AND CASE event_type
@@ -294,19 +315,46 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
         normalizedLocationName,
       ],
     );
-    if (duplicateResult.rows[0]?.id) {
-      if (data.telegramMessage) {
-        await pool.query(
-          `UPDATE gps_telemetry
-              SET telegram_message = COALESCE(telegram_message, $2)
-            WHERE id = $1`,
-          [duplicateResult.rows[0].id, data.telegramMessage],
+    const duplicateRow = duplicateResult.rows[0];
+    if (duplicateRow?.id) {
+      if (eventType === 'LOCATION_UPDATE') {
+        const hasCurrentCoordinates = Number.isFinite(data.latitude) && Number.isFinite(data.longitude);
+        const hasDuplicateCoordinates = Number.isFinite(duplicateRow.latitude) && Number.isFinite(duplicateRow.longitude);
+        const duplicateDistanceMeters = hasCurrentCoordinates && hasDuplicateCoordinates
+          ? haversineMeters(data.latitude as number, data.longitude as number, duplicateRow.latitude as number, duplicateRow.longitude as number)
+          : null;
+        if (duplicateDistanceMeters !== null && duplicateDistanceMeters >= 20) {
+          console.log(
+            `[telemetry] LOCATION_UPDATE duplicate key ignored because coordinates moved vehicle=${data.vehicleId} distance=${duplicateDistanceMeters.toFixed(1)}m`,
+          );
+        } else {
+          if (data.telegramMessage) {
+            await pool.query(
+              `UPDATE gps_telemetry
+                  SET telegram_message = COALESCE(telegram_message, $2)
+                WHERE id = $1`,
+              [duplicateRow.id, data.telegramMessage],
+            );
+          }
+          console.log(
+            `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
+          );
+          return { inserted: false, id: duplicateRow.id };
+        }
+      } else {
+        if (data.telegramMessage) {
+          await pool.query(
+            `UPDATE gps_telemetry
+                SET telegram_message = COALESCE(telegram_message, $2)
+              WHERE id = $1`,
+            [duplicateRow.id, data.telegramMessage],
+          );
+        }
+        console.log(
+          `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
         );
+        return { inserted: false, id: duplicateRow.id };
       }
-      console.log(
-        `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
-      );
-      return { inserted: false, id: duplicateResult.rows[0].id };
     }
 
     const result = await pool.query<{ id: string }>(
@@ -342,8 +390,10 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
     console.log(
       `[telemetry] INSERT gps_telemetry skipped by conflict vehicle=${data.vehicleId} event=${eventType} active_trip_id=${data.activeTripId ?? 'null'}`,
     );
-    const conflictResult = await pool.query<{ id: string }>(
+    const conflictResult = await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
       `SELECT id
+            , latitude
+            , longitude
          FROM gps_telemetry
         WHERE vehicle_id = $1
           AND CASE event_type
@@ -364,7 +414,20 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
         LIMIT 1`,
       [data.vehicleId, eventType, recordedAtMinute, normalizedLocationName],
     );
-    const conflictId = conflictResult.rows[0]?.id ?? null;
+    const conflictRow = conflictResult.rows[0];
+    const conflictId = conflictRow?.id ?? null;
+    if (eventType === 'LOCATION_UPDATE' && conflictRow) {
+      const hasCurrentCoordinates = Number.isFinite(data.latitude) && Number.isFinite(data.longitude);
+      const hasConflictCoordinates = Number.isFinite(conflictRow.latitude) && Number.isFinite(conflictRow.longitude);
+      const conflictDistanceMeters = hasCurrentCoordinates && hasConflictCoordinates
+        ? haversineMeters(data.latitude as number, data.longitude as number, conflictRow.latitude as number, conflictRow.longitude as number)
+        : null;
+      if (conflictDistanceMeters !== null && conflictDistanceMeters >= 20) {
+        console.log(
+          `[telemetry] LOCATION_UPDATE blocked by database poll key despite coordinate movement vehicle=${data.vehicleId} distance=${conflictDistanceMeters.toFixed(1)}m`,
+        );
+      }
+    }
     if (conflictId && data.telegramMessage) {
       await pool.query(
         `UPDATE gps_telemetry
