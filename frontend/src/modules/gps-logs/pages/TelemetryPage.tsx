@@ -29,6 +29,28 @@ import { GpsLogsToolbar, type TabKey } from '../components/GpsLogsToolbar';
 
 // ── Helpers ────────────────────────────────────────────────────
 
+const PLATE_COLORS = [
+  "bg-teal-100 text-teal-700 border-teal-200",
+  "bg-indigo-100 text-indigo-700 border-indigo-200",
+  "bg-cyan-100 text-cyan-700 border-cyan-200",
+  "bg-rose-100 text-rose-700 border-rose-200",
+  "bg-lime-100 text-lime-700 border-lime-200",
+];
+
+function hashString(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+}
+
+function getPlateColor(plate: string) {
+  const index = Math.abs(hashString(plate)) % PLATE_COLORS.length;
+  return PLATE_COLORS[index];
+}
+
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -56,14 +78,6 @@ const EVENT_CONFIG: Record<string, { color: string; icon: React.ReactNode }> = {
   MOTION_STARTED: {
     color: 'bg-blue-50 text-blue-700 border-blue-200',
     icon: <Activity className="size-3" />,
-  },
-  MOVING: {
-    color: 'bg-blue-50 text-blue-700 border-blue-200',
-    icon: <Activity className="size-3" />,
-  },
-  IDLING: {
-    color: 'bg-amber-50 text-amber-700 border-amber-200',
-    icon: <Timer className="size-3" />,
   },
   IDLING_TOO_LONG: {
     color: 'bg-orange-50 text-orange-700 border-orange-200',
@@ -214,8 +228,6 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
           <option value="IGNITION_ON">Ignition On</option>
           <option value="IGNITION_OFF">Ignition Off</option>
           <option value="MOTION_STARTED">Motion Started</option>
-          <option value="MOVING">Moving</option>
-          <option value="IDLING">Idling</option>
           <option value="IDLING_TOO_LONG">Idling Too Long</option>
           <option value="LOCATION_UPDATE">Location Update</option>
           <option value="SPEEDING">Speeding</option>
@@ -346,8 +358,8 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                       <tr key={row.id} className={tableRowClass}>
                         <td className={tableCellClass}>{formatDateTime(row.recordedAt)}</td>
                         <td className={tableCellClass}>
-                          <span className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">
-                            <Car className="size-3 text-zinc-400" />
+                          <span className={cn("inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium font-mono", getPlateColor(row.plateNumber))}>
+                            <Car className="size-3" />
                             {row.plateNumber}
                           </span>
                         </td>
@@ -401,7 +413,10 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                 <div key={row.id} className="rounded-xl bg-white shadow-brand border border-zinc-100 overflow-hidden">
                   <div className="flex items-center justify-between bg-brand-cream/60 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-mono font-bold text-brand-teal truncate">{row.plateNumber}</p>
+                      <span className={cn("inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium font-mono mb-0.5", getPlateColor(row.plateNumber))}>
+                        <Car className="size-2.5" />
+                        {row.plateNumber}
+                      </span>
                       <p className="text-[10px] text-zinc-400 mt-0.5">{formatDateTime(row.recordedAt)}</p>
                     </div>
                     <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', evt.color)}>

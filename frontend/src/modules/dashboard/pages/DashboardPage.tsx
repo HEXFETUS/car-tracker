@@ -479,7 +479,9 @@ export function DashboardPage() {
   const recentAlerts = tables.tables.recentAlerts ?? [];
   const liveMonitoring = live.tables.liveMonitoring ?? [];
   const activeTrips = live.tables.activeTrips ?? [];
-  const driverLeaderboard = tables.leaderboard.driverPerformance ?? [];
+
+  console.log('live response', liveQuery.data);
+  console.log('liveMonitoring count', liveMonitoring.length);
 
   const d = {
     kpis: summary.kpis,

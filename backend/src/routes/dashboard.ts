@@ -1,5 +1,6 @@
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import { getPool } from '../db/db.js';
+import { syncFleetAndAlert } from '@car-tracker/tracker';
 
 const router: ExpressRouter = express.Router();
 
@@ -173,23 +174,47 @@ async function loadCharts(pool: QueryablePool) {
 }
 
 async function loadLive(pool: QueryablePool) {
-  const [liveMonitoring, activeTrips] = await Promise.all([
-    timedQuery(pool, 'dashboard liveMonitoring', `
+  let liveMonitoringRows: any[] = [];
+  let liveSource = 'db';
+  let activeTripsRows: any[] = [];
+
+  // Try current fleet snapshot from Cartrack first
+  try {
+    const fleetResult = await syncFleetAndAlert({ dispatchAlerts: false });
+    const mapped = (fleetResult.data || [])
+      .map((v: any) => {
+        const coordinates = v.coordinates || {};
+        const latitude = Number.isFinite(coordinates.latitude) ? coordinates.latitude : null;
+        const longitude = Number.isFinite(coordinates.longitude) ? coordinates.longitude : null;
+        return {
+          vehicle_id: String(v.id ?? ''),
+          plate_number: String(v.name ?? '').split(' ')[0] || String(v.id ?? ''),
+          driver_name: v.driver || 'Unassigned',
+          latitude,
+          longitude,
+          last_seen: v.time || new Date().toISOString(),
+          speed_kmh: Number(v.speed ?? 0),
+          ignition: v.ignition === true,
+          location_name: v.location || null,
+        };
+      })
+      .filter((row: any) => row.latitude != null && row.longitude != null);
+
+    if (mapped.length > 0) {
+      liveSource = 'cartrack';
+      liveMonitoringRows = mapped;
+    }
+  } catch (error) {
+    console.error('[dashboard] syncFleetAndAlert failed:', error instanceof Error ? error.message : String(error));
+  }
+
+  // Fallback to latest telemetry if Cartrack returned nothing
+  if (liveMonitoringRows.length === 0) {
+    const fallbackResult = await timedQuery(pool, 'dashboard liveMonitoring', `
       SELECT
         v.id AS vehicle_id,
         v.plate_number,
         COALESCE(d.full_name, 'Unassigned') AS driver_name,
-        to_.to_number AS current_travel_order,
-        to_.id AS current_travel_order_id,
-        to_.origin_location AS origin,
-        to_.destination_target AS destination,
-        to_.scheduled_departure AS departure_time,
-        to_.scheduled_arrival AS arrival_time,
-        to_.status AS trip_status,
-        COALESCE((
-          SELECT SUM(gps_distance_km) FROM gps_trip_logs
-          WHERE vehicle_id = v.id AND travel_order_id = to_.id
-        ), 0) AS distance_traveled,
         latest.latitude,
         latest.longitude,
         latest.recorded_at AS last_seen,
@@ -197,50 +222,60 @@ async function loadLive(pool: QueryablePool) {
         latest.ignition,
         latest.location_name
       FROM vehicles v
-      LEFT JOIN LATERAL (
-        SELECT *
+      LEFT JOIN drivers d ON d.id = (
+        SELECT driver_id
         FROM travel_orders
         WHERE vehicle_id = v.id
           AND status IN ('ACTIVE', 'APPROVED')
         ORDER BY created_at DESC
         LIMIT 1
-      ) to_ ON TRUE
-      LEFT JOIN drivers d ON d.id = to_.driver_id
+      )
       LEFT JOIN LATERAL (
         SELECT latitude, longitude, recorded_at, speed_kmh, ignition, location_name
         FROM gps_telemetry
         WHERE vehicle_id = v.id
-        ORDER BY recorded_at DESC
+        ORDER BY COALESCE(recorded_at, created_at) DESC
         LIMIT 1
       ) latest ON TRUE
-      WHERE to_.id IS NOT NULL
-      ORDER BY to_.scheduled_departure DESC
-      LIMIT 20
-    `),
-    timedQuery(pool, 'dashboard activeTrips', `
-      SELECT
-        to_.id,
-        to_.to_number,
-        v.plate_number,
-        d.full_name AS driver_name,
-        to_.origin_location,
-        to_.destination_target,
-        to_.scheduled_departure,
-        to_.scheduled_arrival,
-        to_.status
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers d ON d.id = to_.driver_id
-      WHERE to_.status = 'ACTIVE'
-      ORDER BY to_.scheduled_departure DESC
-      LIMIT 10
-    `),
-  ]);
+      WHERE latest.latitude IS NOT NULL
+        AND latest.longitude IS NOT NULL
+      ORDER BY v.plate_number ASC
+      LIMIT 50
+    `);
+    liveMonitoringRows = fallbackResult.rows;
+  }
+
+  // Always fetch active trips from DB (travel order state lives in DB)
+  const activeTripsResult = await timedQuery(pool, 'dashboard activeTrips', `
+    SELECT
+      to_.id,
+      to_.to_number,
+      v.plate_number,
+      d.full_name AS driver_name,
+      to_.origin_location,
+      to_.destination_target,
+      to_.scheduled_departure,
+      to_.scheduled_arrival,
+      to_.status
+    FROM travel_orders to_
+    LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+    LEFT JOIN drivers d ON d.id = to_.driver_id
+    WHERE to_.status = 'ACTIVE'
+    ORDER BY to_.scheduled_departure DESC
+    LIMIT 10
+  `);
+  activeTripsRows = activeTripsResult.rows;
+
+  console.log('dashboard live source', {
+    source: liveSource,
+    vehicles: liveMonitoringRows.length,
+    moving: liveMonitoringRows.filter((v) => Number(v.speed_kmh ?? 0) > 0).length,
+  });
 
   return {
     tables: {
-      liveMonitoring: liveMonitoring.rows,
-      activeTrips: activeTrips.rows,
+      liveMonitoring: liveMonitoringRows,
+      activeTrips: activeTripsRows,
     },
   };
 }

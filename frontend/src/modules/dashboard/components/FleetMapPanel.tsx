@@ -11,6 +11,7 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 import { cn } from '@/shared/lib/utils';
 import type { LiveMonitoringRow } from '../api/dashboard-api';
 
+// Ensure Leaflet default icon URLs are set (fixes blank markers in some bundlers)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
@@ -31,12 +32,11 @@ function fmtTime(iso: string | null): string {
 }
 
 function getVehicleStatus(row: LiveMonitoringRow): 'moving' | 'idling' | 'offline' | 'alert' {
-    const ageMinutes = row.last_seen ? (Date.now() - new Date(row.last_seen).getTime()) / 60000 : Number.POSITIVE_INFINITY;
-    if (ageMinutes > 20) return 'offline';
-    if (row.current_travel_order && row.trip_status === 'ACTIVE') return 'moving';
-    if (row.current_travel_order && row.trip_status === 'APPROVED') return 'idling';
-    if (row.current_travel_order && row.trip_status === 'FOR_APPROVAL') return 'alert';
-    return 'idling';
+    const speed = Number(row.speed_kmh ?? row.speed ?? 0);
+    if (row.ignition === true && speed > 0) return 'moving';
+    if (row.ignition === true && speed <= 0) return 'idling';
+    if ((row as any).anomaly_flag || (row as any).alert_status) return 'alert';
+    return 'offline';
 }
 
 function getStatusMeta(status: 'moving' | 'idling' | 'offline' | 'alert') {
@@ -202,7 +202,7 @@ export function FleetMapPanel({ vehicles, selectedVehicleId, onSelectVehicle, on
                 <div className="rounded-2xl border border-zinc-100 bg-white p-4 shadow-sm transition-all hover:shadow-md">
                     <div className="mb-3 flex items-center justify-between">
                         <div>
-                            <p className="text-base font-bold text-zinc-900">Live Activity Timeline</p>
+                            <p className="text-base font-bold text-zinc-900">Recent GPS Events</p>
                             <p className="text-sm text-zinc-500">Newest events first · auto-refreshes with the fleet feed.</p>
                         </div>
                         <div className="rounded-full bg-brand-pastel/40 px-2.5 py-1 text-xs font-semibold text-brand-teal">{activityFeed.length} events</div>
@@ -250,7 +250,7 @@ function MapView({ vehicles, selectedVehicleId, onSelectVehicle, onOpenTripDetai
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<L.Map | null>(null);
     const clusterGroupRef = useRef<L.MarkerClusterGroup | null>(null);
-    const markersRef = useRef<Map<string, L.CircleMarker>>(new Map());
+    const markersRef = useRef<Map<string, L.Marker>>(new Map());
 
     useEffect(() => {
         if (!mapRef.current || mapInstanceRef.current) return;
@@ -261,9 +261,10 @@ function MapView({ vehicles, selectedVehicleId, onSelectVehicle, onOpenTripDetai
             scrollWheelZoom: true,
         });
 
-        map.setView([8.5, 124.65], 7);
+        map.setView([8.4542, 124.6319], 9);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
             maxZoom: 19,
         }).addTo(map);
 
@@ -294,19 +295,23 @@ function MapView({ vehicles, selectedVehicleId, onSelectVehicle, onOpenTripDetai
         });
         markersRef.current.clear();
 
-        const validVehicles = vehicles.filter((vehicle) => vehicle.latitude != null && vehicle.longitude != null);
+        const validVehicles = vehicles.filter((vehicle) => {
+            const lat = Number(vehicle.latitude ?? (vehicle as any).lat);
+            const lng = Number(vehicle.longitude ?? (vehicle as any).lng);
+            return Number.isFinite(lat) && Number.isFinite(lng);
+        });
+
+        console.log('FleetMapPanel vehicles', vehicles);
+        console.log('valid map vehicles', validVehicles);
+
         if (validVehicles.length === 0) return;
 
         validVehicles.forEach((vehicle) => {
+            const lat = Number(vehicle.latitude ?? (vehicle as any).lat);
+            const lng = Number(vehicle.longitude ?? (vehicle as any).lng);
             const status = getVehicleStatus(vehicle);
             const meta = getStatusMeta(status);
-            const marker = L.circleMarker([vehicle.latitude as number, vehicle.longitude as number], {
-                radius: selectedVehicleId === vehicle.vehicle_id ? 10 : 8,
-                color: selectedVehicleId === vehicle.vehicle_id ? '#0f766e' : '#ffffff',
-                weight: selectedVehicleId === vehicle.vehicle_id ? 3 : 2,
-                fillColor: meta.color.replace('bg-', '#').replace('-500', ''),
-                fillOpacity: 0.95,
-            });
+            const marker = L.marker([lat, lng]);
 
             const speed = status === 'moving' ? '42 km/h' : status === 'idling' ? '0 km/h' : '—';
             const googleMapsUrl = `https://www.google.com/maps?q=${vehicle.latitude},${vehicle.longitude}`;
@@ -373,32 +378,13 @@ function MapView({ vehicles, selectedVehicleId, onSelectVehicle, onOpenTripDetai
         }
     }, [onOpenTripDetails, onSelectVehicle, selectedVehicleId, vehicles]);
 
-    useEffect(() => {
-        const map = mapInstanceRef.current;
-        if (!map) return;
-
-        markersRef.current.forEach((marker, vehicleId) => {
-            const isSelected = vehicleId === selectedVehicleId;
-            marker.setStyle({
-                radius: isSelected ? 10 : 8,
-                color: isSelected ? '#0f766e' : '#ffffff',
-                weight: isSelected ? 3 : 2,
-                fillOpacity: 0.95,
-            });
-            if (isSelected) {
-                marker.openPopup();
-                map.panTo(marker.getLatLng());
-            }
-        });
-    }, [selectedVehicleId]);
-
     return (
         <div className="relative">
             <div className="mb-3 flex items-center gap-2 px-2 text-sm text-zinc-500">
                 <MapPin className="size-4 text-brand-teal" />
                 {vehicles.length} vehicles shown · {vehicles.filter((vehicle) => getVehicleStatus(vehicle) === 'moving').length} moving
             </div>
-            <div ref={mapRef} className="h-[420px] w-full overflow-hidden rounded-xl border border-zinc-100" />
+            <div ref={mapRef} style={{ height: 420, width: '100%' }} className="overflow-hidden rounded-xl border border-zinc-100" />
         </div>
     );
 }

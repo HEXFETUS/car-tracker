@@ -750,7 +750,7 @@ async function runCycle(): Promise<void> {
               if (savedTelemetry.id) {
                 if (savedTelemetry.inserted) {
                   telemetrySaved += 1;
-                  console.log(`[scheduler] DB-backed MOTION_STARTED telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
+                  console.log(`[scheduler] DB-backed MOTION_STARTED saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
                 } else {
                   telemetrySkipped += 1;
                   console.log(`[scheduler] DB-backed MOTION_STARTED telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
@@ -760,7 +760,11 @@ async function runCycle(): Promise<void> {
                 if (telegram?.ok) {
                   await updateTelemetryTelegramMessage(savedTelemetry.id, message);
                   console.log(`[scheduler] DB-backed MOTION_STARTED telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
+                } else {
+                  console.error(`[scheduler] DB-backed MOTION_STARTED telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}: ${telegram?.error ?? 'telegram_not_ok'}`);
                 }
+                console.log(`[scheduler] LOCATION_UPDATE skipped because MOTION_STARTED was saved vehicle=${vehicleId} trip=${motionTripId}`);
+                continue;
               } else {
                 telemetrySkipped += 1;
                 console.log(`[scheduler] DB-backed MOTION_STARTED skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${motionTripId}`);
@@ -886,6 +890,8 @@ async function runCycle(): Promise<void> {
             if (telegram?.ok) {
               await updateTelemetryTelegramMessage(savedTelemetry.id, message);
               console.log(`[idling-alert] DB-backed IDLING telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
+            } else {
+              console.error(`[idling-alert] DB-backed IDLING telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}: ${telegram?.error ?? 'telegram_not_ok'}`);
             }
           }
         } catch (err) {
@@ -1278,7 +1284,3 @@ async function getLatestCanonicalTripEventType(
   );
   return result.rows[0]?.event_type ?? null;
 }
-
-
-
-

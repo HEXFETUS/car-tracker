@@ -61,6 +61,10 @@ export interface LiveMonitoringRow {
   latitude: number | null;
   longitude: number | null;
   last_seen: string | null;
+  speed_kmh?: number | null;
+  speed?: number | null;
+  ignition?: boolean | null;
+  location_name?: string | null;
 }
 
 export interface AlertRow {
