@@ -92,7 +92,7 @@ function canonicalTelemetryEventType(eventType: string): string {
     case 'IDLING TOO LONG ALERT':
     case 'IDLING':
     case 'IDLING_TOO_LONG':
-      result = 'IDLING';
+      result = 'IDLING_TOO_LONG';
       break;
     case 'NO_APPROVED_TRAVEL_ORDER':
       result = 'NO_APPROVED_TRAVEL_ORDER';
@@ -294,7 +294,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
         }
       }
 
-      const latestLocationResult = await pool.query<{ location_name: string | null; latitude: number | null; longitude: number | null }>(
+        const latestLocationResult = await pool.query<{ location_name: string | null; latitude: number | null; longitude: number | null }>(
         `SELECT location_name, latitude, longitude
            FROM gps_telemetry
           WHERE vehicle_id = $1
@@ -306,9 +306,10 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
               WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
               WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
               WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
-              WHEN 'IDLING ALERT' THEN 'IDLING'
-              WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
-              WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+              WHEN 'IDLING ALERT' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
               ELSE event_type
             END = $2
           ORDER BY recorded_at DESC
@@ -346,9 +347,10 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
             WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
             WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
             WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
-            WHEN 'IDLING ALERT' THEN 'IDLING'
-            WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
-            WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+            WHEN 'IDLING ALERT' THEN 'IDLING_TOO_LONG'
+            WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING_TOO_LONG'
+            WHEN 'IDLING' THEN 'IDLING_TOO_LONG'
+            WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
             ELSE event_type
           END = $2
           AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
@@ -450,9 +452,10 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
             WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
             WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
             WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
-            WHEN 'IDLING ALERT' THEN 'IDLING'
-            WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
-            WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+            WHEN 'IDLING ALERT' THEN 'IDLING_TOO_LONG'
+            WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING_TOO_LONG'
+            WHEN 'IDLING' THEN 'IDLING_TOO_LONG'
+            WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
             ELSE event_type
           END = $2
           AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
@@ -502,7 +505,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
         `SELECT id
            FROM gps_telemetry
           WHERE vehicle_id = $1
-            AND active_trip_id = $2
+          AND active_trip_id = $2
             AND CASE event_type
               WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
               WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
@@ -511,9 +514,10 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
               WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
               WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
               WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
-              WHEN 'IDLING ALERT' THEN 'IDLING'
-              WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
-              WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+              WHEN 'IDLING ALERT' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
               ELSE event_type
             END = $3
           ORDER BY recorded_at DESC, created_at DESC

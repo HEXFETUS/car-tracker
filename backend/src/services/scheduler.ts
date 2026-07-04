@@ -9,7 +9,7 @@
 // The interval can be changed at runtime via updateInterval().
 
 import { randomUUID } from 'node:crypto';
-import { syncFleetAndAlert, sendTelegram, getVehicleEmoji } from '@car-tracker/tracker';
+import { syncFleetAndAlert, sendTelegram, getVehicleEmoji, formatIgnitionAlert } from '@car-tracker/tracker';
 import { findVehicleByPlate } from './gpsLogService.js';
 import { insertTelemetry, getLatestTelemetry, updateTelemetryTelegramMessage } from './gpsTelemetryService.js';
 import { getPool } from '../db/db.js';
@@ -60,7 +60,7 @@ const EVENT_TYPE = {
   IGNITION_ON: 'IGNITION_ON',
   IGNITION_OFF: 'IGNITION_OFF',
   LOCATION_UPDATE: 'LOCATION_UPDATE',
-  IDLING: 'IDLING',
+  IDLING: 'IDLING_TOO_LONG',
   MOTION_STARTED: 'MOTION_STARTED',
   SPEEDING: 'SPEEDING',
   LOW_FUEL: 'LOW_FUEL',
@@ -644,6 +644,7 @@ async function runCycle(): Promise<void> {
             finalEventType: EVENT_TYPE.NO_APPROVED_TRAVEL_ORDER,
             message,
           });
+          const telegramMessage = message || null;
           const savedTelemetry = await insertTelemetry({
             vehicleId: vid,
             plateNumber: plate ?? 'Unknown',
@@ -658,26 +659,31 @@ async function runCycle(): Promise<void> {
             toNumber: null,
             recordedAt: new Date().toISOString(),
             activeTripId,
-            telegramMessage: null,
+            telegramMessage,
           });
 
-          if (!savedTelemetry.inserted) {
-            console.error(`[scheduler] Telegram skipped because gps_telemetry was not inserted NO_APPROVED_TRAVEL_ORDER vehicle=${vid}`);
+          if (!savedTelemetry.id) {
+            telemetrySkipped += 1;
+            console.log(`[scheduler] DB insert failed missing_id NO_APPROVED_TRAVEL_ORDER vehicle=${vid}`);
             continue;
           }
 
+          if (savedTelemetry.updated) {
+            telemetrySkipped += 1;
+            console.log(`[scheduler] NO_APPROVED_TRAVEL_ORDER telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vid}`);
+            continue;
+          }
+
+          telemetrySaved += 1;
           unauthorizedTravelAlertsCreated += 1;
           unauthorizedTravelAlertVehicleIds.add(vid);
           try {
             console.log(`[scheduler] Before Telegram send telemetry_id=${savedTelemetry.id} vehicle=${vid} event=NO_APPROVED_TRAVEL_ORDER`);
-            const telegram = await sendTelegram(message);
+            const telegram = await sendTelegram(telegramMessage as string);
             if (telegram?.ok) {
-              if (savedTelemetry.id) {
-                await updateTelemetryTelegramMessage(savedTelemetry.id, message);
-              }
               console.log(`[scheduler] Telegram send succeeded telemetry_id=${savedTelemetry.id} vehicle=${vid} event=NO_APPROVED_TRAVEL_ORDER`);
             } else {
-              console.error(`[scheduler] Telegram send failed telemetry_id=${savedTelemetry.id} vehicle=${vid} event=NO_APPROVED_TRAVEL_ORDER: ${telegram?.error ?? 'telegram_not_ok'}`);
+              console.error(`[scheduler] Telegram send failed telemetry_id=${savedTelemetry.id} vehicle=${vid} event=NO_APPROVED_TRAVEL_ORDER: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
             }
           } catch (telegramError) {
             console.error(`[scheduler] Failed to send Telegram alert for ${vid}:`, errorMessage(telegramError));
@@ -688,11 +694,18 @@ async function runCycle(): Promise<void> {
       }
     }
 
-    // ── DB-backed Telemetry From Current Fleet Snapshot ────────
+      // ── DB-backed Telemetry From Current Fleet Snapshot ────────
     //
     // External cron services don't maintain warm in-memory state.
-    // Persist LOCATION_UPDATE and IDLING here from database state
-    // so external cron invocations still save telemetry reliably.
+    // Persist IGNITION_ON/IGNITION_OFF, LOCATION_UPDATE, and IDLING here
+    // from database state so external cron invocations still save telemetry reliably.
+    //
+    // ── Ignition transition detection ─────────────────────────────
+    // Compares current fleet snapshot ignition with the DB's last known ignition.
+    // This catches IGNITION_OFF events that tracker.js's sendVehicleAlerts()
+    // may not have persisted to gps_telemetry.
+    // Do NOT rely on old in-memory tracker state or emittedAlerts for ignition events.
+    // This must work even when Vercel/cron has no memory.
     if (vehicles && vehicles.length > 0) {
       for (const vehicle of vehicles) {
         const vehicleId = String(vehicle.id ?? '');
@@ -700,15 +713,12 @@ async function runCycle(): Promise<void> {
 
         try {
           const speed = Number(vehicle.speed ?? 0);
-          const ignition = vehicle.ignition === true;
-          const isMoving = ignition && speed > 0;
-          const isIdling = ignition && speed <= 0;
+          const currentIgnition = vehicle.ignition === true;
           const latestTelemetry = await getLatestTelemetry(vehicleId);
+          const prevIgnition = latestTelemetry?.ignition ?? null;
           const latestActiveTripId = latestTelemetry?.eventType === EVENT_TYPE.IGNITION_OFF
             ? null
             : latestTelemetry?.activeTripId ?? null;
-          const activeIdlingSession = await getActiveIdlingSessionForVehicle(vehicleId);
-          const activeTripId = latestActiveTripId ?? activeIdlingSession?.activeTripId ?? randomUUID();
           const plateNumber = String(vehicle.name ?? '').split(' ')[0] || String(vehicleId);
           const locationName = String(vehicle.location ?? '').trim() || null;
           const coordinates = vehicle.coordinates as { latitude?: unknown; longitude?: unknown } | null | undefined;
@@ -719,10 +729,112 @@ async function runCycle(): Promise<void> {
           const toNumber = typeof vehicle.to_number === 'string' ? vehicle.to_number : null;
           const recordedAt = new Date().toISOString();
 
-          if (!ignition) {
+          // Log ignition check for every vehicle
+          console.log(`[scheduler] DB-backed ignition check prev=${prevIgnition} current=${currentIgnition} vehicle=${vehicleId} plate=${plateNumber}`);
+
+          // ── IGNITION_OFF detection: prev ON → current OFF ──────
+          if (prevIgnition === true && currentIgnition === false) {
+            const eventTripId = latestActiveTripId ?? randomUUID();
+            const message = formatIgnitionAlert(plateNumber, false, locationName || 'Unknown location', recordedAt, toNumber, driverName);
+            console.log(`[scheduler] DB-backed IGNITION_OFF detected vehicle=${vehicleId} plate=${plateNumber} prevIgnition=${prevIgnition} currentIgnition=${currentIgnition}`);
+            const savedTelemetry = await insertTelemetry({
+              vehicleId,
+              plateNumber,
+              eventType: EVENT_TYPE.IGNITION_OFF,
+              latitude,
+              longitude,
+              speedKmh: speed,
+              fuelLiters,
+              ignition: false,
+              locationName,
+              driverId: null,
+              toNumber,
+              recordedAt,
+              activeTripId: eventTripId,
+              telegramMessage: message,
+            });
+
+            if (!savedTelemetry.id) {
+              telemetrySkipped += 1;
+              console.log(`[scheduler] DB-backed IGNITION_OFF insert skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${eventTripId}`);
+            } else {
+              if (savedTelemetry.inserted) {
+                telemetrySaved += 1;
+                console.log(`[scheduler] DB-backed IGNITION_OFF saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
+              } else {
+                telemetrySkipped += 1;
+                console.log(`[scheduler] DB-backed IGNITION_OFF insert skipped reason=duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
+              }
+              // Send Telegram whenever savedTelemetry.id exists
+              const telegram = await sendTelegram(message);
+              if (telegram?.ok) {
+                console.log(`[scheduler] DB-backed IGNITION_OFF telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
+              } else {
+                console.error(`[scheduler] DB-backed IGNITION_OFF telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
+              }
+            }
+
+            // Close active idling session if one exists
+            await closeIdlingDedupDb(vehicleId, eventTripId);
+            // Close/finish active trip after saving IGNITION_OFF
+            console.log(`[scheduler] DB-backed IGNITION_OFF trip closed vehicle=${vehicleId} trip=${eventTripId}`);
+            continue;
+          }
+
+          // ── IGNITION_ON detection: prev OFF → current ON ───────
+          if (prevIgnition === false && currentIgnition === true) {
+            const eventTripId = randomUUID();
+            const message = formatIgnitionAlert(plateNumber, true, locationName || 'Unknown location', recordedAt, toNumber, driverName);
+            console.log(`[scheduler] DB-backed IGNITION_ON detected vehicle=${vehicleId} plate=${plateNumber} prevIgnition=${prevIgnition} currentIgnition=${currentIgnition}`);
+            const savedTelemetry = await insertTelemetry({
+              vehicleId,
+              plateNumber,
+              eventType: EVENT_TYPE.IGNITION_ON,
+              latitude,
+              longitude,
+              speedKmh: speed,
+              fuelLiters,
+              ignition: true,
+              locationName,
+              driverId: null,
+              toNumber,
+              recordedAt,
+              activeTripId: eventTripId,
+              telegramMessage: message,
+            });
+
+            if (!savedTelemetry.id) {
+              telemetrySkipped += 1;
+              console.log(`[scheduler] DB-backed IGNITION_ON insert skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${eventTripId}`);
+            } else {
+              if (savedTelemetry.inserted) {
+                telemetrySaved += 1;
+                console.log(`[scheduler] DB-backed IGNITION_ON saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
+              } else {
+                telemetrySkipped += 1;
+                console.log(`[scheduler] DB-backed IGNITION_ON insert skipped reason=duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
+              }
+              // Send Telegram whenever savedTelemetry.id exists
+              const telegram = await sendTelegram(message);
+              if (telegram?.ok) {
+                console.log(`[scheduler] DB-backed IGNITION_ON telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}`);
+              } else {
+                console.error(`[scheduler] DB-backed IGNITION_ON telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${eventTripId}: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
+              }
+            }
+            // Fall through to continue processing LOCATION_UPDATE/IDLING below
+          }
+
+          // ── If vehicle is off and wasn't a transition, just skip ──
+          if (!currentIgnition) {
             await closeIdlingDedupDb(vehicleId, latestActiveTripId);
             continue;
           }
+
+          const isMoving = currentIgnition && speed > 0;
+          const isIdling = currentIgnition && speed <= 0;
+          const activeIdlingSession = await getActiveIdlingSessionForVehicle(vehicleId);
+          const activeTripId = latestActiveTripId ?? activeIdlingSession?.activeTripId ?? randomUUID();
 
           if (isMoving) {
             let idlingTripToCloseAfterMoving: string | null = null;
@@ -737,13 +849,13 @@ async function runCycle(): Promise<void> {
                 longitude,
                 speedKmh: speed,
                 fuelLiters,
-                ignition,
+                ignition: currentIgnition,
                 locationName,
                 driverId: null,
                 toNumber,
                 recordedAt,
                 activeTripId: motionTripId,
-                telegramMessage: null,
+                telegramMessage: message,
               });
 
               if (savedTelemetry.id) {
@@ -757,10 +869,9 @@ async function runCycle(): Promise<void> {
                 await closeIdlingDedupDb(vehicleId, motionTripId);
                 const telegram = await sendTelegram(message);
                 if (telegram?.ok) {
-                  await updateTelemetryTelegramMessage(savedTelemetry.id, message);
                   console.log(`[scheduler] DB-backed MOTION_STARTED telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
                 } else {
-                  console.error(`[scheduler] DB-backed MOTION_STARTED telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}: ${telegram?.error ?? 'telegram_not_ok'}`);
+                  console.error(`[scheduler] DB-backed MOTION_STARTED telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
                 }
                 console.log(`[scheduler] LOCATION_UPDATE skipped because MOTION_STARTED was saved vehicle=${vehicleId} trip=${motionTripId}`);
                 continue;
@@ -805,7 +916,7 @@ async function runCycle(): Promise<void> {
               longitude,
               speedKmh: speed,
               fuelLiters,
-              ignition,
+              ignition: currentIgnition,
               locationName,
               driverId: null,
               toNumber,
@@ -864,13 +975,13 @@ async function runCycle(): Promise<void> {
               longitude,
               speedKmh: speed,
               fuelLiters,
-              ignition,
+              ignition: currentIgnition,
               locationName,
               driverId: null,
               toNumber,
               recordedAt,
               activeTripId,
-              telegramMessage: null,
+              telegramMessage: message,
             });
 
             if (!savedTelemetry.id) {
@@ -890,10 +1001,9 @@ async function runCycle(): Promise<void> {
             console.log(`[idling-alert] DB-backed IDLING dedup marked threshold=${thresholdMinutes}min telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
             const telegram = await sendTelegram(message);
             if (telegram?.ok) {
-              await updateTelemetryTelegramMessage(savedTelemetry.id, message);
               console.log(`[idling-alert] DB-backed IDLING telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
             } else {
-              console.error(`[idling-alert] DB-backed IDLING telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}: ${telegram?.error ?? 'telegram_not_ok'}`);
+              console.error(`[idling-alert] DB-backed IDLING telegram failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}: ${telegram?.error ?? 'telegram_not_ok'} (message kept in DB)`);
             }
           }
         } catch (err) {
@@ -1091,6 +1201,7 @@ async function runCycle(): Promise<void> {
             vehicleId
           });
 
+          const telegramMessage = alert.message || null;
           const savedTelemetry = await insertTelemetry({
             vehicleId,
             plateNumber,
@@ -1105,7 +1216,7 @@ async function runCycle(): Promise<void> {
             toNumber,
             recordedAt,
             activeTripId,
-            telegramMessage: null
+            telegramMessage
           });
 
           if (!savedTelemetry.id) {
@@ -1114,20 +1225,19 @@ async function runCycle(): Promise<void> {
             continue;
           }
 
+          // ── Track telemetry counts ──────────────────────────────
+          // For LOCATION_UPDATE, updated rows are not new inserts.
+          // For all other alert types, any id means it was saved.
           if (savedTelemetry.updated) {
             telemetrySkipped += 1;
-            console.log(`[idling-alert] ${finalEventType} LOCATION_UPDATE updated telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'} (no Telegram)`);
-            continue;
-          }
-
-          if (!savedTelemetry.inserted) {
+            console.log(`[idling-alert] ${finalEventType} LOCATION_UPDATE updated telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+          } else if (savedTelemetry.inserted) {
+            telemetrySaved += 1;
+            console.log(`[idling-alert] ${finalEventType} telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+          } else {
             telemetrySkipped += 1;
             console.log(`[idling-alert] ${finalEventType} telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
-            continue;
           }
-
-          telemetrySaved += 1;
-          console.log(`[idling-alert] ${finalEventType} telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
 
           if (finalEventType === EVENT_TYPE.IDLING && activeTripId) {
             const thresholdMinutes = alert.idlingThresholdReached;
@@ -1144,52 +1254,32 @@ async function runCycle(): Promise<void> {
             console.log(`[idling-alert] Closed active idling state vehicle=${vehicleId} trip=${activeTripId ?? 'null'} event=${finalEventType}`);
           }
 
-          // Send Telegram AFTER DB insert succeeds.
-          const shouldSendTelegram = finalEventType === EVENT_TYPE.IGNITION_OFF ||
-            finalEventType === EVENT_TYPE.IDLING ||
-            finalEventType === EVENT_TYPE.NO_APPROVED_TRAVEL_ORDER ||
-            finalEventType === EVENT_TYPE.MOTION_STARTED ||
-            finalEventType === EVENT_TYPE.IGNITION_ON ||
-            finalEventType === EVENT_TYPE.LOCATION_UPDATE ||
-            finalEventType === EVENT_TYPE.SPEEDING ||
-            finalEventType === EVENT_TYPE.LOW_FUEL;
-          const reasonIfSkipped = shouldSendTelegram ? '' : `Event type ${finalEventType} not in priority send list`;
+          // ── Determine whether to send Telegram ─────────────────
+          // For LOCATION_UPDATE: only send Telegram on new inserts (updated rows already had their Telegram sent).
+          // For all other alert types (IDLING_TOO_LONG, MOTION_STARTED, IGNITION_ON, IGNITION_OFF, etc.):
+          //   send Telegram whenever savedTelemetry.id exists, regardless of inserted/updated/duplicate status.
+          //   The DB/telemetry dedupe already prevents duplicate alerts; we must not suppress Telegram here.
+          const isLocationUpdate = finalEventType === EVENT_TYPE.LOCATION_UPDATE;
+          const shouldSendTelegram = !isLocationUpdate || savedTelemetry.inserted;
+          const reasonIfSkipped = shouldSendTelegram ? '' : 'LOCATION_UPDATE updated (Telegram already sent for this row)';
 
-          console.log("[TELEGRAM SEND CHECK]", {
-            plateNumber,
-            eventType: finalEventType,
-            shouldSendTelegram,
-            reasonIfSkipped
-          });
+          console.log("[telegram] attempting", { eventType: finalEventType, telemetryId: savedTelemetry.id, plateNumber, shouldSendTelegram, reasonIfSkipped });
 
-          console.log("[NEW TELEGRAM]", {
-            plate: plateNumber,
-            event: finalEventType,
-            hasMessage: !!alert.message,
-            messagePreview: alert.message?.substring(0, 60),
-            sentToTelegram: shouldSendTelegram
-          });
-
-          if (shouldSendTelegram) {
+          if (shouldSendTelegram && telegramMessage) {
             try {
-              console.log(`[idling-alert] before Telegram send telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}`);
-              const telegram = await sendTelegram(alert.message);
-              if (telegram?.ok) {
-                if (savedTelemetry.id) {
-                  await updateTelemetryTelegramMessage(savedTelemetry.id, alert.message);
-                }
-                if (finalEventType === EVENT_TYPE.IDLING || finalEventType === EVENT_TYPE.MOTION_STARTED) {
-                  console.log(`[idling-alert] ${finalEventType} telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
-                }
-                console.log(`[idling-alert] Telegram send succeeded telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}`);
+              console.log(`[telegram] before send telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}`);
+              const tg = await sendTelegram(telegramMessage as string);
+              console.log("[telegram] result", { eventType: finalEventType, telemetryId: savedTelemetry.id, ok: tg?.ok, error: tg?.error });
+              if (tg?.ok) {
+                console.log(`[telegram] send succeeded telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}`);
               } else {
-                console.error(`[idling-alert] Telegram send failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}: ${telegram?.error ?? 'telegram_not_ok'}`);
+                console.error(`[telegram] send failed telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}: ${tg?.error ?? 'telegram_not_ok'} (message kept in DB)`);
               }
             } catch (telegramError) {
-              console.error(`[idling-alert] Failed to send Telegram for saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}:`, errorMessage(telegramError));
+              console.error(`[telegram] send exception telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}:`, errorMessage(telegramError));
             }
           } else {
-            console.log(`[scheduler] SKIPPING Telegram for ${finalEventType} vehicle=${vehicleId} reason=${reasonIfSkipped}`);
+            console.log(`[telegram] skipped vehicle=${vehicleId} event=${finalEventType} reason=${reasonIfSkipped || 'no message'}`);
           }
         } catch (err) {
           console.error(`[scheduler] Failed to save telemetry for ${alert.vehicleId}:`, errorMessage(err));
