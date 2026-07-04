@@ -747,17 +747,24 @@ async function runCycle(): Promise<void> {
                 telegramMessage: null,
               });
 
-              if (savedTelemetry.inserted) {
-                telemetrySaved += 1;
-                console.log(`[scheduler] DB-backed MOTION_STARTED saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
+              if (savedTelemetry.id) {
+                if (savedTelemetry.inserted) {
+                  telemetrySaved += 1;
+                  console.log(`[scheduler] DB-backed MOTION_STARTED telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
+                } else {
+                  telemetrySkipped += 1;
+                  console.log(`[scheduler] DB-backed MOTION_STARTED telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
+                }
+                await closeIdlingDedupDb(vehicleId, motionTripId);
                 const telegram = await sendTelegram(message);
-                if (telegram?.ok && savedTelemetry.id) {
+                if (telegram?.ok) {
                   await updateTelemetryTelegramMessage(savedTelemetry.id, message);
+                  console.log(`[scheduler] DB-backed MOTION_STARTED telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${motionTripId}`);
                 }
               } else {
                 telemetrySkipped += 1;
+                console.log(`[scheduler] DB-backed MOTION_STARTED skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${motionTripId}`);
               }
-              await closeIdlingDedupDb(vehicleId, motionTripId);
             } else if (activeIdlingSession?.activeTripId) {
               idlingTripToCloseAfterMoving = activeIdlingSession.activeTripId;
             } else {
@@ -860,18 +867,25 @@ async function runCycle(): Promise<void> {
               telegramMessage: null,
             });
 
-            if (!savedTelemetry.inserted) {
+            if (!savedTelemetry.id) {
               telemetrySkipped += 1;
-              console.log(`[idling-alert] DB-backed IDLING insert skipped vehicle=${vehicleId} trip=${activeTripId}`);
+              console.log(`[idling-alert] DB-backed IDLING insert skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${activeTripId}`);
               continue;
             }
 
-            telemetrySaved += 1;
+            if (savedTelemetry.inserted) {
+              telemetrySaved += 1;
+              console.log(`[idling-alert] DB-backed IDLING telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
+            } else {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] DB-backed IDLING telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
+            }
             await markIdlingAlertDb(vehicleId, activeTripId, idlingStartedAt, thresholdMinutes);
-            console.log(`[idling-alert] DB-backed IDLING saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId} threshold=${thresholdMinutes}min`);
+            console.log(`[idling-alert] DB-backed IDLING dedup marked threshold=${thresholdMinutes}min telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
             const telegram = await sendTelegram(message);
-            if (telegram?.ok && savedTelemetry.id) {
+            if (telegram?.ok) {
               await updateTelemetryTelegramMessage(savedTelemetry.id, message);
+              console.log(`[idling-alert] DB-backed IDLING telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
             }
           }
         } catch (err) {
@@ -1086,14 +1100,27 @@ async function runCycle(): Promise<void> {
             telegramMessage: null
           });
 
-          if (!savedTelemetry.inserted) {
+          if (!savedTelemetry.id) {
             telemetrySkipped += 1;
-            console.log(`[idling-alert] DB insert failed (conflict) vehicle=${vehicleId} event=${finalEventType} trip=${activeTripId ?? 'null'}`);
+            console.log(`[idling-alert] DB insert failed missing_id vehicle=${vehicleId} event=${finalEventType} trip=${activeTripId ?? 'null'}`);
             continue;
           }
 
-          telemetrySaved += 1;
-          console.log(`[idling-alert] DB insert succeeded id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType} tripId=${activeTripId ?? 'null'}`);
+          const shouldProcessDuplicateTelemetry = finalEventType === EVENT_TYPE.IDLING ||
+            finalEventType === EVENT_TYPE.MOTION_STARTED;
+          if (!savedTelemetry.inserted && !shouldProcessDuplicateTelemetry) {
+            telemetrySkipped += 1;
+            console.log(`[idling-alert] DB insert skipped duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType} trip=${activeTripId ?? 'null'}`);
+            continue;
+          }
+
+          if (savedTelemetry.inserted) {
+            telemetrySaved += 1;
+            console.log(`[idling-alert] ${finalEventType} telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+          } else {
+            telemetrySkipped += 1;
+            console.log(`[idling-alert] ${finalEventType} telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+          }
 
           if (finalEventType === EVENT_TYPE.IDLING && activeTripId) {
             const thresholdMinutes = alert.idlingThresholdReached;
@@ -1101,7 +1128,7 @@ async function runCycle(): Promise<void> {
               // Use the actual idling start time from tracker state (preserves original timer)
               const idlingStartedAt = alert.idlingStartedAt || new Date(Date.now() - thresholdMinutes * 60 * 1000).toISOString();
               await markIdlingAlertDb(vehicleId, activeTripId, idlingStartedAt, thresholdMinutes);
-              console.log(`[idling-alert] Updated dedup state threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
+              console.log(`[idling-alert] IDLING dedup marked threshold=${thresholdMinutes}min telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
             }
           }
 
@@ -1143,6 +1170,9 @@ async function runCycle(): Promise<void> {
               if (telegram?.ok) {
                 if (savedTelemetry.id) {
                   await updateTelemetryTelegramMessage(savedTelemetry.id, alert.message);
+                }
+                if (finalEventType === EVENT_TYPE.IDLING || finalEventType === EVENT_TYPE.MOTION_STARTED) {
+                  console.log(`[idling-alert] ${finalEventType} telegram sent telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
                 }
                 console.log(`[idling-alert] Telegram send succeeded telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType}`);
               } else {

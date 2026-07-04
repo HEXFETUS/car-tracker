@@ -27,7 +27,13 @@ import {
   tableRowClass,
   tableCellClass,
 } from '@/shared/styles/table-constants';
-import { fetchDashboardData } from '../api/dashboard-api';
+import {
+  emptyDashboardData,
+  fetchDashboardCharts,
+  fetchDashboardLive,
+  fetchDashboardSummary,
+  fetchDashboardTables,
+} from '../api/dashboard-api';
 
 const FleetMapPanel = lazy(() => import('../components/FleetMapPanel').then((mod) => ({ default: mod.FleetMapPanel })));
 
@@ -423,37 +429,72 @@ export function DashboardPage() {
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [alertSeverityFilter, setAlertSeverityFilter] = useState<'All' | 'Critical' | 'Warning' | 'Info'>('All');
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: fetchDashboardData,
+  const queryOptions = {
+    staleTime: 30_000,
     refetchInterval: 60_000,
+    retry: 1,
+  };
+
+  const summaryQuery = useQuery({
+    queryKey: ['dashboard', 'summary'],
+    queryFn: fetchDashboardSummary,
+    ...queryOptions,
   });
 
+  const chartsQuery = useQuery({
+    queryKey: ['dashboard', 'charts'],
+    queryFn: fetchDashboardCharts,
+    enabled: !!summaryQuery.data,
+    ...queryOptions,
+  });
+
+  const liveQuery = useQuery({
+    queryKey: ['dashboard', 'live'],
+    queryFn: fetchDashboardLive,
+    enabled: !!summaryQuery.data,
+    ...queryOptions,
+  });
+
+  const tablesQuery = useQuery({
+    queryKey: ['dashboard', 'tables'],
+    queryFn: fetchDashboardTables,
+    enabled: !!summaryQuery.data,
+    ...queryOptions,
+  });
+
+  console.log('Dashboard render', { summary: summaryQuery.status, charts: chartsQuery.status, live: liveQuery.status, tables: tablesQuery.status });
+
   useEffect(() => {
-    if (!data) return;
-    setRealtimeData({
-      moving: data.realTime.vehiclesMoving,
-      idling: data.realTime.vehiclesIdling,
-    });
+    if (!summaryQuery.data?.realTime) return;
+    const { vehiclesMoving, vehiclesIdling } = summaryQuery.data.realTime;
+    setRealtimeData({ moving: vehiclesMoving, idling: vehiclesIdling });
     setLastUpdated(new Date().toLocaleString());
-  }, [data]);
+  }, [summaryQuery.data?.realTime?.vehiclesMoving, summaryQuery.data?.realTime?.vehiclesIdling]);
 
-  if (isLoading) return <LoadingSkeleton />;
-  if (isError) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
-        <AlertTriangle className="size-12 text-red-400 mb-4" />
-        <p className="text-lg font-bold">Failed to load dashboard</p>
-        <p className="text-sm text-zinc-400 mt-1">{(error as Error)?.message || 'Network error'}</p>
-        <button onClick={() => refetch()} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-teal px-4 py-2 text-sm font-semibold text-white hover:bg-brand-teal/90">
-          <RefreshCw className="size-4" />
-          Retry
-        </button>
-      </div>
-    );
-  }
+  const summary = summaryQuery.data ?? { kpis: emptyDashboardData().kpis, realTime: emptyDashboardData().realTime };
+  const charts = chartsQuery.data ?? { charts: emptyDashboardData().charts };
+  const live = liveQuery.data ?? { tables: { liveMonitoring: [], activeTrips: [] } };
+  const tables = tablesQuery.data ?? { leaderboard: { driverPerformance: [] }, maintenance: { overview: emptyDashboardData().maintenance.overview, trends: [] }, admin: { matchingAccuracy: emptyDashboardData().admin.matchingAccuracy, fleetUtilization: emptyDashboardData().admin.fleetUtilization }, tables: { recentAlerts: [], recentlyCompleted: [] } };
 
-  const d = data!;
+  const recentAlerts = tables.tables.recentAlerts ?? [];
+  const liveMonitoring = live.tables.liveMonitoring ?? [];
+  const activeTrips = live.tables.activeTrips ?? [];
+  const driverLeaderboard = tables.leaderboard.driverPerformance ?? [];
+
+  const d = {
+    kpis: summary.kpis,
+    charts: charts.charts,
+    tables: {
+      liveMonitoring,
+      recentAlerts,
+      recentlyCompleted: tables.tables.recentlyCompleted ?? [],
+      activeTrips,
+    },
+    leaderboard: tables.leaderboard,
+    maintenance: tables.maintenance,
+    admin: tables.admin,
+    realTime: summary.realTime,
+  };
   const k = d.kpis;
 
   const quickStats = useMemo(() => ({
@@ -481,10 +522,34 @@ export function DashboardPage() {
     });
   }, [alertCards, alertSeverityFilter]);
 
+  if (summaryQuery.isLoading) return <LoadingSkeleton />;
+
+  if (summaryQuery.isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
+        <AlertTriangle className="size-12 text-red-400 mb-4" />
+        <p className="text-lg font-bold">Failed to load dashboard</p>
+        <p className="text-sm text-zinc-400 mt-1">{(summaryQuery.error as Error)?.message || 'Network error'}</p>
+        <button onClick={() => summaryQuery.refetch()} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-teal px-4 py-2 text-sm font-semibold text-white hover:bg-brand-teal/90">
+          <RefreshCw className="size-4" />
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* ── Hero Section ─────────────────────────────── */}
-      <DashboardHero lastUpdated={lastUpdated} onRefresh={() => refetch()} />
+      <DashboardHero
+        lastUpdated={lastUpdated}
+        onRefresh={() => {
+          summaryQuery.refetch();
+          chartsQuery.refetch();
+          liveQuery.refetch();
+          tablesQuery.refetch();
+        }}
+      />
 
       {/* ── Live Fleet Status ────────────────────────── */}
       <LiveFleetCard
@@ -493,14 +558,18 @@ export function DashboardPage() {
       />
 
       {/* ── Live Fleet Map ───────────────────────────── */}
-      <Suspense fallback={<div className="h-[520px] rounded-2xl border border-zinc-100 bg-white/80 shadow-sm" />}>
-        <FleetMapPanel
-          vehicles={d.tables.liveMonitoring}
-          selectedVehicleId={selectedVehicleId}
-          onSelectVehicle={setSelectedVehicleId}
-          onOpenTripDetails={(tripId) => tripId ? navigate(`/gps-logs?tripId=${tripId}`) : undefined}
-        />
-      </Suspense>
+      {liveQuery.data ? (
+        <Suspense fallback={<div className="h-[520px] rounded-2xl border border-zinc-100 bg-white/80 shadow-sm" />}>
+          <FleetMapPanel
+            vehicles={d.tables.liveMonitoring}
+            selectedVehicleId={selectedVehicleId}
+            onSelectVehicle={setSelectedVehicleId}
+            onOpenTripDetails={(tripId) => tripId ? navigate(`/gps-logs?tripId=${tripId}`) : undefined}
+          />
+        </Suspense>
+      ) : (
+        <div className="h-[520px] rounded-2xl border border-zinc-100 bg-white/80 shadow-sm" />
+      )}
 
       {/* ── Today's Operations KPIs ──────────────────── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

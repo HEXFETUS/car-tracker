@@ -3,15 +3,29 @@ import { getPool } from '../db/db.js';
 
 const router: ExpressRouter = express.Router();
 
-// GET /api/dashboard — Aggregated dashboard data
-router.get('/', async (_req: Request, res: Response) => {
-  let dashboardStep = 'initializing';
-  try {
-    const pool = getPool();
+type QueryablePool = ReturnType<typeof getPool>;
 
-    // ── Row 1: Executive Summary KPIs ──────────────────────────
-    dashboardStep = 'fleet KPIs';
-    const fleetKpis = await pool.query(`
+async function timedQuery(pool: QueryablePool, label: string, sql: string, params?: unknown[]) {
+  console.time(label);
+  try {
+    return await pool.query(sql, params);
+  } finally {
+    console.timeEnd(label);
+  }
+}
+
+function mapRecentAlerts(rows: any[]) {
+  return rows.map((r: any) => ({
+    ...r,
+    alertType: r.alert_type,
+    alertMessage: r.alert_message,
+    gpsRecordNo: r.gps_record_no,
+  }));
+}
+
+async function loadSummary(pool: QueryablePool) {
+  const [fleetKpis, travelOrderKpis, gpsKpis, alertCounts, realTimeStatus] = await Promise.all([
+    timedQuery(pool, 'dashboard fleetKpis', `
       SELECT
         (SELECT COUNT(*) FROM vehicles) AS total_vehicles,
         (SELECT COUNT(*) FROM vehicles WHERE under_repair = FALSE) AS available_vehicles,
@@ -19,44 +33,64 @@ router.get('/', async (_req: Request, res: Response) => {
         (SELECT COUNT(*) FROM vehicles WHERE under_repair = TRUE) AS vehicles_under_repair,
         (SELECT COUNT(*) FROM maintenance WHERE date >= CURRENT_DATE - INTERVAL '30 days') AS maintenance_due,
         (SELECT COUNT(*) FROM drivers) AS total_drivers
-    `);
-
-    // ── Row 2: Travel Orders KPIs ──────────────────────────────
-    dashboardStep = 'travel order KPIs';
-    const travelOrderKpis = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard travelOrderKpis', `
       SELECT
         (SELECT COUNT(*) FROM travel_orders WHERE status = 'PENDING') AS pending_approval,
         (SELECT COUNT(*) FROM travel_orders WHERE status = 'APPROVED') AS approved,
         (SELECT COUNT(*) FROM travel_orders WHERE status = 'ACTIVE') AS active_travel_orders,
         (SELECT COUNT(*) FROM travel_orders WHERE status = 'COMPLETED' AND DATE(updated_at) = CURRENT_DATE) AS completed_today,
         (SELECT COUNT(*) FROM travel_orders WHERE status = 'CANCELLED') AS cancelled_orders
-    `);
-
-    // ── Row 3: GPS Tracking KPIs ──────────────────────────────
-    dashboardStep = 'GPS KPIs';
-    const gpsKpis = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard gpsKpis', `
       SELECT
         (SELECT COUNT(*) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS trips_recorded_today,
         (SELECT COALESCE(SUM(gps_distance_km), 0) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS total_distance_today,
         (SELECT COALESCE(AVG(gps_distance_km), 0) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS avg_distance_per_trip,
         (SELECT COALESCE(MAX(max_speed_kph), 0) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS max_speed_today,
         (SELECT COUNT(*) FROM gps_trip_logs WHERE anomaly_flag = TRUE AND trip_date >= CURRENT_DATE - INTERVAL '7 days') AS gps_anomalies_detected
-    `);
-
-    // ── Row 4: Alert Counts ────────────────────────────────────
-    dashboardStep = 'alert counts';
-    const alertCounts = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard alertCounts', `
       SELECT
         (SELECT COUNT(*) FROM gps_alerts WHERE alert_type = 'IGNITION_ON' AND DATE(created_at) = CURRENT_DATE) AS ignition_on_alerts,
         (SELECT COUNT(*) FROM gps_alerts WHERE alert_type = 'IGNITION_OFF' AND DATE(created_at) = CURRENT_DATE) AS ignition_off_alerts,
         (SELECT COUNT(*) FROM gps_alerts WHERE alert_type = 'IDLING' AND DATE(created_at) = CURRENT_DATE) AS idling_alerts,
         (SELECT COUNT(*) FROM gps_alerts WHERE DATE(created_at) = CURRENT_DATE) AS active_gps_alerts
-    `);
+    `),
+    timedQuery(pool, 'dashboard realTimeStatus', `
+      WITH latest_telemetry AS (
+        SELECT DISTINCT ON (vehicle_id)
+          vehicle_id,
+          speed_kmh,
+          ignition,
+          recorded_at
+        FROM gps_telemetry
+        ORDER BY vehicle_id, recorded_at DESC
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE speed_kmh > 0) AS vehicles_moving,
+        COUNT(*) FILTER (WHERE speed_kmh = 0 AND ignition = TRUE) AS vehicles_idling
+      FROM latest_telemetry
+    `),
+  ]);
 
-    // ── Row 2: Vehicle Status Distribution (Doughnut) ───────────
-    // Infer status: assigned if has active/approved travel order
-    dashboardStep = 'vehicle status distribution';
-    const vehicleStatusDistribution = await pool.query(`
+  return {
+    kpis: {
+      fleet: fleetKpis.rows[0],
+      travelOrders: travelOrderKpis.rows[0],
+      gps: gpsKpis.rows[0],
+      alerts: alertCounts.rows[0],
+    },
+    realTime: {
+      vehiclesMoving: parseInt(realTimeStatus.rows[0]?.vehicles_moving || '0', 10),
+      vehiclesIdling: parseInt(realTimeStatus.rows[0]?.vehicles_idling || '0', 10),
+    },
+  };
+}
+
+async function loadCharts(pool: QueryablePool) {
+  const [vehicleStatusDistribution, travelOrdersByStatus, distanceLast30Days, tripsPerDay] = await Promise.all([
+    timedQuery(pool, 'dashboard vehicleStatusDistribution', `
       WITH vehicle_status AS (
         SELECT
           v.id,
@@ -81,11 +115,8 @@ router.get('/', async (_req: Request, res: Response) => {
       FROM vehicle_status
       GROUP BY status_category
       ORDER BY value DESC
-    `);
-
-    // ── Row 3: Travel Orders by Status (Bar Chart) ─────────────
-    dashboardStep = 'travel orders by status';
-    const travelOrdersByStatus = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard travelOrdersByStatus', `
       SELECT
         CASE status
           WHEN 'PENDING' THEN 'Pending'
@@ -110,11 +141,8 @@ router.get('/', async (_req: Request, res: Response) => {
           WHEN 'CANCELLED' THEN 6
           ELSE 7
         END
-    `);
-
-    // ── Row 4: Distance Traveled Last 30 Days (Line Chart) ─────
-    dashboardStep = 'distance last 30 days';
-    const distanceLast30Days = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard distanceLast30Days', `
       SELECT
         trip_date AS date,
         COALESCE(SUM(gps_distance_km), 0) AS total_distance
@@ -122,11 +150,8 @@ router.get('/', async (_req: Request, res: Response) => {
       WHERE trip_date >= CURRENT_DATE - INTERVAL '30 days'
       GROUP BY trip_date
       ORDER BY trip_date ASC
-    `);
-
-    // ── Row 4: Trips Per Day Last 30 Days (Area Chart) ─────────
-    dashboardStep = 'trips per day';
-    const tripsPerDay = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard tripsPerDay', `
       SELECT
         trip_date AS date,
         COUNT(*) AS trips
@@ -134,11 +159,22 @@ router.get('/', async (_req: Request, res: Response) => {
       WHERE trip_date >= CURRENT_DATE - INTERVAL '30 days'
       GROUP BY trip_date
       ORDER BY trip_date ASC
-    `);
+    `),
+  ]);
 
-    // ── Row 5: Live Vehicle Monitoring ──────────────────────────
-    dashboardStep = 'live vehicle monitoring';
-    const liveMonitoring = await pool.query(`
+  return {
+    charts: {
+      vehicleStatusDistribution: vehicleStatusDistribution.rows,
+      travelOrdersByStatus: travelOrdersByStatus.rows,
+      distanceLast30Days: distanceLast30Days.rows,
+      tripsPerDay: tripsPerDay.rows,
+    },
+  };
+}
+
+async function loadLive(pool: QueryablePool) {
+  const [liveMonitoring, activeTrips] = await Promise.all([
+    timedQuery(pool, 'dashboard liveMonitoring', `
       SELECT
         v.id AS vehicle_id,
         v.plate_number,
@@ -154,41 +190,64 @@ router.get('/', async (_req: Request, res: Response) => {
           SELECT SUM(gps_distance_km) FROM gps_trip_logs
           WHERE vehicle_id = v.id AND travel_order_id = to_.id
         ), 0) AS distance_traveled,
-        (
-          SELECT t.latitude FROM gps_telemetry t
-          WHERE t.vehicle_id = v.id
-          ORDER BY t.recorded_at DESC
-          LIMIT 1
-        ) AS latitude,
-        (
-          SELECT t.longitude FROM gps_telemetry t
-          WHERE t.vehicle_id = v.id
-          ORDER BY t.recorded_at DESC
-          LIMIT 1
-        ) AS longitude,
-        (
-          SELECT t.recorded_at FROM gps_telemetry t
-          WHERE t.vehicle_id = v.id
-          ORDER BY t.recorded_at DESC
-          LIMIT 1
-        ) AS last_seen
+        latest.latitude,
+        latest.longitude,
+        latest.recorded_at AS last_seen,
+        latest.speed_kmh,
+        latest.ignition,
+        latest.location_name
       FROM vehicles v
       LEFT JOIN LATERAL (
-        SELECT * FROM travel_orders
+        SELECT *
+        FROM travel_orders
         WHERE vehicle_id = v.id
           AND status IN ('ACTIVE', 'APPROVED')
         ORDER BY created_at DESC
         LIMIT 1
       ) to_ ON TRUE
       LEFT JOIN drivers d ON d.id = to_.driver_id
+      LEFT JOIN LATERAL (
+        SELECT latitude, longitude, recorded_at, speed_kmh, ignition, location_name
+        FROM gps_telemetry
+        WHERE vehicle_id = v.id
+        ORDER BY recorded_at DESC
+        LIMIT 1
+      ) latest ON TRUE
       WHERE to_.id IS NOT NULL
       ORDER BY to_.scheduled_departure DESC
-      LIMIT 50
-    `);
+      LIMIT 20
+    `),
+    timedQuery(pool, 'dashboard activeTrips', `
+      SELECT
+        to_.id,
+        to_.to_number,
+        v.plate_number,
+        d.full_name AS driver_name,
+        to_.origin_location,
+        to_.destination_target,
+        to_.scheduled_departure,
+        to_.scheduled_arrival,
+        to_.status
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers d ON d.id = to_.driver_id
+      WHERE to_.status = 'ACTIVE'
+      ORDER BY to_.scheduled_departure DESC
+      LIMIT 10
+    `),
+  ]);
 
-    // ── Row 6: Recent GPS Alerts ───────────────────────────────
-    dashboardStep = 'recent GPS alerts';
-    const recentAlerts = await pool.query(`
+  return {
+    tables: {
+      liveMonitoring: liveMonitoring.rows,
+      activeTrips: activeTrips.rows,
+    },
+  };
+}
+
+async function loadTables(pool: QueryablePool) {
+  const [recentAlerts, driverLeaderboard, maintenanceOverview, maintenanceTrends, matchingAccuracy, totalVehiclesResult, recentlyCompleted] = await Promise.all([
+    timedQuery(pool, 'dashboard recentAlerts', `
       SELECT
         a.id,
         a.created_at AS time,
@@ -202,12 +261,9 @@ router.get('/', async (_req: Request, res: Response) => {
       FROM gps_alerts a
       LEFT JOIN vehicles v ON v.id = a.vehicle_id
       ORDER BY a.created_at DESC
-      LIMIT 50
-    `);
-
-    // ── Row 7: Driver Performance Leaderboard ──────────────────
-    dashboardStep = 'driver performance leaderboard';
-    const driverLeaderboard = await pool.query(`
+      LIMIT 20
+    `),
+    timedQuery(pool, 'dashboard driverLeaderboard', `
       SELECT
         d.id AS driver_id,
         d.full_name AS driver_name,
@@ -217,25 +273,24 @@ router.get('/', async (_req: Request, res: Response) => {
         COUNT(DISTINCT CASE WHEN to_.status = 'COMPLETED' THEN to_.id END) AS on_time_arrivals,
         COUNT(DISTINCT CASE WHEN g.anomaly_flag = TRUE THEN g.id END) AS gps_violations
       FROM drivers d
-      LEFT JOIN gps_trip_logs g ON g.driver_id = d.id
-      LEFT JOIN travel_orders to_ ON to_.driver_id = d.id
+      LEFT JOIN gps_trip_logs g
+        ON g.driver_id = d.id
+       AND g.trip_date >= CURRENT_DATE - INTERVAL '90 days'
+      LEFT JOIN travel_orders to_
+        ON to_.driver_id = d.id
+       AND to_.scheduled_departure >= CURRENT_DATE - INTERVAL '90 days'
       GROUP BY d.id, d.full_name
       ORDER BY total_trips DESC
       LIMIT 20
-    `);
-
-    // ── Row 8: Maintenance Overview ────────────────────────────
-    dashboardStep = 'maintenance overview';
-    const maintenanceOverview = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard maintenanceOverview', `
       SELECT
         (SELECT COUNT(*) FROM maintenance WHERE date >= CURRENT_DATE) AS scheduled_maintenance,
         (SELECT COUNT(*) FROM maintenance WHERE date < CURRENT_DATE AND date >= CURRENT_DATE - INTERVAL '90 days') AS overdue_maintenance,
         (SELECT COUNT(*) FROM maintenance WHERE date >= DATE_TRUNC('month', CURRENT_DATE)) AS maintenance_this_month,
         (SELECT COALESCE(SUM(cost), 0) FROM maintenance WHERE date >= DATE_TRUNC('month', CURRENT_DATE)) AS maintenance_cost
-    `);
-
-    dashboardStep = 'maintenance trends';
-    const maintenanceTrends = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard maintenanceTrends', `
       SELECT
         TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') AS month,
         COUNT(*) AS count,
@@ -244,61 +299,16 @@ router.get('/', async (_req: Request, res: Response) => {
       WHERE date >= CURRENT_DATE - INTERVAL '12 months'
       GROUP BY DATE_TRUNC('month', date)
       ORDER BY month ASC
-    `);
-
-    // ── Admin: Travel Order Matching Accuracy ──────────────────
-    dashboardStep = 'travel order matching accuracy';
-    const matchingAccuracy = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard matchingAccuracy', `
       SELECT
         (SELECT COUNT(*) FROM gps_trip_logs WHERE travel_order_id IS NOT NULL) AS gps_logs_linked_to_to,
         (SELECT COUNT(*) FROM gps_trip_logs WHERE travel_order_id IS NULL) AS gps_logs_without_to,
         (SELECT COUNT(*) FROM gps_trip_logs WHERE to_status_auto = 'matched') AS auto_matched_trips,
         (SELECT COUNT(*) FROM gps_trip_logs WHERE to_status_auto = 'manual') AS manual_corrections
-    `);
-
-    // ── Admin: Fleet Utilization ───────────────────────────────
-    dashboardStep = 'total vehicle count';
-    const totalVehicles = (await pool.query(`SELECT COUNT(*) AS cnt FROM vehicles`)).rows[0].cnt;
-    dashboardStep = 'fleet utilization';
-    const fleetUtilization = await pool.query(`
-      WITH daily_active AS (
-        SELECT
-          DATE(recorded_at) AS date,
-          COUNT(DISTINCT vehicle_id) AS active_vehicles
-        FROM gps_telemetry
-        WHERE recorded_at >= CURRENT_DATE - INTERVAL '90 days'
-        GROUP BY DATE(recorded_at)
-      )
-      SELECT
-        COALESCE((SELECT active_vehicles FROM daily_active WHERE date = CURRENT_DATE), 0)
-          / $1::numeric * 100 AS daily_utilization,
-        COALESCE(AVG(active_vehicles), 0) / $1::numeric * 100 AS weekly_utilization,
-        COALESCE(AVG(active_vehicles), 0) / $1::numeric * 100 AS monthly_utilization
-      FROM daily_active
-      WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-    `, [totalVehicles]);
-
-    // ── Real-Time: Currently Moving / Idling ───────────────────
-    dashboardStep = 'real-time vehicle status';
-    const realTimeStatus = await pool.query(`
-      WITH latest_telemetry AS (
-        SELECT DISTINCT ON (vehicle_id)
-          vehicle_id,
-          speed_kmh,
-          ignition,
-          recorded_at
-        FROM gps_telemetry
-        ORDER BY vehicle_id, recorded_at DESC
-      )
-      SELECT
-        COUNT(*) FILTER (WHERE speed_kmh > 0) AS vehicles_moving,
-        COUNT(*) FILTER (WHERE speed_kmh = 0 AND ignition = TRUE) AS vehicles_idling
-      FROM latest_telemetry
-    `);
-
-    // ── Recently Completed Trips ───────────────────────────────
-    dashboardStep = 'recently completed trips';
-    const recentlyCompleted = await pool.query(`
+    `),
+    timedQuery(pool, 'dashboard totalVehicles', `SELECT COUNT(*) AS cnt FROM vehicles`),
+    timedQuery(pool, 'dashboard recentlyCompleted', `
       SELECT
         g.id,
         g.trip_date,
@@ -316,82 +326,124 @@ router.get('/', async (_req: Request, res: Response) => {
         AND g.arrival_time_gps >= NOW() - INTERVAL '24 hours'
       ORDER BY g.arrival_time_gps DESC
       LIMIT 20
-    `);
+    `),
+  ]);
 
-    // ── Active Trips (for real-time section) ───────────────────
-    dashboardStep = 'active trips';
-    const activeTrips = await pool.query(`
+  const totalVehicles = Number(totalVehiclesResult.rows[0]?.cnt || 0);
+  const fleetUtilization = totalVehicles > 0
+    ? await timedQuery(pool, 'dashboard fleetUtilization', `
+      WITH daily_active AS (
+        SELECT
+          DATE(recorded_at) AS date,
+          COUNT(DISTINCT vehicle_id) AS active_vehicles
+        FROM gps_telemetry
+        WHERE recorded_at >= CURRENT_DATE - INTERVAL '90 days'
+        GROUP BY DATE(recorded_at)
+      )
       SELECT
-        to_.id,
-        to_.to_number,
-        v.plate_number,
-        d.full_name AS driver_name,
-        to_.origin_location,
-        to_.destination_target,
-        to_.scheduled_departure,
-        to_.scheduled_arrival,
-        to_.status
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers d ON d.id = to_.driver_id
-      WHERE to_.status = 'ACTIVE'
-      ORDER BY to_.scheduled_departure DESC
-      LIMIT 20
-    `);
+        COALESCE((SELECT active_vehicles FROM daily_active WHERE date = CURRENT_DATE), 0)
+          / $1::numeric * 100 AS daily_utilization,
+        COALESCE(AVG(active_vehicles), 0) / $1::numeric * 100 AS weekly_utilization,
+        COALESCE(AVG(active_vehicles), 0) / $1::numeric * 100 AS monthly_utilization
+      FROM daily_active
+      WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+    `, [totalVehicles])
+    : { rows: [{ daily_utilization: 0, weekly_utilization: 0, monthly_utilization: 0 }] };
 
-    // ── Assemble response ──────────────────────────────────────
+  return {
+    tables: {
+      recentAlerts: mapRecentAlerts(recentAlerts.rows),
+      recentlyCompleted: recentlyCompleted.rows,
+    },
+    leaderboard: {
+      driverPerformance: driverLeaderboard.rows,
+    },
+    maintenance: {
+      overview: maintenanceOverview.rows[0],
+      trends: maintenanceTrends.rows,
+    },
+    admin: {
+      matchingAccuracy: matchingAccuracy.rows[0],
+      fleetUtilization: fleetUtilization.rows[0],
+    },
+  };
+}
+
+async function sendDashboardSection(res: Response, sectionName: string, loader: (pool: QueryablePool) => Promise<unknown>) {
+  console.time(`dashboard ${sectionName} total`);
+  try {
+    const data = await loader(getPool());
+    res.json({
+      success: true,
+      data,
+      message: `Dashboard ${sectionName} data retrieved successfully`,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`GET /api/dashboard/${sectionName} error:`, message);
+    res.status(500).json({
+      success: false,
+      data: null,
+      error: `Dashboard ${sectionName} query failed`,
+    });
+  } finally {
+    console.timeEnd(`dashboard ${sectionName} total`);
+  }
+}
+
+router.get('/summary', async (_req: Request, res: Response) => {
+  await sendDashboardSection(res, 'summary', loadSummary);
+});
+
+router.get('/charts', async (_req: Request, res: Response) => {
+  await sendDashboardSection(res, 'charts', loadCharts);
+});
+
+router.get('/live', async (_req: Request, res: Response) => {
+  await sendDashboardSection(res, 'live', loadLive);
+});
+
+router.get('/tables', async (_req: Request, res: Response) => {
+  await sendDashboardSection(res, 'tables', loadTables);
+});
+
+// GET /api/dashboard — Aggregated dashboard data kept for compatibility.
+router.get('/', async (_req: Request, res: Response) => {
+  console.time('dashboard total');
+  try {
+    const pool = getPool();
+    const [summary, charts, live, tables] = await Promise.all([
+      loadSummary(pool),
+      loadCharts(pool),
+      loadLive(pool),
+      loadTables(pool),
+    ]);
+
     res.json({
       success: true,
       data: {
-        kpis: {
-          fleet: fleetKpis.rows[0],
-          travelOrders: travelOrderKpis.rows[0],
-          gps: gpsKpis.rows[0],
-          alerts: alertCounts.rows[0],
-        },
-        charts: {
-          vehicleStatusDistribution: vehicleStatusDistribution.rows,
-          travelOrdersByStatus: travelOrdersByStatus.rows,
-          distanceLast30Days: distanceLast30Days.rows,
-          tripsPerDay: tripsPerDay.rows,
-        },
+        ...summary,
+        ...charts,
         tables: {
-          liveMonitoring: liveMonitoring.rows,
-          recentAlerts: recentAlerts.rows.map((r: any) => ({
-            ...r,
-            alertType: r.alert_type,
-            alertMessage: r.alert_message,
-            gpsRecordNo: r.gps_record_no,
-          })),
-          recentlyCompleted: recentlyCompleted.rows,
-          activeTrips: activeTrips.rows,
+          ...live.tables,
+          ...tables.tables,
         },
-        leaderboard: {
-          driverPerformance: driverLeaderboard.rows,
-        },
-        maintenance: {
-          overview: maintenanceOverview.rows[0],
-          trends: maintenanceTrends.rows,
-        },
-        admin: {
-          matchingAccuracy: matchingAccuracy.rows[0],
-          fleetUtilization: fleetUtilization.rows[0],
-        },
-        realTime: {
-          vehiclesMoving: parseInt(realTimeStatus.rows[0]?.vehicles_moving || '0'),
-          vehiclesIdling: parseInt(realTimeStatus.rows[0]?.vehicles_idling || '0'),
-        },
+        leaderboard: tables.leaderboard,
+        maintenance: tables.maintenance,
+        admin: tables.admin,
       },
       message: 'Dashboard data retrieved successfully',
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`GET /api/dashboard error at ${dashboardStep}:`, message);
+    console.error('GET /api/dashboard error:', message);
     res.status(500).json({
       success: false,
       data: null,
-      error: `Dashboard query failed at ${dashboardStep}`,
+      error: 'Dashboard query failed',
     });
+  } finally {
+    console.timeEnd('dashboard total');
   }
 });
 

@@ -170,6 +170,20 @@ export interface DashboardResponse {
   message?: string;
 }
 
+export type DashboardSummaryData = Pick<DashboardData, 'kpis' | 'realTime'>;
+export type DashboardChartsData = Pick<DashboardData, 'charts'>;
+export type DashboardLiveData = { tables: Pick<DashboardData['tables'], 'liveMonitoring' | 'activeTrips'> };
+export type DashboardTablesData = Pick<DashboardData, 'leaderboard' | 'maintenance' | 'admin'> & {
+  tables: Pick<DashboardData['tables'], 'recentAlerts' | 'recentlyCompleted'>;
+};
+
+interface DashboardSectionResponse<T> {
+  success: boolean;
+  data: T;
+  message?: string;
+  error?: string;
+}
+
 function toNumber(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
@@ -291,6 +305,187 @@ function normalizeDashboardData(data: DashboardData): DashboardData {
   };
 }
 
+function normalizeDashboardSummary(data: DashboardSummaryData): DashboardSummaryData {
+  return {
+    kpis: normalizeDashboardData({
+      ...emptyDashboardData(),
+      kpis: data.kpis,
+      realTime: data.realTime,
+    }).kpis,
+    realTime: {
+      vehiclesMoving: toNumber(data.realTime.vehiclesMoving),
+      vehiclesIdling: toNumber(data.realTime.vehiclesIdling),
+    },
+  };
+}
+
+function normalizeDashboardCharts(data: DashboardChartsData): DashboardChartsData {
+  return {
+    charts: normalizeDashboardData({
+      ...emptyDashboardData(),
+      charts: data.charts,
+    }).charts,
+  };
+}
+
+function normalizeDashboardLive(data: DashboardLiveData): DashboardLiveData {
+  return {
+    tables: {
+      liveMonitoring: data.tables.liveMonitoring.map((row) => ({
+        ...row,
+        distance_traveled: toNumber(row.distance_traveled),
+        latitude: row.latitude === null ? null : toNumber(row.latitude),
+        longitude: row.longitude === null ? null : toNumber(row.longitude),
+      })),
+      activeTrips: data.tables.activeTrips,
+    },
+  };
+}
+
+function normalizeDashboardTables(data: DashboardTablesData): DashboardTablesData {
+  return {
+    tables: {
+      recentAlerts: data.tables.recentAlerts,
+      recentlyCompleted: data.tables.recentlyCompleted.map((row) => ({
+        ...row,
+        gps_distance_km: row.gps_distance_km === null ? null : toNumber(row.gps_distance_km),
+        max_speed_kph: row.max_speed_kph === null ? null : toNumber(row.max_speed_kph),
+      })),
+    },
+    leaderboard: {
+      driverPerformance: data.leaderboard.driverPerformance.map((row) => ({
+        ...row,
+        total_trips: toNumber(row.total_trips),
+        total_distance: toNumber(row.total_distance),
+        avg_speed: toNumber(row.avg_speed),
+        on_time_arrivals: toNumber(row.on_time_arrivals),
+        gps_violations: toNumber(row.gps_violations),
+      })),
+    },
+    maintenance: {
+      overview: {
+        scheduled_maintenance: toNumber(data.maintenance.overview.scheduled_maintenance),
+        overdue_maintenance: toNumber(data.maintenance.overview.overdue_maintenance),
+        maintenance_this_month: toNumber(data.maintenance.overview.maintenance_this_month),
+        maintenance_cost: toNumber(data.maintenance.overview.maintenance_cost),
+      },
+      trends: data.maintenance.trends.map((row) => ({
+        ...row,
+        count: toNumber(row.count),
+        total_cost: toNumber(row.total_cost),
+      })),
+    },
+    admin: {
+      matchingAccuracy: {
+        gps_logs_linked_to_to: toNumber(data.admin.matchingAccuracy.gps_logs_linked_to_to),
+        gps_logs_without_to: toNumber(data.admin.matchingAccuracy.gps_logs_without_to),
+        auto_matched_trips: toNumber(data.admin.matchingAccuracy.auto_matched_trips),
+        manual_corrections: toNumber(data.admin.matchingAccuracy.manual_corrections),
+      },
+      fleetUtilization: {
+        daily_utilization: toNumber(data.admin.fleetUtilization.daily_utilization),
+        weekly_utilization: toNumber(data.admin.fleetUtilization.weekly_utilization),
+        monthly_utilization: toNumber(data.admin.fleetUtilization.monthly_utilization),
+      },
+    },
+  };
+}
+
+export function emptyDashboardData(): DashboardData {
+  return {
+    kpis: {
+      fleet: {
+        total_vehicles: 0,
+        available_vehicles: 0,
+        active_trips: 0,
+        vehicles_under_repair: 0,
+        maintenance_due: 0,
+        total_drivers: 0,
+      },
+      travelOrders: {
+        pending_approval: 0,
+        approved: 0,
+        active_travel_orders: 0,
+        completed_today: 0,
+        cancelled_orders: 0,
+      },
+      gps: {
+        trips_recorded_today: 0,
+        total_distance_today: 0,
+        avg_distance_per_trip: 0,
+        max_speed_today: 0,
+        gps_anomalies_detected: 0,
+      },
+      alerts: {
+        ignition_on_alerts: 0,
+        ignition_off_alerts: 0,
+        idling_alerts: 0,
+        active_gps_alerts: 0,
+      },
+    },
+    charts: {
+      vehicleStatusDistribution: [],
+      travelOrdersByStatus: [],
+      distanceLast30Days: [],
+      tripsPerDay: [],
+    },
+    tables: {
+      liveMonitoring: [],
+      recentAlerts: [],
+      recentlyCompleted: [],
+      activeTrips: [],
+    },
+    leaderboard: {
+      driverPerformance: [],
+    },
+    maintenance: {
+      overview: {
+        scheduled_maintenance: 0,
+        overdue_maintenance: 0,
+        maintenance_this_month: 0,
+        maintenance_cost: 0,
+      },
+      trends: [],
+    },
+    admin: {
+      matchingAccuracy: {
+        gps_logs_linked_to_to: 0,
+        gps_logs_without_to: 0,
+        auto_matched_trips: 0,
+        manual_corrections: 0,
+      },
+      fleetUtilization: {
+        daily_utilization: 0,
+        weekly_utilization: 0,
+        monthly_utilization: 0,
+      },
+    },
+    realTime: {
+      vehiclesMoving: 0,
+      vehiclesIdling: 0,
+    },
+  };
+}
+
+async function fetchDashboardSection<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) {
+    let message = `Failed to fetch dashboard data (HTTP ${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = String(body.error);
+    } catch {
+      // Keep the status-based message if the response is not JSON.
+    }
+    throw new Error(message);
+  }
+  const json: DashboardSectionResponse<T> = await res.json();
+  if (!json.success || !json.data) {
+    throw new Error(json.message || 'Dashboard response did not include data');
+  }
+  return json.data;
+}
+
 /**
  * Fetch all dashboard data in a single aggregated call.
  */
@@ -311,4 +506,20 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     throw new Error(json.message || 'Dashboard response did not include data');
   }
   return normalizeDashboardData(json.data);
+}
+
+export async function fetchDashboardSummary(): Promise<DashboardSummaryData> {
+  return normalizeDashboardSummary(await fetchDashboardSection<DashboardSummaryData>('/summary'));
+}
+
+export async function fetchDashboardCharts(): Promise<DashboardChartsData> {
+  return normalizeDashboardCharts(await fetchDashboardSection<DashboardChartsData>('/charts'));
+}
+
+export async function fetchDashboardLive(): Promise<DashboardLiveData> {
+  return normalizeDashboardLive(await fetchDashboardSection<DashboardLiveData>('/live'));
+}
+
+export async function fetchDashboardTables(): Promise<DashboardTablesData> {
+  return normalizeDashboardTables(await fetchDashboardSection<DashboardTablesData>('/tables'));
 }

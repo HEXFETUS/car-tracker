@@ -415,7 +415,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
       [data.vehicleId, eventType, recordedAtMinute, normalizedLocationName],
     );
     const conflictRow = conflictResult.rows[0];
-    const conflictId = conflictRow?.id ?? null;
+    let conflictId = conflictRow?.id ?? null;
     if (eventType === 'LOCATION_UPDATE' && conflictRow) {
       const hasCurrentCoordinates = Number.isFinite(data.latitude) && Number.isFinite(data.longitude);
       const hasConflictCoordinates = Number.isFinite(conflictRow.latitude) && Number.isFinite(conflictRow.longitude);
@@ -434,6 +434,59 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
             SET telegram_message = COALESCE(telegram_message, $2)
           WHERE id = $1`,
         [conflictId, data.telegramMessage],
+      );
+    }
+    if (!conflictId && eventType === 'LOCATION_UPDATE' && Number.isFinite(data.latitude) && Number.isFinite(data.longitude)) {
+      const locationConflictResult = await pool.query<{ id: string }>(
+        `SELECT id
+           FROM gps_telemetry
+          WHERE vehicle_id = $1
+            AND event_type = $2
+            AND trunc(latitude * 100000) = trunc($3::double precision * 100000)
+            AND trunc(longitude * 100000) = trunc($4::double precision * 100000)
+            AND floor(extract(epoch from recorded_at AT TIME ZONE 'UTC') / 60) = floor(extract(epoch from $5::timestamptz AT TIME ZONE 'UTC') / 60)
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [data.vehicleId, eventType, data.latitude, data.longitude, data.recordedAt],
+      );
+      conflictId = locationConflictResult.rows[0]?.id ?? null;
+    }
+    if (!conflictId && data.activeTripId) {
+      const tripConflictResult = await pool.query<{ id: string }>(
+        `SELECT id
+           FROM gps_telemetry
+          WHERE vehicle_id = $1
+            AND active_trip_id = $2
+            AND CASE event_type
+              WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
+              WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
+              WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+              WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+              WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
+              WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
+              WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
+              WHEN 'IDLING ALERT' THEN 'IDLING'
+              WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING'
+              WHEN 'IDLING_TOO_LONG' THEN 'IDLING'
+              ELSE event_type
+            END = $3
+          ORDER BY recorded_at DESC, created_at DESC
+          LIMIT 1`,
+        [data.vehicleId, data.activeTripId, eventType],
+      );
+      conflictId = tripConflictResult.rows[0]?.id ?? null;
+    }
+    if (conflictId && data.telegramMessage) {
+      await pool.query(
+        `UPDATE gps_telemetry
+            SET telegram_message = COALESCE(telegram_message, $2)
+          WHERE id = $1`,
+        [conflictId, data.telegramMessage],
+      );
+    }
+    if (conflictId) {
+      console.log(
+        `[telemetry] INSERT gps_telemetry conflict matched existing_id=${conflictId} vehicle=${data.vehicleId} event=${eventType}`,
       );
     }
     return { inserted: false, id: conflictId };

@@ -10,6 +10,7 @@ import { FavoritesProvider } from '@/shared/context/FavoritesContext';
 import { ConfirmationModal } from '@/shared/components/ConfirmationModal';
 import { ToastContainer } from '@/shared/components/ToastContainer';
 import { AppLayout } from '@/shared/components/AppLayout';
+import { ErrorBoundary } from '@/shared/components/ErrorBoundary';
 
 const LoginPage = lazy(() => import('@/modules/auth/pages/LoginPage').then(m => ({ default: m.LoginPage })));
 const DashboardPage = lazy(() => import('@/modules/dashboard/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -42,7 +43,9 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <AppLayout>
-              <DashboardPage />
+              <ErrorBoundary>
+                <DashboardPage />
+              </ErrorBoundary>
             </AppLayout>
           </ProtectedRoute>
         }
