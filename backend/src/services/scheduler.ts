@@ -219,8 +219,8 @@ export function resumeScheduler(): void {
 }
 
 /**
- * Export runCycle so it can be called directly by the Vercel Cron
- * endpoint (/api/cron/sync-tracker) without duplicating logic.
+ * Export runCycle so it can be called directly by the
+ * cron-job.org endpoint (/api/cron/sync-tracker) without duplicating logic.
  */
 export { runCycle };
 
@@ -690,10 +690,9 @@ async function runCycle(): Promise<void> {
 
     // ── DB-backed Telemetry From Current Fleet Snapshot ────────
     //
-    // Vercel/serverless invocations do not reliably keep tracker.js's
-    // in-memory previous-state Map warm. Persist LOCATION_UPDATE and
-    // IDLING here from database state so external cron invocations still
-    // save telemetry even when each request lands on a fresh function.
+    // External cron services don't maintain warm in-memory state.
+    // Persist LOCATION_UPDATE and IDLING here from database state
+    // so external cron invocations still save telemetry reliably.
     if (vehicles && vehicles.length > 0) {
       for (const vehicle of vehicles) {
         const vehicleId = String(vehicle.id ?? '');
@@ -815,7 +814,10 @@ async function runCycle(): Promise<void> {
               telegramMessage: null,
             });
 
-            if (savedTelemetry.inserted) {
+            if (savedTelemetry.updated) {
+              telemetrySkipped += 1;
+              console.log(`[scheduler] DB-backed LOCATION_UPDATE updated telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} (no Telegram)`);
+            } else if (savedTelemetry.inserted) {
               telemetrySaved += 1;
               console.log(`[scheduler] DB-backed LOCATION_UPDATE saved telemetry_id=${savedTelemetry.id} vehicle=${vehicleId}`);
               const telegram = await sendTelegram(message);
@@ -1112,21 +1114,20 @@ async function runCycle(): Promise<void> {
             continue;
           }
 
-          const shouldProcessDuplicateTelemetry = finalEventType === EVENT_TYPE.IDLING ||
-            finalEventType === EVENT_TYPE.MOTION_STARTED;
-          if (!savedTelemetry.inserted && !shouldProcessDuplicateTelemetry) {
+          if (savedTelemetry.updated) {
             telemetrySkipped += 1;
-            console.log(`[idling-alert] DB insert skipped duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} event=${finalEventType} trip=${activeTripId ?? 'null'}`);
+            console.log(`[idling-alert] ${finalEventType} LOCATION_UPDATE updated telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'} (no Telegram)`);
             continue;
           }
 
-          if (savedTelemetry.inserted) {
-            telemetrySaved += 1;
-            console.log(`[idling-alert] ${finalEventType} telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
-          } else {
+          if (!savedTelemetry.inserted) {
             telemetrySkipped += 1;
             console.log(`[idling-alert] ${finalEventType} telemetry duplicate existing_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+            continue;
           }
+
+          telemetrySaved += 1;
+          console.log(`[idling-alert] ${finalEventType} telemetry inserted telemetry_id=${savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
 
           if (finalEventType === EVENT_TYPE.IDLING && activeTripId) {
             const thresholdMinutes = alert.idlingThresholdReached;

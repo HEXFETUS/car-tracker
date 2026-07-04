@@ -224,7 +224,7 @@ export async function telemetryExists(
 /**
  * Insert a single telemetry data point.
  */
-export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted: boolean; id: string | null }> {
+export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted: boolean; updated: boolean; id: string | null }> {
   const pool = getPool();
   const eventType = canonicalTelemetryEventType(data.eventType);
   const normalizedLocationName = normalizeLocationName(data.locationName);
@@ -245,7 +245,53 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
         console.log(
           `[telemetry] LOCATION_UPDATE skipped not moving vehicle=${data.vehicleId} ignition=${data.ignition} speed=${data.speedKmh}`,
         );
-        return { inserted: false, id: null };
+        return { inserted: false, updated: false, id: null };
+      }
+
+      // For LOCATION_UPDATE, check if there's an existing row for this vehicle + active_trip_id
+      // If found, UPDATE it instead of inserting a new row
+      if (data.activeTripId) {
+        const existingResult = await pool.query<{ id: string }>(
+          `SELECT id
+             FROM gps_telemetry
+            WHERE vehicle_id = $1
+              AND active_trip_id = $2
+              AND event_type = $3
+            ORDER BY recorded_at DESC
+            LIMIT 1`,
+          [data.vehicleId, data.activeTripId, eventType],
+        );
+        const existingRow = existingResult.rows[0];
+        if (existingRow?.id) {
+          await pool.query(
+            `UPDATE gps_telemetry
+                SET latitude = $2,
+                    longitude = $3,
+                    speed_kmh = $4,
+                    fuel_liters = $5,
+                    ignition = $6,
+                    location_name = $7,
+                    recorded_at = $8,
+                    telegram_message = COALESCE(telegram_message, $9),
+                    created_at = now()
+              WHERE id = $1`,
+            [
+              existingRow.id,
+              data.latitude,
+              data.longitude,
+              data.speedKmh,
+              data.fuelLiters,
+              data.ignition,
+              data.locationName,
+              data.recordedAt,
+              data.telegramMessage ?? null,
+            ],
+          );
+          console.log(
+            `[telemetry] LOCATION_UPDATE updated existing row id=${existingRow.id} vehicle=${data.vehicleId} active_trip_id=${data.activeTripId}`,
+          );
+          return { inserted: false, updated: true, id: existingRow.id };
+        }
       }
 
       const latestLocationResult = await pool.query<{ location_name: string | null; latitude: number | null; longitude: number | null }>(
@@ -282,7 +328,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
         console.log(
           `[telemetry] LOCATION_UPDATE skipped same latest location vehicle=${data.vehicleId} location=${JSON.stringify(data.locationName ?? '')} distance=${distanceMeters === null ? 'unknown' : distanceMeters.toFixed(1)}m`,
         );
-        return { inserted: false, id: null };
+        return { inserted: false, updated: false, id: null };
       }
     }
 
@@ -339,7 +385,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
           console.log(
             `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
           );
-          return { inserted: false, id: duplicateRow.id };
+          return { inserted: false, updated: false, id: duplicateRow.id };
         }
       } else {
         if (data.telegramMessage) {
@@ -350,10 +396,10 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
             [duplicateRow.id, data.telegramMessage],
           );
         }
-        console.log(
-          `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
-        );
-        return { inserted: false, id: duplicateRow.id };
+          console.log(
+            `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
+          );
+          return { inserted: false, updated: false, id: duplicateRow.id };
       }
     }
 
@@ -385,7 +431,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
     const id = result.rows[0]?.id ?? null;
     if (id) {
       console.log(`[telemetry] INSERT gps_telemetry succeeded id=${id}`);
-      return { inserted: true, id };
+      return { inserted: true, updated: false, id };
     }
     console.log(
       `[telemetry] INSERT gps_telemetry skipped by conflict vehicle=${data.vehicleId} event=${eventType} active_trip_id=${data.activeTripId ?? 'null'}`,
@@ -489,7 +535,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
         `[telemetry] INSERT gps_telemetry conflict matched existing_id=${conflictId} vehicle=${data.vehicleId} event=${eventType}`,
       );
     }
-    return { inserted: false, id: conflictId };
+    return { inserted: false, updated: false, id: conflictId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[telemetry] INSERT gps_telemetry failed: ${message}`);

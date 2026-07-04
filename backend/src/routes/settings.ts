@@ -394,10 +394,10 @@ async function checkTelegramConnection(): Promise<ConnectionCheckResult> {
 
 // ── Scheduler Status Check ──────────────────────────────────────
 // Reads BOTH in-memory scheduler state (for local dev running
-// with setInterval) AND the DB scheduler_runs table (for Vercel
-// Cron or any external cron trigger).
-// On Vercel, the in-memory scheduler is never running, so the
-// status is determined entirely from DB data.
+// with setInterval) AND the DB scheduler_runs table (for
+// external cron triggers like cron-job.org).
+// On production deployments, the in-memory scheduler is never
+// running, so the status is determined entirely from DB data.
 
 async function checkSchedulerStatus(): Promise<ConnectionCheckResult> {
   const label = 'Internal Scheduler';
@@ -414,7 +414,7 @@ async function checkSchedulerStatus(): Promise<ConnectionCheckResult> {
     metrics.inMemoryErrors = state.errors;
     metrics.intervalSeconds = state.intervalSeconds ?? SYNC_INTERVAL_SECONDS;
 
-    // ── DB scheduler run data (Vercel Cron history) ────────────
+    // ── DB scheduler run data (cron-job.org history) ────────────
     let dbSummary: { lastRunAt: string | null; lastStatus: string | null; lastErrorMessage: string | null; cyclesCompleted: number; totalRuns: number; totalErrors: number } | null = null;
     try {
       const { getSchedulerRunSummary } = await import('../services/schedulerRunService.js');
@@ -425,17 +425,17 @@ async function checkSchedulerStatus(): Promise<ConnectionCheckResult> {
 
     // ── Determine effective mode and status ────────────────────
     // If in-memory scheduler is running, show "Interval" mode.
-    // Otherwise, show "Vercel Cron" mode (cron mode is assumed
-    // for Vercel deployments where the in-memory scheduler
+    // Otherwise, show "External Cron" mode (cron mode is assumed
+    // for production deployments where the in-memory scheduler
     // cannot stay alive continuously).
     const hasDbData = dbSummary !== null && dbSummary.totalRuns > 0;
-    const cronMode = inMemoryRunning ? 'Interval' : 'Vercel Cron';
+    const cronMode = inMemoryRunning ? 'Interval' : 'External Cron';
     metrics.cronMode = cronMode;
 
     if (inMemoryRunning) {
       checks.push(`Running every ${state.intervalSeconds ?? SYNC_INTERVAL_SECONDS}s`);
     } else {
-      checks.push('Cron mode: Vercel Cron');
+      checks.push('Cron mode: External Cron');
     }
 
     // ── DB-backed metrics (survives restarts) ──────────────────
@@ -503,7 +503,7 @@ async function checkSchedulerStatus(): Promise<ConnectionCheckResult> {
       }
     }
 
-    // ── Vercel cron schedule info ──────────────────────────────
+    // ── External cron schedule info ──────────────────────────────
     metrics.nextSchedule = '0 0 * * * (daily at midnight)';
     checks.push('Next schedule: 00:00 UTC daily');
 

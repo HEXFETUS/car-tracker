@@ -2,14 +2,13 @@
 //
 // Provides CRUD operations for the scheduler_runs table.
 // This replaces in-memory scheduler state for durable tracking
-// across serverless function invocations (Vercel Cron).
+// across serverless function invocations (cron-job.org).
 //
 // The most recent run is read by the dashboard to display:
 //   - last cron run time
 //   - last cron status (success/error)
 //   - last error message
 //   - cycles completed
-//   - cron mode: Vercel Cron
 
 import { getPool } from '../db/db.js';
 

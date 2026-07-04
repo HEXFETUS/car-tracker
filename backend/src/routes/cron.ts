@@ -10,10 +10,6 @@
 // This endpoint persists run history to the scheduler_runs table
 // for durable status tracking across serverless function invocations.
 //
-// Usage (Vercel Cron):
-//   GET https://your-api.example.com/api/cron/sync-tracker
-//   Headers: { "X-Cron-Secret": "your-cron-secret-here" }
-//
 // Usage (external cron service — e.g. cron-job.org):
 //   GET https://your-api.example.com/api/cron/sync-tracker?secret=your-cron-secret-here
 
@@ -105,9 +101,6 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
     res.json({
       success: true,
       elapsed_seconds: parseFloat(elapsed),
-      cron_mode: 'Vercel Cron',
-      run_id: runId,
-      timestamp: finishedAt,
     });
   } catch (error) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -129,9 +122,6 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
       success: false,
       error: message,
       elapsed_seconds: parseFloat(elapsed),
-      cron_mode: 'Vercel Cron',
-      run_id: runId,
-      timestamp: finishedAt,
     });
   }
 });
