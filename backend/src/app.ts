@@ -16,6 +16,8 @@ import maintenanceRouter from './routes/maintenance.js';
 import adminSyncRouter from './routes/admin-sync.js';
 import dashboardRouter from './routes/dashboard.js';
 import notificationsRouter from './routes/notifications.js';
+import searchRouter from './routes/search.js';
+import vehicleDetailRouter from './routes/vehicle-detail.js';
 import { requireRole } from './middleware/auth.js';
 
 const app: Application = express();
@@ -32,6 +34,9 @@ app.get(['/api/health', '/health'], (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Vehicle detail must be registered before the generic vehicles router
+// to avoid /:id matching /:id/detail
+app.use(['/api/vehicles', '/vehicles'], vehicleDetailRouter);
 app.use(['/api/vehicles', '/vehicles'], vehiclesRouter);
 app.use(['/api/drivers', '/drivers'], driversRouter);
 // Public travel orders — no auth required (for unauthenticated user-to requests)
@@ -47,6 +52,7 @@ app.use(['/api/maintenance', '/maintenance'], maintenanceRouter);
 app.use(['/api/admin/sync-tracking-history', '/admin/sync-tracking-history'], adminSyncRouter);
 app.use(['/api/dashboard', '/dashboard'], dashboardRouter);
 app.use(['/api/notifications', '/notifications'], notificationsRouter);
+app.use(['/api/search', '/search'], searchRouter);
 
 app.all(['/api/debug/routes', '/debug/routes'], (_req, res) => {
   res.json({ ok: true, message: 'debug route reached' });

@@ -3,7 +3,7 @@
 // Top navigation search that searches vehicles, drivers, GPS numbers,
 // travel orders, destinations.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Search, Car, User, MapPin, Navigation, FileText, X } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
@@ -14,24 +14,20 @@ interface SearchResult {
   type: 'vehicle' | 'driver' | 'gps' | 'travel-order' | 'destination';
   label: string;
   subtitle: string;
+  dbId?: string;
+  plateNumber?: string;
+  driverName?: string;
+  toNumber?: string;
+  gpsNumber?: string;
+  latitude?: number;
+  longitude?: number;
+  speedKmh?: number;
+  ignition?: boolean;
+  recordedAt?: string;
+  locationName?: string;
+  fuelLiters?: number;
+  status?: string;
 }
-
-// Mock search data — in real app, fetch from API
-const MOCK_RESULTS: SearchResult[] = [
-  { id: 'v-1', type: 'vehicle', label: 'ABC-1234', subtitle: 'Toyota HiAce · Juan Dela Cruz' },
-  { id: 'v-2', type: 'vehicle', label: 'XYZ-5678', subtitle: 'Nissan Urvan · Maria Santos' },
-  { id: 'v-3', type: 'vehicle', label: 'DEF-9012', subtitle: 'Isuzu Elf · Pedro Reyes' },
-  { id: 'd-1', type: 'driver', label: 'Juan Dela Cruz', subtitle: 'ABC-1234 · Toyota HiAce' },
-  { id: 'd-2', type: 'driver', label: 'Maria Santos', subtitle: 'XYZ-5678 · Nissan Urvan' },
-  { id: 'd-3', type: 'driver', label: 'Pedro Reyes', subtitle: 'DEF-9012 · Isuzu Elf' },
-  { id: 'g-1', type: 'gps', label: 'GPS-2026-001', subtitle: 'ABC-1234 · Iligan → CDO' },
-  { id: 'g-2', type: 'gps', label: 'GPS-2026-002', subtitle: 'XYZ-5678 · CDO → Iligan' },
-  { id: 'to-1', type: 'travel-order', label: 'TO-2026-001', subtitle: 'ABC-1234 · Iligan → CDO' },
-  { id: 'to-2', type: 'travel-order', label: 'TO-2026-002', subtitle: 'XYZ-5678 · CDO → Iligan' },
-  { id: 'dst-1', type: 'destination', label: 'Cagayan de Oro City', subtitle: '2 active trips' },
-  { id: 'dst-2', type: 'destination', label: 'Iligan City', subtitle: '3 active trips' },
-  { id: 'dst-3', type: 'destination', label: 'Bukidnon', subtitle: '1 active trip' },
-];
 
 const TYPE_CONFIG = {
   vehicle: { icon: Car, color: 'text-brand-teal', bg: 'bg-brand-teal/10' },
@@ -64,16 +60,37 @@ export function GlobalSearch() {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
   const debouncedQuery = useDebouncedValue(query);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  const results = useMemo(() => {
-    if (!debouncedQuery.trim()) return MOCK_RESULTS.slice(0, 5);
-    const q = debouncedQuery.toLowerCase();
-    return MOCK_RESULTS.filter(
-      (r) => r.label.toLowerCase().includes(q) || r.subtitle.toLowerCase().includes(q),
-    ).slice(0, 10);
+  // Fetch search results from API
+  useEffect(() => {
+    if (!debouncedQuery.trim()) {
+      setResults([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    fetch(`/api/search?q=${encodeURIComponent(debouncedQuery.trim())}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) {
+          setResults(data.data || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setResults([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, [debouncedQuery]);
 
   // Reset selection when results change
@@ -118,19 +135,19 @@ export function GlobalSearch() {
 
     switch (result.type) {
       case 'vehicle':
-        openDrawer({ type: 'vehicle', vehicleId: result.id, plateNumber: result.label });
+        openDrawer({ type: 'vehicle', vehicleId: result.dbId || result.id, plateNumber: result.label });
         break;
       case 'driver':
-        openDrawer({ type: 'driver', driverId: result.id, driverName: result.label });
+        openDrawer({ type: 'driver', driverId: result.dbId || result.id, driverName: result.label });
         break;
       case 'travel-order':
-        openDrawer({ type: 'travel-order', orderId: result.id, toNumber: result.label });
+        openDrawer({ type: 'travel-order', orderId: result.dbId || result.id, toNumber: result.label });
         break;
       case 'gps':
-        navigate(`/gps-logs?search=${result.label}`);
+        navigate(`/gps-logs?search=${encodeURIComponent(result.label)}`);
         break;
       case 'destination':
-        navigate(`/gps-logs?destination=${result.label}`);
+        navigate(`/gps-logs?destination=${encodeURIComponent(result.label)}`);
         break;
     }
   }
@@ -166,7 +183,7 @@ export function GlobalSearch() {
 
       {/* Expanded search overlay */}
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl bg-white shadow-brand-lg ring-1 ring-zinc-100">
+        <div className="absolute left-0 right-0 top-full mt-2 overflow-hidden rounded-xl bg-white shadow-brand-lg ring-1 ring-zinc-100 z-[10000]">
           <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
             <Search className="size-4 shrink-0 text-zinc-400" />
             <input
@@ -187,9 +204,14 @@ export function GlobalSearch() {
           </div>
 
           <div className="max-h-80 overflow-y-auto">
-            {results.length > 0 ? (
+            {loading && (
+              <div className="px-4 py-6 text-center text-sm text-zinc-500">
+                Searching...
+              </div>
+            )}
+            {!loading && results.length > 0 ? (
               results.map((result, idx) => {
-                const config = TYPE_CONFIG[result.type];
+                const config = TYPE_CONFIG[result.type] || TYPE_CONFIG.vehicle;
                 const Icon = config.icon;
                 return (
                   <button
@@ -207,7 +229,7 @@ export function GlobalSearch() {
                       <span className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-zinc-900">{result.label}</span>
                         <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
-                          {TYPE_LABELS[result.type]}
+                          {TYPE_LABELS[result.type] || result.type}
                         </span>
                       </span>
                       <span className="mt-0.5 block text-xs text-zinc-500">{result.subtitle}</span>
@@ -215,11 +237,15 @@ export function GlobalSearch() {
                   </button>
                 );
               })
-            ) : (
+            ) : !loading && query.trim() ? (
               <div className="px-4 py-8 text-center text-sm text-zinc-500">
                 No results found for "{query}"
               </div>
-            )}
+            ) : !loading && !query.trim() ? (
+              <div className="px-4 py-8 text-center text-sm text-zinc-500">
+                Type to search vehicles, drivers, GPS numbers...
+              </div>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-4 border-t border-zinc-100 px-4 py-2.5 text-[11px] text-zinc-400">

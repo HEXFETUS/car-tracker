@@ -3,9 +3,9 @@
 // Right-side drawer that shows vehicle/trip/driver details without
 // navigating away from the dashboard.
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { X, Car, MapPin, Navigation, Gauge, AlertTriangle, Radio, ExternalLink, Star, Activity } from 'lucide-react';
+import { X, Car, MapPin, Navigation, Gauge, AlertTriangle, Radio, ExternalLink, Star, Activity, Loader2 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useDrawer, type DrawerView } from '@/shared/context/DrawerContext';
 import { useRecentActivity } from '@/shared/context/RecentActivityContext';
@@ -16,41 +16,54 @@ import { useFavorites } from '@/shared/context/FavoritesContext';
 function fmtTime(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function fmtSpeed(n: number): string {
-  return n.toFixed(0) + ' km/h';
+function fmtSpeed(n: number | null | undefined): string {
+  if (n == null) return '—';
+  return Number(n).toFixed(0) + ' km/h';
 }
 
-function fmtKm(n: number): string {
+function fmtKm(n: number | null | undefined): string {
+  if (n == null) return '—';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K km';
   return n.toFixed(0) + ' km';
 }
 
-// ── Mock data for drawer (in real app, fetch from API) ─────────
+// ── Vehicle Detail API Response Type ───────────────────────────
 
-interface DrawerVehicleDetail {
+interface VehicleDetailData {
   id: string;
   plateNumber: string;
-  driverName: string;
-  travelOrder: string;
+  make: string;
+  model: string;
+  year: number;
+  vehicleType: string;
   gpsNumber: string;
+  underRepair: boolean;
+  driverId: string | null;
+  driverName: string;
+  driverPhone: string | null;
+  travelOrderId: string | null;
+  toNumber: string;
+  origin: string;
+  destination: string;
+  travelOrderStatus: string | null;
   tripType: string;
   currentSpeed: number;
-  lastUpdated: string;
-  destination: string;
-  origin: string;
-  latitude: number;
-  longitude: number;
-  status: string;
-  engineHours: number;
-  movingHours: number;
+  ignition: boolean;
+  lastUpdated: string | null;
+  locationName: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  fuelLevel: number | null;
   distance: number;
-  fuelLevel: number;
-  photoUrl?: string;
+  maxSpeed: number;
+  tripStatus: string;
+  departureTime: string | null;
+  arrivalTime: string | null;
 }
-
 
 // ── Section Component ──────────────────────────────────────────
 
@@ -83,33 +96,82 @@ function VehicleDrawerContent({ view }: { view: Extract<DrawerView, { type: 'veh
   const { addItem } = useRecentActivity();
   const { isFavorite, toggleFavorite } = useFavorites();
 
-  // In a real app, fetch vehicle detail by ID
-  const vehicle: DrawerVehicleDetail = {
-    id: view.vehicleId,
-    plateNumber: view.plateNumber || 'Unknown',
-    driverName: 'Juan Dela Cruz',
-    travelOrder: 'TO-2026-001',
-    gpsNumber: 'GPS-001',
-    tripType: 'Active Trip',
-    currentSpeed: 42,
-    lastUpdated: new Date().toISOString(),
-    destination: 'Cagayan de Oro City',
-    origin: 'Iligan City',
-    latitude: 8.5,
-    longitude: 124.65,
-    status: 'ACTIVE',
-    engineHours: 4.5,
-    movingHours: 3.2,
-    distance: 85,
-    fuelLevel: 75,
-  };
+  const [vehicle, setVehicle] = useState<VehicleDetailData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const fav = isFavorite(vehicle.id, 'vehicle');
-  const googleMapsUrl = `https://www.google.com/maps?q=${vehicle.latitude},${vehicle.longitude}`;
+  // Fetch vehicle detail from API
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    fetch(`/api/vehicles/${view.vehicleId}/detail`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) {
+          if (data.success && data.data) {
+            setVehicle(data.data);
+          } else {
+            setError(data.error || 'Failed to load vehicle details');
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError('Network error loading vehicle details');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [view.vehicleId]);
+
+  const fav = vehicle ? isFavorite(vehicle.id, 'vehicle') : false;
+  const googleMapsUrl = vehicle?.latitude != null && vehicle?.longitude != null
+    ? `https://www.google.com/maps?q=${vehicle.latitude},${vehicle.longitude}`
+    : null;
 
   useEffect(() => {
-    addItem({ id: vehicle.id, type: 'vehicle', label: vehicle.plateNumber, subtitle: vehicle.driverName });
-  }, []);
+    if (vehicle) {
+      addItem({ id: vehicle.id, type: 'vehicle', label: vehicle.plateNumber, subtitle: vehicle.driverName });
+    }
+  }, [vehicle, addItem]);
+
+  if (loading) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center">
+        <Loader2 className="size-8 text-brand-teal animate-spin mb-3" />
+        <p className="text-sm text-zinc-500">Loading vehicle details...</p>
+      </div>
+    );
+  }
+
+  if (error || !vehicle) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-6">
+        <AlertTriangle className="size-10 text-red-400 mb-3" />
+        <p className="text-sm font-medium text-red-600">{error || 'Vehicle not found'}</p>
+        <button onClick={closeDrawer} className="mt-4 rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-200">
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  const statusLabel = vehicle.tripStatus === 'arrived' || vehicle.tripStatus === 'completed'
+    ? 'Completed'
+    : vehicle.tripStatus === 'en-route' || vehicle.tripStatus === 'departed' || vehicle.tripStatus === 'ongoing'
+    ? 'Active'
+    : vehicle.ignition
+    ? 'Idling'
+    : 'Offline';
+
+  const statusColor = statusLabel === 'Active' || statusLabel === 'Completed'
+    ? 'bg-emerald-100 text-emerald-700'
+    : statusLabel === 'Idling'
+    ? 'bg-amber-100 text-amber-700'
+    : 'bg-zinc-100 text-zinc-600';
 
   return (
     <div className="flex h-full flex-col">
@@ -149,61 +211,65 @@ function VehicleDrawerContent({ view }: { view: Extract<DrawerView, { type: 'veh
 
         <DrawerSection title="Vehicle" icon={Car}>
           <DrawerRow label="Plate Number" value={vehicle.plateNumber} />
-          <DrawerRow label="Driver" value={vehicle.driverName} />
-          <DrawerRow label="Travel Order" value={vehicle.travelOrder} />
-          <DrawerRow label="GPS Number" value={vehicle.gpsNumber} />
-          <DrawerRow label="Trip Type" value={vehicle.tripType} />
+          <DrawerRow label="Driver" value={vehicle.driverName || 'Unassigned'} />
+          <DrawerRow label="Travel Order" value={vehicle.toNumber || '—'} />
+          <DrawerRow label="GPS Number" value={vehicle.gpsNumber || '—'} />
+          <DrawerRow label="Trip Type" value={vehicle.tripType || '—'} />
           <DrawerRow label="Status" value={
-            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">{vehicle.status}</span>
+            <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-bold', statusColor)}>{statusLabel}</span>
           } />
         </DrawerSection>
 
         <DrawerSection title="Telemetry" icon={Gauge}>
           <DrawerRow label="Current Speed" value={fmtSpeed(vehicle.currentSpeed)} />
           <DrawerRow label="Distance" value={fmtKm(vehicle.distance)} />
-          <DrawerRow label="Engine Hours" value={`${vehicle.engineHours.toFixed(1)}h`} />
-          <DrawerRow label="Moving Hours" value={`${vehicle.movingHours.toFixed(1)}h`} />
+          <DrawerRow label="Max Speed" value={fmtSpeed(vehicle.maxSpeed)} />
           <DrawerRow label="Fuel Level" value={
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-16 rounded-full bg-zinc-200">
-                <div className={cn('h-2 rounded-full', vehicle.fuelLevel > 50 ? 'bg-emerald-500' : vehicle.fuelLevel > 25 ? 'bg-amber-500' : 'bg-red-500')} style={{ width: `${vehicle.fuelLevel}%` }} />
+            vehicle.fuelLevel != null ? (
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-16 rounded-full bg-zinc-200">
+                  <div className={cn('h-2 rounded-full', vehicle.fuelLevel > 50 ? 'bg-emerald-500' : vehicle.fuelLevel > 25 ? 'bg-amber-500' : 'bg-red-500')} style={{ width: `${Math.min(vehicle.fuelLevel, 100)}%` }} />
+                </div>
+                <span className="text-xs">{Number(vehicle.fuelLevel).toFixed(1)} L</span>
               </div>
-              <span className="text-xs">{vehicle.fuelLevel}%</span>
-            </div>
+            ) : '—'
           } />
+          <DrawerRow label="Location" value={vehicle.locationName || '—'} />
           <DrawerRow label="Last Updated" value={fmtTime(vehicle.lastUpdated)} />
         </DrawerSection>
 
         <DrawerSection title="Route" icon={Navigation}>
-          <DrawerRow label="Origin" value={vehicle.origin} />
-          <DrawerRow label="Destination" value={vehicle.destination} />
+          <DrawerRow label="Origin" value={vehicle.origin || '—'} />
+          <DrawerRow label="Destination" value={vehicle.destination || '—'} />
         </DrawerSection>
 
         <DrawerSection title="Quick Actions">
           <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={() => { closeDrawer(); navigate(`/gps-logs?tripId=${vehicle.id}`); }}
+              onClick={() => { closeDrawer(); navigate(`/gps-logs?tripId=${vehicle.travelOrderId || vehicle.id}`); }}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-teal px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-teal/90"
             >
               <Navigation className="size-4" />
               View Trip
             </button>
             <button
-              onClick={() => { closeDrawer(); navigate('/gps-logs'); }}
+              onClick={() => { closeDrawer(); navigate('/gps-logs?tab=telemetry'); }}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-sage px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-sage/90"
             >
               <Radio className="size-4" />
               Fleet Tracking
             </button>
-            <a
-              href={googleMapsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl border border-zinc-200 px-3 py-2.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50"
-            >
-              <ExternalLink className="size-4" />
-              Open Google Maps
-            </a>
+            {googleMapsUrl && (
+              <a
+                href={googleMapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl border border-zinc-200 px-3 py-2.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50"
+              >
+                <ExternalLink className="size-4" />
+                Open Google Maps
+              </a>
+            )}
           </div>
         </DrawerSection>
 
@@ -265,31 +331,31 @@ function TripDrawerContent({ view }: { view: Extract<DrawerView, { type: 'trip' 
       <div className="flex-1 overflow-y-auto">
         <DrawerSection title="Trip Details" icon={Navigation}>
           <DrawerRow label="TO Number" value={toNumber} />
-          <DrawerRow label="Vehicle" value="ABC-1234" />
-          <DrawerRow label="Driver" value="Juan Dela Cruz" />
-          <DrawerRow label="GPS Number" value="GPS-001" />
+          <DrawerRow label="Vehicle" value="—" />
+          <DrawerRow label="Driver" value="—" />
+          <DrawerRow label="GPS Number" value="—" />
           <DrawerRow label="Status" value={<span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">ACTIVE</span>} />
         </DrawerSection>
 
         <DrawerSection title="Route" icon={MapPin}>
-          <DrawerRow label="Origin" value="Iligan City" />
-          <DrawerRow label="Destination" value="Cagayan de Oro City" />
-          <DrawerRow label="Distance" value="85 km" />
-          <DrawerRow label="ETA" value="~30 mins" />
+          <DrawerRow label="Origin" value="—" />
+          <DrawerRow label="Destination" value="—" />
+          <DrawerRow label="Distance" value="—" />
+          <DrawerRow label="ETA" value="—" />
         </DrawerSection>
 
         <DrawerSection title="Progress" icon={Activity}>
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
               <span className="text-zinc-500">Progress</span>
-              <span className="font-bold text-zinc-900">65%</span>
+              <span className="font-bold text-zinc-900">—</span>
             </div>
             <div className="h-2.5 rounded-full bg-brand-cream">
-              <div className="h-2.5 rounded-full bg-brand-teal transition-all" style={{ width: '65%' }} />
+              <div className="h-2.5 rounded-full bg-brand-teal transition-all" style={{ width: '0%' }} />
             </div>
           </div>
-          <DrawerRow label="Engine Hours" value="4.5h" />
-          <DrawerRow label="Moving Hours" value="3.2h" />
+          <DrawerRow label="Engine Hours" value="—" />
+          <DrawerRow label="Moving Hours" value="—" />
         </DrawerSection>
 
         <DrawerSection title="Quick Actions">
@@ -302,7 +368,7 @@ function TripDrawerContent({ view }: { view: Extract<DrawerView, { type: 'trip' 
               View Trip
             </button>
             <button
-              onClick={() => { closeDrawer(); navigate('/gps-logs'); }}
+              onClick={() => { closeDrawer(); navigate('/gps-logs?tab=telemetry'); }}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-sage px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-sage/90"
             >
               <Radio className="size-4" />
@@ -369,17 +435,17 @@ function DriverDrawerContent({ view }: { view: Extract<DrawerView, { type: 'driv
       <div className="flex-1 overflow-y-auto">
         <DrawerSection title="Driver Info" icon={Car}>
           <DrawerRow label="Name" value={driverName} />
-          <DrawerRow label="Vehicle" value="ABC-1234" />
-          <DrawerRow label="Contact" value="+63 912 345 6789" />
+          <DrawerRow label="Vehicle" value="—" />
+          <DrawerRow label="Contact" value="—" />
           <DrawerRow label="Status" value={<span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">Active</span>} />
         </DrawerSection>
 
         <DrawerSection title="Performance">
-          <DrawerRow label="Total Trips" value="24" />
-          <DrawerRow label="Total Distance" value={fmtKm(1850)} />
-          <DrawerRow label="Avg Speed" value={fmtSpeed(38)} />
-          <DrawerRow label="On-Time Rate" value="92%" />
-          <DrawerRow label="Violations" value={<span className="text-red-600 font-bold">0</span>} />
+          <DrawerRow label="Total Trips" value="—" />
+          <DrawerRow label="Total Distance" value="—" />
+          <DrawerRow label="Avg Speed" value="—" />
+          <DrawerRow label="On-Time Rate" value="—" />
+          <DrawerRow label="Violations" value={<span className="text-zinc-400">—</span>} />
         </DrawerSection>
 
         <DrawerSection>
@@ -440,15 +506,15 @@ function TravelOrderDrawerContent({ view }: { view: Extract<DrawerView, { type: 
       <div className="flex-1 overflow-y-auto">
         <DrawerSection title="Order Details" icon={Navigation}>
           <DrawerRow label="TO Number" value={toNumber} />
-          <DrawerRow label="Vehicle" value="ABC-1234" />
-          <DrawerRow label="Driver" value="Juan Dela Cruz" />
+          <DrawerRow label="Vehicle" value="—" />
+          <DrawerRow label="Driver" value="—" />
           <DrawerRow label="Status" value={<span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">ACTIVE</span>} />
         </DrawerSection>
 
         <DrawerSection title="Route" icon={MapPin}>
-          <DrawerRow label="Origin" value="Iligan City" />
-          <DrawerRow label="Destination" value="Cagayan de Oro City" />
-          <DrawerRow label="Departure" value={fmtTime(new Date().toISOString())} />
+          <DrawerRow label="Origin" value="—" />
+          <DrawerRow label="Destination" value="—" />
+          <DrawerRow label="Departure" value="—" />
           <DrawerRow label="Arrival" value="—" />
         </DrawerSection>
 
@@ -492,8 +558,8 @@ function AlertDrawerContent({ view: _view }: { view: Extract<DrawerView, { type:
       <div className="flex-1 overflow-y-auto">
         <DrawerSection title="Alert Info" icon={AlertTriangle}>
           <DrawerRow label="Type" value={<span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700">IDLING</span>} />
-          <DrawerRow label="Vehicle" value="ABC-1234" />
-          <DrawerRow label="Location" value="Iligan City" />
+          <DrawerRow label="Vehicle" value="—" />
+          <DrawerRow label="Location" value="—" />
           <DrawerRow label="Time" value={fmtTime(new Date().toISOString())} />
         </DrawerSection>
 
@@ -536,18 +602,18 @@ export function DashboardDrawer() {
 
   return (
     <>
-      {/* Overlay */}
+      {/* Overlay — z-[10000] to appear above map */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
+          className="fixed inset-0 z-[10000] bg-black/20 backdrop-blur-sm"
           onClick={closeDrawer}
         />
       )}
 
-      {/* Drawer */}
+      {/* Drawer — z-[10001] to appear above overlay */}
       <div
         className={cn(
-          'fixed right-0 top-0 z-50 h-full w-full max-w-md bg-white shadow-2xl transition-transform duration-300 ease-in-out',
+          'fixed right-0 top-0 z-[10001] h-full w-full max-w-md bg-white shadow-2xl transition-transform duration-300 ease-in-out',
           isOpen ? 'translate-x-0' : 'translate-x-full',
         )}
       >

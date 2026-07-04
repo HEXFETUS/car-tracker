@@ -340,7 +340,7 @@ function MapView({ vehicles, selectedVehicleId, onSelectVehicle, onOpenTripDetai
             <button data-action="trip-details" data-trip-id="${vehicle.current_travel_order_id || ''}" class="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-teal/90">
               View Trip
             </button>
-            <button data-action="fleet-tracking" data-vehicle-id="${vehicle.vehicle_id}" class="inline-flex items-center gap-1.5 rounded-lg bg-brand-sage px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-sage/90">
+            <button data-action="fleet-tracking" data-vehicle-id="${vehicle.vehicle_id}" class="inline-flex items-center gap-1.5 rounded-lg bg-brand-sage px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-sage/90" onclick="window.location.href='/gps-logs?tab=telemetry'">
               Fleet Tracking
             </button>
             <a href="${googleMapsUrl}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50">
@@ -362,8 +362,12 @@ function MapView({ vehicles, selectedVehicleId, onSelectVehicle, onOpenTripDetai
                 const popup = marker.getPopup();
                 if (popup) {
                     setTimeout(() => {
-                        const button = popup.getElement()?.querySelector('[data-action="trip-details"]') as HTMLButtonElement | null;
-                        button?.addEventListener('click', () => onOpenTripDetails(vehicle.current_travel_order_id || null));
+                        const tripButton = popup.getElement()?.querySelector('[data-action="trip-details"]') as HTMLButtonElement | null;
+                        tripButton?.addEventListener('click', () => onOpenTripDetails(vehicle.current_travel_order_id || null));
+                        const fleetButton = popup.getElement()?.querySelector('[data-action="fleet-tracking"]') as HTMLButtonElement | null;
+                        fleetButton?.addEventListener('click', () => {
+                            window.location.href = '/gps-logs?tab=telemetry';
+                        });
                     }, 0);
                 }
             });

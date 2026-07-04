@@ -13,3 +13,13 @@
   --shadow-brand-lg: 0 8px 40px -8px rgba(53, 133, 142, 0.18), 0 0 0 rgba(0,0,0,0);
   --shadow-brand-xl: 0 12px 56px -12px rgba(53, 133, 142, 0.20), 0 0 0 rgba(0,0,0,0);
 }
+
+/* Leaflet map container must be behind overlays */
+.leaflet-container {
+  z-index: 0 !important;
+}
+
+.leaflet-pane { z-index: 1 !important; }
+.leaflet-top, .leaflet-bottom { z-index: 2 !important; }
+.leaflet-control { z-index: 2 !important; }
+.leaflet-popup { z-index: 3 !important; }
