@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router';
 import { Search, Car, User, MapPin, Navigation, FileText, X } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useDrawer } from '@/shared/context/DrawerContext';
+import { apiFetch } from '@/shared/api-client';
 
 interface SearchResult {
   id: string;
@@ -75,16 +76,32 @@ export function GlobalSearch() {
 
     let cancelled = false;
     setLoading(true);
+    setResults([]);
 
-    fetch(`/api/search?q=${encodeURIComponent(debouncedQuery.trim())}`)
-      .then((res) => res.json())
-      .then((data) => {
+    apiFetch(`/api/search?q=${encodeURIComponent(debouncedQuery.trim())}`)
+      .then(async (res) => {
+        if (!res.ok) {
+          if (res.status === 401) {
+            throw new Error('UNAUTHORIZED');
+          }
+          throw new Error('NETWORK_ERROR');
+        }
+        const data = await res.json();
         if (!cancelled) {
           setResults(data.data || []);
         }
       })
-      .catch(() => {
-        if (!cancelled) setResults([]);
+      .catch((err) => {
+        if (!cancelled) {
+          if (err.message === 'UNAUTHORIZED') {
+            setResults([]);
+            setQuery('');
+            setIsOpen(false);
+            alert('Session expired. Please sign in again.');
+          } else {
+            setResults([]);
+          }
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

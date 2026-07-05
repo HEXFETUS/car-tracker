@@ -10,6 +10,7 @@ import { cn } from '@/shared/lib/utils';
 import { useDrawer, type DrawerView } from '@/shared/context/DrawerContext';
 import { useRecentActivity } from '@/shared/context/RecentActivityContext';
 import { useFavorites } from '@/shared/context/FavoritesContext';
+import { apiFetch } from '@/shared/api-client';
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -106,19 +107,33 @@ function VehicleDrawerContent({ view }: { view: Extract<DrawerView, { type: 'veh
     setLoading(true);
     setError(null);
 
-    fetch(`/api/vehicles/${view.vehicleId}/detail`)
-      .then((res) => res.json())
+    apiFetch(`/api/vehicles/${view.vehicleId}/detail`, { credentials: 'include' })
+      .then((res) => {
+        if (res.status === 401) {
+          throw new Error('SESSION_EXPIRED');
+        }
+        if (!res.ok) {
+          throw new Error('Failed to load vehicle details');
+        }
+        return res.json();
+      })
       .then((data) => {
         if (!cancelled) {
           if (data.success && data.data) {
             setVehicle(data.data);
           } else {
-            setError(data.error || 'Failed to load vehicle details');
+            setError(data.error || 'Vehicle detail query failed');
           }
         }
       })
-      .catch(() => {
-        if (!cancelled) setError('Network error loading vehicle details');
+      .catch((err) => {
+        if (!cancelled) {
+          if (err.message === 'SESSION_EXPIRED') {
+            setError('Session expired. Please sign in again.');
+          } else {
+            setError('Network error loading vehicle details');
+          }
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

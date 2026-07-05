@@ -21,6 +21,9 @@ export interface TelemetryInsert {
   recordedAt: string;
   activeTripId?: string | null;
   telegramMessage?: string | null;
+  telegramStatus?: string | null;
+  telegramError?: string | null;
+  telegramAttemptedAt?: string | null;
 }
 
 export interface TelemetryRow {
@@ -40,6 +43,9 @@ export interface TelemetryRow {
   createdAt: string;
   activeTripId: string | null;
   telegramMessage: string | null;
+  telegramStatus: string | null;
+  telegramError: string | null;
+  telegramAttemptedAt: string | null;
   // Active travel order info
   activeToNumber?: string | null;
   activeToStatus?: string | null;
@@ -63,6 +69,9 @@ interface TelemetryDbRow {
   created_at: string;
   active_trip_id: string | null;
   telegram_message: string | null;
+  telegram_status: string | null;
+  telegram_error: string | null;
+  telegram_attempted_at: string | null;
   active_to_number: string | null;
   active_to_status: string | null;
   active_driver_name: string | null;
@@ -330,8 +339,9 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
       `INSERT INTO gps_telemetry
        (vehicle_id, plate_number, event_type, latitude, longitude,
         speed_kmh, fuel_liters, ignition, location_name,
-        driver_id, to_number, recorded_at, active_trip_id, telegram_message)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        driver_id, to_number, recorded_at, active_trip_id, telegram_message,
+        telegram_status, telegram_error, telegram_attempted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
      ON CONFLICT DO NOTHING
      RETURNING id`,
       [
@@ -349,6 +359,9 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
         data.recordedAt,
         data.activeTripId ?? null,
         data.telegramMessage ?? null,
+        data.telegramStatus ?? null,
+        data.telegramError ?? null,
+        data.telegramAttemptedAt ?? null,
       ],
     );
     const id = result.rows[0]?.id ?? null;
@@ -414,6 +427,23 @@ export async function updateTelemetryTelegramMessage(id: string, telegramMessage
         SET telegram_message = $2
       WHERE id = $1`,
     [id, telegramMessage],
+  );
+}
+
+export async function updateTelemetryTelegramDelivery(
+  id: string,
+  status: 'sent' | 'failed' | 'skipped',
+  error: string | null,
+  attemptedAt: string,
+): Promise<void> {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE gps_telemetry
+        SET telegram_status = $2,
+            telegram_error = $3,
+            telegram_attempted_at = $4
+      WHERE id = $1`,
+    [id, status, error, attemptedAt],
   );
 }
 
@@ -567,6 +597,9 @@ export async function fetchTelemetry(
     createdAt: row.created_at,
     activeTripId: row.active_trip_id ?? null,
     telegramMessage: row.telegram_message ?? null,
+    telegramStatus: row.telegram_status ?? null,
+    telegramError: row.telegram_error ?? null,
+    telegramAttemptedAt: row.telegram_attempted_at ?? null,
     activeToNumber: row.active_to_number ?? null,
     activeToStatus: row.active_to_status ?? null,
     activeDriverName: row.active_driver_name ?? null,

@@ -1,8 +1,9 @@
 import type { AppUser, ApiResponse } from '@/shared/types';
 import { API_BASE } from '@/shared/api';
+import { apiFetch } from '@/shared/api-client';
 
 export async function fetchUsers(): Promise<AppUser[]> {
-  const res = await fetch(`${API_BASE}/api/users`);
+  const res = await apiFetch(`${API_BASE}/api/users`);
   const body: ApiResponse<AppUser[]> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch users');
   return body.data;
@@ -11,7 +12,7 @@ export async function fetchUsers(): Promise<AppUser[]> {
 export async function createUser(
   payload: { name: string; username: string; password: string; userType: string; department?: string },
 ): Promise<AppUser> {
-  const res = await fetch(`${API_BASE}/api/users`, {
+  const res = await apiFetch(`${API_BASE}/api/users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -25,7 +26,7 @@ export async function updateUser(
   id: string,
   payload: { name?: string; username?: string; userType?: string; department?: string },
 ): Promise<AppUser> {
-  const res = await fetch(`${API_BASE}/api/users/${id}`, {
+  const res = await apiFetch(`${API_BASE}/api/users/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -36,7 +37,7 @@ export async function updateUser(
 }
 
 export async function changeUserPassword(id: string, password: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/users/${id}/password`, {
+  const res = await apiFetch(`${API_BASE}/api/users/${id}/password`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
@@ -46,7 +47,7 @@ export async function changeUserPassword(id: string, password: string): Promise<
 }
 
 export async function deleteUser(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/users/${id}`, {
+  const res = await apiFetch(`${API_BASE}/api/users/${id}`, {
     method: 'DELETE',
   });
   const body: ApiResponse<{ id: string }> = await res.json();

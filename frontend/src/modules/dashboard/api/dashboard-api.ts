@@ -2,6 +2,8 @@
 //
 // Frontend API client for the aggregated dashboard endpoint.
 
+import { apiFetch } from '@/shared/api-client';
+
 const API_BASE = '/api/dashboard';
 
 export interface DashboardKpis {
@@ -472,7 +474,7 @@ export function emptyDashboardData(): DashboardData {
 }
 
 async function fetchDashboardSection<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await apiFetch(`${API_BASE}${path}`);
   if (!res.ok) {
     let message = `Failed to fetch dashboard data (HTTP ${res.status})`;
     try {
@@ -494,7 +496,7 @@ async function fetchDashboardSection<T>(path: string): Promise<T> {
  * Fetch all dashboard data in a single aggregated call.
  */
 export async function fetchDashboardData(): Promise<DashboardData> {
-  const res = await fetch(API_BASE);
+  const res = await apiFetch(API_BASE);
   if (!res.ok) {
     let message = `Failed to fetch dashboard data (HTTP ${res.status})`;
     try {

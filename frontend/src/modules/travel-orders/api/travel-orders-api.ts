@@ -11,6 +11,20 @@ export async function fetchNextToNumber(): Promise<number> {
 }
 
 /** Shape returned by the /api/travel-orders endpoint. */
+export interface DestinationData {
+  id: string;
+  stopOrder: number;
+  locationName: string;
+  address: string | null;
+  latLong: string | null;
+  notes: string | null;
+  estimatedArrival: string | null;
+  status: string;
+  arrivedAt: string | null;
+  arrivalDistanceMeters: number | null;
+  gpsTripLogId: string | null;
+}
+
 export interface TravelOrderData {
   id: string;
   toNumber: string;
@@ -35,6 +49,10 @@ export interface TravelOrderData {
   approvedByName: string | null;
   createdAt: string;
   updatedAt: string;
+  latLongOrigin?: string | null;
+  latLongDestination?: string | null;
+  locationName?: string | null;
+  destinations: DestinationData[];
 }
 
 export async function fetchTravelOrders(): Promise<TravelOrderData[]> {
@@ -132,6 +150,14 @@ export async function createTravelOrder(
     requestDriver?: boolean;
     latLongOrigin?: string | null;
     latLongDestination?: string | null;
+    destinations?: Array<{
+      locationName: string;
+      address?: string | null;
+      latLong?: string | null;
+      notes?: string | null;
+      estimatedArrival?: string | null;
+      stopOrder: number;
+    }>;
   },
 ): Promise<TravelOrderData> {
   const res = await apiFetch(`${API_BASE}/api/travel-orders`, {

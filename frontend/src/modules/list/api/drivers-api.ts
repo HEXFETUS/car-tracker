@@ -1,15 +1,16 @@
 import type { Driver, ApiResponse } from '@/shared/types';
 import { API_BASE } from '@/shared/api';
+import { apiFetch } from '@/shared/api-client';
 
 export async function fetchDrivers(): Promise<Driver[]> {
-  const res = await fetch(`${API_BASE}/api/drivers`);
+  const res = await apiFetch(`${API_BASE}/api/drivers`);
   const body: ApiResponse<Driver[]> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch drivers');
   return body.data;
 }
 
 export async function fetchDriver(id: string): Promise<Driver> {
-  const res = await fetch(`${API_BASE}/api/drivers/${id}`);
+  const res = await apiFetch(`${API_BASE}/api/drivers/${id}`);
   const body: ApiResponse<Driver> = await res.json();
   if (!body.success) throw new Error(body.error ?? 'Failed to fetch driver');
   return body.data;
@@ -18,7 +19,7 @@ export async function fetchDriver(id: string): Promise<Driver> {
 export async function createDriver(
   payload: Omit<Driver, 'id' | 'createdAt' | 'updatedAt'>,
 ): Promise<Driver> {
-  const res = await fetch(`${API_BASE}/api/drivers`, {
+  const res = await apiFetch(`${API_BASE}/api/drivers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -32,7 +33,7 @@ export async function updateDriver(
   id: string,
   payload: Partial<Omit<Driver, 'id' | 'createdAt' | 'updatedAt'>>,
 ): Promise<Driver> {
-  const res = await fetch(`${API_BASE}/api/drivers/${id}`, {
+  const res = await apiFetch(`${API_BASE}/api/drivers/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -50,7 +51,7 @@ export async function updateDriverStatus(
 }
 
 export async function deleteDriver(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/drivers/${id}`, {
+  const res = await apiFetch(`${API_BASE}/api/drivers/${id}`, {
     method: 'DELETE',
   });
   const body: ApiResponse<null> = await res.json();

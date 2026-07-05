@@ -2,6 +2,9 @@
 //
 // Frontend API client for GPS logs and alerts.
 
+import { API_BASE as ROOT_API_BASE } from '@/shared/api';
+import { apiFetch } from '@/shared/api-client';
+
 const API_BASE = '/api/gps-logs';
 
 export interface EnrichedGpsTripLog {
@@ -164,7 +167,7 @@ export async function fetchGpsLogs(params: {
   if (params.anomalyFlag !== undefined) qs.set('anomalyFlag', String(params.anomalyFlag));
 
   const url = qs.toString() ? `${API_BASE}?${qs.toString()}` : API_BASE;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error('Failed to fetch GPS logs');
   return res.json();
 }
@@ -173,7 +176,7 @@ export async function fetchGpsLogs(params: {
  * Create a GPS log.
  */
 export async function createGpsLog(payload: CreateGpsLogPayload): Promise<GpsLogResponse> {
-  const res = await fetch(API_BASE, {
+  const res = await apiFetch(API_BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -195,7 +198,7 @@ export async function updateGpsLog(
     return acc;
   }, {});
 
-  const res = await fetch(`${API_BASE}/${id}`, {
+  const res = await apiFetch(`${API_BASE}/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -207,7 +210,7 @@ export async function updateGpsLog(
  * Delete a GPS log.
  */
 export async function deleteGpsLog(id: string): Promise<DeleteGpsLogResponse> {
-  const res = await fetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API_BASE}/${id}`, { method: 'DELETE' });
   return parseJsonOrThrow<DeleteGpsLogResponse>(res, 'Failed to delete GPS log');
 }
 
@@ -216,7 +219,7 @@ export async function deleteGpsLog(id: string): Promise<DeleteGpsLogResponse> {
  */
 export async function syncGpsLogsHistory(vehicleId: string, date: string): Promise<SyncHistoryResult> {
   const qs = new URLSearchParams({ vehicle_id: vehicleId, date });
-  const res = await fetch(`${API_BASE}/sync-history?${qs.toString()}`);
+  const res = await apiFetch(`${API_BASE}/sync-history?${qs.toString()}`);
   if (!res.ok) throw new Error('History sync failed');
   return res.json();
 }
@@ -225,7 +228,7 @@ export async function syncGpsLogsHistory(vehicleId: string, date: string): Promi
  * Fetch tracked vehicles list for dropdown filters.
  */
 export async function fetchTrackedVehicles(): Promise<VehicleOption[]> {
-  const res = await fetch('/api/vehicles');
+  const res = await apiFetch(`${ROOT_API_BASE}/api/vehicles`);
   if (!res.ok) throw new Error('Failed to fetch vehicles');
   const json = await res.json();
   return (json.data || []).map((v: { id: string; plateNumber: string }) => ({
@@ -310,13 +313,13 @@ export async function fetchTelemetry(params: {
   if (params.dateTo) qs.set('dateTo', params.dateTo);
 
   const url = `${API_BASE}/telemetry?${qs.toString()}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error('Failed to fetch telemetry');
   return res.json();
 }
 
 export async function syncTrackingHistory(payload: AdminSyncPayload): Promise<TrackingHistorySyncResponse> {
-  const res = await fetch('/api/admin/sync-tracking-history', {
+  const res = await apiFetch(`${ROOT_API_BASE}/api/admin/sync-tracking-history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -373,7 +376,7 @@ export async function fetchOrderStatus(params: {
   qs.set('page', String(params.page || 1));
   qs.set('pageSize', String(params.pageSize || 20));
 
-  const res = await fetch(`/api/gps-logs/order-status?${qs.toString()}`);
+  const res = await apiFetch(`${ROOT_API_BASE}/api/gps-logs/order-status?${qs.toString()}`);
   if (!res.ok) throw new Error('Failed to fetch order status');
   return res.json();
 }
@@ -448,7 +451,7 @@ export async function fetchTripDetails(id: string): Promise<TripDetailsResponse>
       detailsId = gpsLog.data.id;
     } catch {
       // If no GPS log exists yet, fetch details directly from travel order via telemetry
-      const res = await fetch(`${API_BASE}/travel-order/${travelOrderId}/details`);
+      const res = await apiFetch(`${API_BASE}/travel-order/${travelOrderId}/details`);
       if (!res.ok) throw new Error('Failed to fetch trip details');
       const json = await res.json();
       console.log('[fetchTripDetails] Raw API response:', JSON.stringify(json, null, 2));
@@ -456,7 +459,7 @@ export async function fetchTripDetails(id: string): Promise<TripDetailsResponse>
     }
   }
 
-  const res = await fetch(`${API_BASE}/${detailsId}/details`);
+  const res = await apiFetch(`${API_BASE}/${detailsId}/details`);
   if (!res.ok) throw new Error('Failed to fetch trip details');
   const json = await res.json();
   console.log('[fetchTripDetails] Raw API response:', JSON.stringify(json, null, 2));
@@ -468,7 +471,7 @@ export async function fetchTripDetails(id: string): Promise<TripDetailsResponse>
  * This is the preferred method for notes editing.
  */
 export async function updateGpsLogNotes(id: string, notes: string | null): Promise<GpsLogResponse> {
-  const res = await fetch(`${API_BASE}/${id}/notes`, {
+  const res = await apiFetch(`${API_BASE}/${id}/notes`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ notes }),
@@ -488,7 +491,7 @@ export async function ensureGpsLog(payload: {
   trip_status?: string;
   notes?: string | null;
 }): Promise<GpsLogResponse & { created?: boolean }> {
-  const res = await fetch(`${API_BASE}/ensure-log`, {
+  const res = await apiFetch(`${API_BASE}/ensure-log`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -500,7 +503,7 @@ export async function ensureGpsLog(payload: {
  * Get the single GPS log for a given travel order.
  */
 export async function fetchGpsLogByTravelOrder(travelOrderId: string): Promise<GpsLogResponse> {
-  const res = await fetch(`${API_BASE}/by-travel-order/${travelOrderId}`);
+  const res = await apiFetch(`${API_BASE}/by-travel-order/${travelOrderId}`);
   if (!res.ok) throw new Error('Failed to fetch GPS log for travel order');
   return res.json();
 }

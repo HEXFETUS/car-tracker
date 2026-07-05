@@ -1,7 +1,5 @@
 import type {
   ReconciliationRecord,
-  MonthlyKpi,
-  VehicleMonthlySummary,
   MonthlyAggregate,
   YearlyKpi,
 } from './types';
@@ -137,33 +135,6 @@ export const MOCK_RECONCILIATION: ReconciliationRecord[] = [
     gpsActualMileageKm: 37.5,
     explanationRemarks: '',
   }),
-];
-
-/** ------------------------
- *  Monthly KPI for June 2026
- *  ------------------------ */
-export const MOCK_MONTHLY_KPI: MonthlyKpi = {
-  totalApprovedTOs: 8,
-  totalGpsTripsRecorded: 42,
-  totalGpsDistanceKm: 2450.8,
-  tripsWithLinkedTO: 8,
-  unauthorizedTripsFlagged: 3,
-  varianceExceedances: 2,
-  toApprovalRatePct: 95.2,
-  averageGpsTripDistanceKm: 58.4,
-};
-
-/** ------------------------
- *  Per-vehicle summary (June 2026)
- *  ------------------------ */
-export const MOCK_VEHICLE_SUMMARIES: VehicleMonthlySummary[] = [
-  { vehiclePlateNo: 'ABC-1234', totalGpsTrips: 8, totalGpsDistanceKm: 520.3, totalApprovedTOs: 2, unauthorizedTrips: 1, remarks: 'One unauthorized detour flagged' },
-  { vehiclePlateNo: 'XYZ-5678', totalGpsTrips: 6, totalGpsDistanceKm: 430.1, totalApprovedTOs: 2, unauthorizedTrips: 0, remarks: '' },
-  { vehiclePlateNo: 'DEF-9012', totalGpsTrips: 5, totalGpsDistanceKm: 298.7, totalApprovedTOs: 1, unauthorizedTrips: 1, remarks: 'Odometer discrepancy noted' },
-  { vehiclePlateNo: 'GHI-3456', totalGpsTrips: 7, totalGpsDistanceKm: 385.0, totalApprovedTOs: 1, unauthorizedTrips: 0, remarks: '' },
-  { vehiclePlateNo: 'JKL-7890', totalGpsTrips: 4, totalGpsDistanceKm: 412.5, totalApprovedTOs: 1, unauthorizedTrips: 0, remarks: '' },
-  { vehiclePlateNo: 'MNO-2345', totalGpsTrips: 5, totalGpsDistanceKm: 210.2, totalApprovedTOs: 1, unauthorizedTrips: 1, remarks: 'Excessive idling detected' },
-  { vehiclePlateNo: 'PQR-6789', totalGpsTrips: 7, totalGpsDistanceKm: 194.0, totalApprovedTOs: 0, unauthorizedTrips: 0, remarks: 'Pool vehicle — no TO required' },
 ];
 
 /** ------------------------

@@ -18,7 +18,7 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const CURRENT_YEAR = 2026;
+const CURRENT_YEAR = new Date().getFullYear();
 
 export function ReportsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('reconciliation');
@@ -107,13 +107,31 @@ export function ReportsPage() {
               </select>
             </div>
           )}
+
+          {/* ── Yearly: year filter (right side) ── */}
+          {activeTab === 'yearly' && (
+            <div className="flex items-center gap-2">
+              <Calendar className="size-4 text-zinc-400 shrink-0" />
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+              >
+                {[2024, 2025, 2026, 2027].map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
       {/* ── Page content ── */}
       {activeTab === 'reconciliation' && <ReconciliationPage statusFilter={reconStatusFilter} onStatusFilterChange={setReconStatusFilter} />}
-      {activeTab === 'monthly' && <MonthlyReportPage />}
-      {activeTab === 'yearly' && <YearlyReportPage />}
+      {activeTab === 'monthly' && <MonthlyReportPage selectedMonth={MONTHS.indexOf(selectedMonth) + 1} selectedYear={selectedYear} onMonthChange={(month) => setSelectedMonth(MONTHS[month - 1])} onYearChange={setSelectedYear} />}
+      {activeTab === 'yearly' && <YearlyReportPage selectedYear={selectedYear} />}
     </div>
   );
 }

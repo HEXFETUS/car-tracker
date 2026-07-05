@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, ArrowUpDown } from 'lucide-react';
+import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, ArrowUpDown, Navigation } from 'lucide-react';
+import { cn } from '@/shared/lib/utils';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import {
@@ -484,22 +485,128 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                     )
                   }
                 />
-                <DetailRow
-                  icon={<ArrowUpDown className="size-4 text-brand-teal" />}
-                  label="Destination"
-                  value={
-                    isEditing ? (
-                      <input
-                        type="text"
-                        value={destinationLocation}
-                        onChange={(e) => setDestinationLocation(e.target.value)}
-                        className="w-full rounded-lg border-0 ring-1 ring-brand-sage px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal/20 transition-shadow hover:ring-brand-teal"
-                      />
-                    ) : (
-                      order.destinationLocation || '—'
-                    )
-                  }
-                />
+              </div>
+
+              {/* Route with stops */}
+              <div className="mt-3">
+                <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Route</p>
+                <div className="space-y-0">
+                  {/* Origin */}
+                  <div className="flex items-start gap-3 py-2">
+                    <div className="flex flex-col items-center">
+                      <div className="size-3 rounded-full bg-brand-teal border-2 border-white ring-2 ring-brand-teal shrink-0" />
+                      <div className="w-0.5 flex-1 bg-brand-teal/30 min-h-[20px]" />
+                    </div>
+                    <div className="min-w-0 flex-1 pb-2">
+                      <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Origin</p>
+                      <p className="text-sm font-medium text-zinc-900">{order.originLocation || '—'}</p>
+                      {order.latLongOrigin && (
+                        <p className="text-xs text-zinc-400">📍 {order.latLongOrigin}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Destination Stops with Status */}
+                  {order.destinations && order.destinations.length > 0 ? (
+                    order.destinations.map((dest, index) => {
+                      const status = dest.status || 'PENDING';
+                      const isArrived = status === 'ARRIVED';
+                      const isInProgress = status === 'IN_PROGRESS';
+                      const isSkipped = status === 'SKIPPED';
+                      const isPending = status === 'PENDING';
+                      const isLast = index === order.destinations.length - 1;
+
+                      return (
+                        <div key={dest.id || index} className="flex items-start gap-3 py-2">
+                          <div className="flex flex-col items-center">
+                            <div className={cn(
+                              'size-3 rounded-full border-2 shrink-0 transition-colors',
+                              isArrived && 'bg-green-500 border-white ring-2 ring-green-500',
+                              isInProgress && 'bg-blue-500 border-white ring-2 ring-blue-500 animate-pulse',
+                              isPending && !isLast && 'bg-zinc-300 border-white ring-2 ring-zinc-300',
+                              isPending && isLast && 'bg-amber-500 border-white ring-2 ring-amber-500',
+                              isSkipped && 'bg-red-300 border-white ring-2 ring-red-300',
+                            )}>
+                              {isArrived && (
+                                <svg className="size-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </div>
+                            {index < order.destinations.length - 1 && (
+                              <div className={cn(
+                                'w-0.5 flex-1 min-h-[20px]',
+                                isArrived ? 'bg-green-300' : 'bg-zinc-200'
+                              )} />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1 pb-2">
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                                {isLast ? 'Final Destination' : `Stop ${index + 1}`}
+                              </p>
+                              {isArrived && (
+                                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700">
+                                  ✓ Arrived
+                                </span>
+                              )}
+                              {isInProgress && (
+                                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                                  ▶ In Progress
+                                </span>
+                              )}
+                              {isSkipped && (
+                                <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
+                                  ✕ Skipped
+                                </span>
+                              )}
+                              {isPending && (
+                                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                                  ○ Pending
+                                </span>
+                              )}
+                            </div>
+                            <p className={cn(
+                              'text-sm font-medium',
+                              isArrived ? 'text-green-700' : isSkipped ? 'text-zinc-400 line-through' : 'text-zinc-900'
+                            )}>
+                              {dest.locationName}
+                            </p>
+                            {dest.address && (
+                              <p className="text-xs text-zinc-500">{dest.address}</p>
+                            )}
+                            {dest.latLong && (
+                              <p className="text-xs text-zinc-400">📍 {dest.latLong}</p>
+                            )}
+                            {dest.arrivedAt && (
+                              <p className="text-xs text-green-600">
+                                🕐 Arrived {new Date(dest.arrivedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                {dest.arrivalDistanceMeters && ` (${dest.arrivalDistanceMeters}m)`}
+                              </p>
+                            )}
+                            {dest.notes && (
+                              <p className="text-xs text-zinc-400 italic mt-0.5">📝 {dest.notes}</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    /* Fallback: single destination */
+                    <div className="flex items-start gap-3 py-2">
+                      <div className="flex flex-col items-center">
+                        <div className="size-3 rounded-full bg-amber-500 border-2 border-white ring-2 ring-amber-500 shrink-0" />
+                      </div>
+                      <div className="min-w-0 flex-1 pb-2">
+                        <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Destination</p>
+                        <p className="text-sm font-medium text-zinc-900">{order.destinationLocation || '—'}</p>
+                        {order.latLongDestination && (
+                          <p className="text-xs text-zinc-400">📍 {order.latLongDestination}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>

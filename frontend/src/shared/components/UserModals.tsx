@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Camera, Lock } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { API_BASE } from '@/shared/api';
+import { apiFetch } from '@/shared/api-client';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ export function PasswordModal({ open, onClose, onPasswordChanged, currentUserId 
 
     setSubmitting(true);
     try {
-      const response = await fetch(`${API_BASE}/api/users/${currentUserId}/password`, {
+      const response = await apiFetch(`${API_BASE}/api/users/${currentUserId}/password`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: newPassword }),
@@ -285,7 +286,7 @@ export function AccountModal({ open, currentUser, onClose }: AccountModalProps) 
         picture: photoPreview ?? null,
       };
 
-      const response = await fetch(`${API_BASE}/api/users/${currentUser!.id}`, {
+      const response = await apiFetch(`${API_BASE}/api/users/${currentUser!.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

@@ -93,6 +93,14 @@ export function TravelOrdersPage() {
     if (!confirmed) return;
 
     try {
+      const destinations = order.destinations?.map((d) => ({
+        locationName: d.locationName,
+        address: d.address || null,
+        latLong: d.latLong || null,
+        notes: d.notes || null,
+        stopOrder: d.stopOrder,
+      }));
+
       await createTravelOrder({
         toNumber: order.toNumber,
         originLocation: order.boundFrom,
@@ -107,6 +115,7 @@ export function TravelOrdersPage() {
         requestDriver: order.requestDriver,
         latLongOrigin: order.latLongOrigin,
         latLongDestination: order.latLongDestination,
+        destinations,
       });
       toast('Travel order created!', 'success');
       setIsModalOpen(false);

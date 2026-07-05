@@ -1,3 +1,13 @@
+export interface TravelOrderDestination {
+  id?: string;
+  stopOrder: number;
+  locationName: string;
+  address?: string | null;
+  latLong?: string | null;
+  notes?: string | null;
+  estimatedArrival?: string | null;
+}
+
 export interface TravelOrder {
   toNumber: string;
   dateIssued: string;
@@ -17,4 +27,6 @@ export interface TravelOrder {
   latLongOrigin?: string | null;
   /** Lat/Lng for destination (lat,lng format) */
   latLongDestination?: string | null;
+  /** Multiple destination stops */
+  destinations?: TravelOrderDestination[];
 }

@@ -84,7 +84,7 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
 
   try {
     // Execute one full scheduler cycle
-    await runCycle();
+    const summary = await runCycle();
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
     const finishedAt = new Date().toISOString();
@@ -92,7 +92,13 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
     // Mark the run as successful in the database
     if (runId !== null) {
       try {
-        await completeSchedulerRun(runId, finishedAt, 1);
+        await completeSchedulerRun(runId, finishedAt, summary.skipped ? 0 : 1, {
+          vehiclesProcessed: summary.vehiclesProcessed,
+          telemetrySaved: summary.telemetrySaved,
+          telegramSent: summary.telegramSent,
+          telegramFailed: summary.telegramFailed,
+          skipReason: summary.skipReason,
+        });
       } catch (dbError) {
         console.error('Cron sync: failed to update scheduler run record:', (dbError as Error).message);
       }
@@ -101,6 +107,7 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
     res.json({
       success: true,
       elapsed_seconds: parseFloat(elapsed),
+      summary,
     });
   } catch (error) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);

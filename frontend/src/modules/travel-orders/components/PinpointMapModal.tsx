@@ -11,6 +11,10 @@ interface PinpointMapModalProps {
   initialQuery?: string;
   /** Label for the type of location being set */
   locationLabel?: string;
+  /** Initial latitude to place the marker (e.g. default origin coordinates) */
+  initialLat?: string;
+  /** Initial longitude to place the marker (e.g. default origin coordinates) */
+  initialLng?: string;
 }
 
 // Fix Leaflet default marker icon issue with bundlers
@@ -30,6 +34,8 @@ export function PinpointMapModal({
   onConfirm,
   initialQuery = '',
   locationLabel = 'Location',
+  initialLat,
+  initialLng,
 }: PinpointMapModalProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -76,8 +82,19 @@ export function PinpointMapModal({
     mapInstanceRef.current = map;
     markerRef.current = marker;
 
-    // If we have an initial query, search for it
-    if (initialQuery) {
+    // If initial coordinates are provided, place the marker there directly
+    if (initialLat && initialLng) {
+      const latNum = parseFloat(initialLat);
+      const lngNum = parseFloat(initialLng);
+      if (!isNaN(latNum) && !isNaN(lngNum)) {
+        setLat(initialLat);
+        setLng(initialLng);
+        marker.setLatLng([latNum, lngNum]);
+        map.setView([latNum, lngNum], 15);
+        reverseGeocode(latNum, lngNum);
+      }
+    } else if (initialQuery) {
+      // If we have an initial query but no coordinates, search for it
       setSearchQuery(initialQuery);
       searchLocation(initialQuery, map, marker);
     }

@@ -12,6 +12,7 @@ import {
   type CartrackHistoryPoint,
 } from './cartrackHistoryService.js';
 import { GPS_TO_MATCH_TOLERANCE_MINUTES, GPS_TO_DESTINATION_THRESHOLD_METERS, ALLOW_TRIP_SUMMARY_TIME_FALLBACK } from '../config/env.js';
+import { getFleetConfig } from './fleetConfigService.js';
 import {
   findVehicleByPlate,
   findDriverByName,
@@ -23,6 +24,7 @@ import {
   TO_COORD_MATCH_THRESHOLD_M,
   parseTimestampSafe,
   parseCartrackTripTimestamp,
+  generateGpsRecordNo,
   type TravelOrderWithTimes,
   type GpsLogInsertData,
 } from './gpsLogService.js';
@@ -57,9 +59,9 @@ async function reverseGeocode(latitude: number, longitude: number): Promise<stri
   return null;
 }
 
-export const IDLE_LIMIT_MINUTES = 10;
+export const IDLE_LIMIT_MINUTES = getFleetConfig().trip.idleLimitMinutes;
 export const IDLE_LIMIT_MS = IDLE_LIMIT_MINUTES * 60 * 1000;
-export const DISTANCE_THRESHOLD_M = 200;
+export const DISTANCE_THRESHOLD_M = getFleetConfig().trip.coordMatchThresholdM;
 
 // Resolve the TO driving match tolerance with proper fallback to 10 minutes
 const resolvedToleranceMinutes =
@@ -480,6 +482,7 @@ function parseSingleTimeValue(value: unknown, tripDate: string | null): Date | n
       const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
       const ampm = timeMatch[4]?.toUpperCase();
 
+      if (ampm && !['AM', 'PM'].includes(ampm)) return null;
       if (ampm === 'PM' && hours < 12) hours += 12;
       if (ampm === 'AM' && hours === 12) hours = 0;
 
@@ -1000,8 +1003,8 @@ function reconstructTripsForTravelOrders(
               log(`  tripId: ${returnTrip.departureTime}-${returnTrip.arrivalTime} (DIFFERENT from outbound)`);
             } else {
               log(`RETURN rejected — coordinate validation failed`);
-              log(`  Start near TO dest: ${startNearDest ? '' : ''}`);
-              log(`  End near TO origin: ${endNearOrigin ? '' : ''}`);
+              log(`  Start near TO dest: ${startNearDest}`);
+              log(`  End near TO origin: ${endNearOrigin}`);
               log(`  Only OUTBOUND record created.`);
             }
           }
@@ -1123,7 +1126,7 @@ export async function syncTrackingHistory(
     const candidateTOs: TravelOrderWithTimes[] = [];
     const from = new Date(fromDate);
     const to = new Date(toDate);
-    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const tos = await findAllTravelOrdersForDate(vehicleId, dateStr);
       for (const tro of tos) {
@@ -1157,7 +1160,7 @@ export async function syncTrackingHistory(
     let vehicleTripsCreated = 0;
     let vehicleTripsFailed = 0;
 
-    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const historyPoints = await fetchCartrackVehicleHistory(unitInfo.unitId, dateStr, plate_number);
       if (historyPoints.length === 0) continue;
@@ -1225,14 +1228,7 @@ export async function syncTrackingHistory(
 
         const locationName = null;
 
-        const gpsRecordNoResult = await pool.query<{ max_seq: string | null }>(
-          `SELECT MAX(CAST(SPLIT_PART(gps_record_no, '-', 3) AS INTEGER)) AS max_seq
-             FROM gps_trip_logs
-            WHERE gps_record_no LIKE $1`,
-          [`GPS-${new Date().getFullYear()}-%`],
-        );
-        const nextSeq = (parseInt(gpsRecordNoResult.rows[0]?.max_seq || '0', 10)) + 1;
-        const gpsRecordNo = `GPS-${new Date().getFullYear()}-${String(nextSeq).padStart(4, '0')}`;
+        const gpsRecordNo = await generateGpsRecordNo(dateStr);
 
         const insertData: GpsLogInsertData = {
           gpsRecordNo,
@@ -1958,14 +1954,7 @@ export async function syncSingleVehicleDate(
     log(`  anomaly_flag=${anomalyFlag}`);
     log(`  notes_remarks="${notesRemarks || ''}"`);
 
-    const gpsRecordNoResult = await pool.query<{ max_seq: string | null }>(
-      `SELECT MAX(CAST(SPLIT_PART(gps_record_no, '-', 3) AS INTEGER)) AS max_seq
-         FROM gps_trip_logs
-        WHERE gps_record_no LIKE $1`,
-      [`GPS-${new Date().getFullYear()}-%`],
-    );
-    const nextSeq = (parseInt(gpsRecordNoResult.rows[0]?.max_seq || '0', 10)) + 1;
-    const gpsRecordNo = `GPS-${new Date().getFullYear()}-${String(nextSeq).padStart(4, '0')}`;
+    const gpsRecordNo = await generateGpsRecordNo(dateStr);
 
     const insertData: GpsLogInsertData = {
       gpsRecordNo,
@@ -2031,6 +2020,12 @@ export async function syncSingleVehicleDate(
 
   log(`Sync complete for ${plateNumber} on ${dateStr}: ${tripsCreated} created, ${tripsFailed} failed`);
   return { tripsCreated, tripsFailed, matchedToNumber, debugLogs };
+}
+
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
 }
 
 function clampNumeric(value: number, max: number): number {

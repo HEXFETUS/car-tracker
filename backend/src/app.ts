@@ -36,23 +36,23 @@ app.get(['/api/health', '/health'], (_req, res) => {
 
 // Vehicle detail must be registered before the generic vehicles router
 // to avoid /:id matching /:id/detail
-app.use(['/api/vehicles', '/vehicles'], vehicleDetailRouter);
-app.use(['/api/vehicles', '/vehicles'], vehiclesRouter);
-app.use(['/api/drivers', '/drivers'], driversRouter);
+app.use(['/api/vehicles', '/vehicles'], requireRole, vehicleDetailRouter);
+app.use(['/api/vehicles', '/vehicles'], requireRole, vehiclesRouter);
+app.use(['/api/drivers', '/drivers'], requireRole, driversRouter);
 // Public travel orders — no auth required (for unauthenticated user-to requests)
 app.use(['/api/public/travel-orders', '/public/travel-orders'], publicTravelOrdersRouter);
 app.use(['/api/travel-orders', '/travel-orders'], requireRole, travelOrdersRouter);
-app.use(['/api/gps-logs', '/gps-logs'], gpsLogsRouter);
+app.use(['/api/gps-logs', '/gps-logs'], requireRole, gpsLogsRouter);
 app.use(['/api/cron', '/cron'], cronRouter);
-app.use(['/api/users', '/users'], usersRouter);
+app.use(['/api/users', '/users'], requireRole, usersRouter);
 app.use(['/api/auth', '/auth'], authRouter);
 app.use(['/api/settings', '/settings'], requireRole, settingsRouter);
 app.use(['/api/reports', '/reports'], requireRole, reportsRouter);
-app.use(['/api/maintenance', '/maintenance'], maintenanceRouter);
+app.use(['/api/maintenance', '/maintenance'], requireRole, maintenanceRouter);
 app.use(['/api/admin/sync-tracking-history', '/admin/sync-tracking-history'], adminSyncRouter);
-app.use(['/api/dashboard', '/dashboard'], dashboardRouter);
-app.use(['/api/notifications', '/notifications'], notificationsRouter);
-app.use(['/api/search', '/search'], searchRouter);
+app.use(['/api/dashboard', '/dashboard'], requireRole, dashboardRouter);
+app.use(['/api/notifications', '/notifications'], requireRole, notificationsRouter);
+app.use(['/api/search', '/search'], requireRole, searchRouter);
 
 app.all(['/api/debug/routes', '/debug/routes'], (_req, res) => {
   res.json({ ok: true, message: 'debug route reached' });

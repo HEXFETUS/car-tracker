@@ -41,6 +41,7 @@ export interface VehicleMonthlySummary {
   totalGpsDistanceKm: number;
   totalApprovedTOs: number;
   unauthorizedTrips: number;
+  linkedTrips: number;
   remarks: string;
 }
 
@@ -63,4 +64,37 @@ export interface YearlyKpi {
   varianceIssuesFlaggedYear: number;
   avgMonthlyDistanceKm: number;
   toApprovalRateYearPct: number;
+}
+
+/** A single month in the yearly report */
+export interface YearlyMonth {
+  month: number;
+  monthLabel: string;
+  totalGpsTrips: number;
+  totalGpsDistanceKm: number;
+  totalApprovedTOs: number;
+  unauthorizedTrips: number;
+  varianceIssues: number;
+  approvalRate: number;
+  avgTripDistanceKm: number;
+  vsPreviousPercent: number | null;
+}
+
+/** Summary returned alongside 12 monthly rows */
+export interface YearlySummary {
+  annualDistanceKm: number;
+  annualTrips: number;
+  approvedTOs: number;
+  unauthorizedTrips: number;
+  varianceIssues: number;
+  avgMonthlyDistanceKm: number;
+  avgTripsPerMonth: number;
+  avgTOsPerMonth: number;
+  approvalRate: number;
+}
+
+export interface YearlyReportResponse {
+  year: number;
+  months: YearlyMonth[];
+  summary: YearlySummary;
 }

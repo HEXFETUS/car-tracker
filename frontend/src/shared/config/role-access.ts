@@ -8,10 +8,10 @@ export type UserRole = AppUser['userType'];
  */
 export const NAV_ACCESS: Record<string, UserRole[]> = {
   '/': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
-  '/travel-orders': ['SUPERADMIN', 'ADMIN', 'HR', 'VIEWER'],
+  '/travel-orders': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
   '/travel-requests': ['SUPERADMIN', 'DISPATCHER', 'VIEWER'],
-  '/gps-logs': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
-  '/list': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
+  '/gps-logs': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
+  '/list': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
   '/reports': ['SUPERADMIN', 'ADMIN', 'VIEWER'],
   '/settings': ['SUPERADMIN'],
 };

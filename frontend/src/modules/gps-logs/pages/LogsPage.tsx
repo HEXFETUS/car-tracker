@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, Navigation, AlertTriangle, Eye, History, Calendar, X, Car, RefreshCw, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
+import { apiFetch } from '@/shared/api-client';
 import { cn } from '@/shared/lib/utils';
 import {
   tableContainerClass,
@@ -152,7 +153,7 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
       setSyncing(true);
       clearTimeout(syncTimerRef.current);
       setSyncHistoryResult(null);
-      const res = await fetch('/api/gps-logs/sync-from-telemetry', {
+      const res = await apiFetch('/api/gps-logs/sync-from-telemetry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });

@@ -5,6 +5,8 @@
 
 import { getPool } from '../db/db.js';
 import { createGpsAlert, getVehiclePlate } from './gpsAlertService.js';
+import { DEFAULT_ORIGIN, DEFAULT_BASE_RADIUS_METERS } from '../config/constants.js';
+import { getFleetConfig } from './fleetConfigService.js';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -203,8 +205,9 @@ const TO_DEPARTURE_TOLERANCE_MS = 10 * 60 * 1000; // ±10 minutes default
 
 /**
  * Configurable distance threshold for coordinate-based matching.
+ * Uses FLEET_CONFIG.trip.coordMatchThresholdM as the single source of truth.
  */
-export const TO_COORD_MATCH_THRESHOLD_M = 200;
+export const TO_COORD_MATCH_THRESHOLD_M = getFleetConfig().trip.coordMatchThresholdM;
 
 /**
  * Safe timestamp parser: accepts string, Date, number, or null/undefined.
@@ -243,7 +246,7 @@ export function parseTimestampSafe(ts: unknown, label = "timestamp"): number | n
   }
 
   // Date object from DB driver — use directly, do not parse again
-  if (typeof ts === 'object' && ts instanceof Date && ts !== null) {
+  if (ts instanceof Date) {
     const ms = ts.getTime();
     return Number.isNaN(ms) ? null : ms;
   }
@@ -441,7 +444,8 @@ export function haversineDistance(coord1: string | null, coord2: string | null):
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const clampedA = Math.min(1, Math.max(0, a));
+  const c = 2 * Math.atan2(Math.sqrt(clampedA), Math.sqrt(1 - clampedA));
   return R * c;
 }
 
@@ -1013,6 +1017,7 @@ interface TelemetryGroup {
 }
 
 type TelemetryRow = {
+  id?: string | null;
   vehicle_id: string | null;
   plate_number: string | null;
   event_type: string | null;
@@ -1022,21 +1027,38 @@ type TelemetryRow = {
   location_name: string | null;
   recorded_at: string | Date | null;
   active_trip_id: string | null;
+  active_driver_id?: string | null;
+  driver_id?: string | null;
+  active_to_status?: string | null;
+  active_to_number?: string | null;
 };
 
-type TripCandidate = {
-  ignitionOn: TelemetryRow;
-  activeTripId: string | null;
-  locationUpdates: TelemetryRow[];
-  movingRows: TelemetryRow[];
-  maxSpeedKph: number;
+type GpsTripStatus = 'EN ROUTE' | 'ARRIVED' | 'COMPLETED';
+
+type TelemetryTripLogRow = {
+  id: string;
+  vehicle_id: string;
+  driver_id: string | null;
+  active_trip_id: string | null;
+  trip_date: string;
+  origin_gps_start_point: string | null;
+  destination_gps_end_point: string | null;
+  coordinates_origin: string | null;
+  coordinates_destination: string | null;
+  departure_time_gps: string | Date | null;
+  arrival_time_gps: string | Date | null;
+  trip_status_gps: string | null;
+  trip_type: 'OUTBOUND' | 'RETURN';
+  parent_trip_id: string | null;
+  travel_order_id: string | null;
+  to_status_auto: string | null;
+  pending_return_detection: boolean | null;
+  motion_started_at: string | Date | null;
 };
 
-const HOME_BASE_RADIUS_M = 100;
-const HOME_BASE_COORDINATES = [
-  { label: 'Trade St base', coordinates: '8.455012,124.623291' },
-  { label: 'Granvia St base', coordinates: '8.454818,124.62394' },
-] as const;
+function normalizeStopLocationName(value: string | null | undefined): string {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').replace(/,+$/g, '').trim().toLowerCase();
+}
 
 function normalizeTelemetryEvent(eventType: string | null | undefined): string {
   return String(eventType ?? '').trim().toUpperCase().replace(/\s+ALERT$/, '').replace(/\s+/g, '_');
@@ -1083,14 +1105,20 @@ async function findExistingTelemetryTripLog(params: {
   departureTimeGps: string;
   arrivalTimeGps: string | null;
   activeTripId: string | null;
+  tripType: 'OUTBOUND' | 'RETURN';
 }): Promise<{ id: string } | null> {
   const pool = getPool();
 
-  // Primary upsert key: active_trip_id (unique per trip when not null)
+  // Primary upsert key: one OUTBOUND and one RETURN are allowed per active trip.
   if (params.activeTripId) {
     const existing = await pool.query<{ id: string }>(
-      `SELECT id FROM gps_trip_logs WHERE active_trip_id = $1 LIMIT 1`,
-      [params.activeTripId],
+      `SELECT id
+         FROM gps_trip_logs
+        WHERE vehicle_id = $1
+          AND active_trip_id = $2
+          AND trip_type = $3
+        LIMIT 1`,
+      [params.vehicleId, params.activeTripId, params.tripType],
     );
     if (existing.rows[0]) return existing.rows[0];
   }
@@ -1106,9 +1134,10 @@ async function findExistingTelemetryTripLog(params: {
           AND departure_time_gps IS NOT DISTINCT FROM $3::timestamptz
           AND arrival_time_gps IS NOT DISTINCT FROM $4::timestamptz
           AND active_trip_id IS NULL
+          AND trip_type = $5
         ORDER BY created_at DESC
         LIMIT 1`,
-      [params.vehicleId, params.tripDate, params.departureTimeGps, params.arrivalTimeGps],
+      [params.vehicleId, params.tripDate, params.departureTimeGps, params.arrivalTimeGps, params.tripType],
     );
     if (existing.rows[0]) return existing.rows[0];
   }
@@ -1181,6 +1210,11 @@ async function upsertTelemetryTripLog(params: {
   anomalyFlag: boolean;
   notesRemarks: string | null;
   tripType: 'OUTBOUND' | 'RETURN';
+  parentTripId?: string | null;
+  destinationVerified?: boolean;
+  pendingReturnDetection?: boolean;
+  motionStartedAt?: string | null;
+  returnDetectedAt?: string | null;
 }): Promise<{ status: 'created' | 'updated'; id: string }> {
   const pool = getPool();
   const existingLog = await findExistingTelemetryTripLog(params);
@@ -1205,7 +1239,11 @@ async function upsertTelemetryTripLog(params: {
               notes_remarks = $16,
               active_trip_id = COALESCE($17, active_trip_id),
               trip_type = $18,
-              destination_verified = false
+              destination_verified = $19,
+              parent_trip_id = COALESCE($20, parent_trip_id),
+              pending_return_detection = $21,
+              motion_started_at = $22,
+              return_detected_at = COALESCE($23, return_detected_at)
         WHERE id = $1
         RETURNING id`,
       [
@@ -1227,6 +1265,11 @@ async function upsertTelemetryTripLog(params: {
         params.notesRemarks,
         params.activeTripId,
         params.tripType,
+        params.destinationVerified ?? false,
+        params.parentTripId ?? null,
+        params.pendingReturnDetection ?? false,
+        params.motionStartedAt ?? null,
+        params.returnDetectedAt ?? null,
       ],
     );
     if (params.tripType === 'RETURN') {
@@ -1245,8 +1288,9 @@ async function upsertTelemetryTripLog(params: {
         gps_distance_km, engine_hours, max_speed_kph,
         trip_status_gps, travel_order_id, to_status_auto,
         anomaly_flag, notes_remarks, active_trip_id, trip_type,
-        destination_verified, parent_trip_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+        destination_verified, parent_trip_id, pending_return_detection,
+        motion_started_at, return_detected_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
      RETURNING id`,
     [
       gpsRecordNo,
@@ -1270,8 +1314,11 @@ async function upsertTelemetryTripLog(params: {
       params.notesRemarks,
       params.activeTripId,
       params.tripType,
-      false,
-      null,
+      params.destinationVerified ?? false,
+      params.parentTripId ?? null,
+      params.pendingReturnDetection ?? false,
+      params.motionStartedAt ?? null,
+      params.returnDetectedAt ?? null,
     ],
   );
   if (params.tripType === 'RETURN') {
@@ -1285,9 +1332,12 @@ async function determineTripType(params: {
 }): Promise<'OUTBOUND' | 'RETURN'> {
   if (!params.coordinatesOrigin) return 'OUTBOUND';
 
-  const startsNearHome = HOME_BASE_COORDINATES.some((base) => (
-    haversineDistance(base.coordinates, params.coordinatesOrigin) <= HOME_BASE_RADIUS_M
-  ));
+  // Check if the trip started near the default depot/base location.
+  // A trip originating at the base is classified as OUTBOUND (leaving the depot).
+  // A trip ending at the base is classified as RETURN (coming back to the depot).
+  const defaultCoord = `${DEFAULT_ORIGIN.latitude},${DEFAULT_ORIGIN.longitude}`;
+  const distanceFromBase = haversineDistance(defaultCoord, params.coordinatesOrigin);
+  const startsNearHome = distanceFromBase <= DEFAULT_BASE_RADIUS_METERS;
 
   return startsNearHome ? 'OUTBOUND' : 'RETURN';
 }
@@ -1359,136 +1409,345 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
 
   console.log(`[GPS TRIP] Telemetry rows=${rows.length} vehicle_streams=${rowsByVehicle.size}`);
 
-  const finalizeCandidate = async (candidate: TripCandidate, ignitionOff: TelemetryRow | null) => {
-    const vehicleId = candidate.ignitionOn.vehicle_id;
-    if (!vehicleId) {
-      skipped += 1;
-      return;
-    }
+  const fleetConfig = getFleetConfig();
+  const defaultOriginCoord = `${fleetConfig.base.latitude},${fleetConfig.base.longitude}`;
 
-    const departureTimeGps = timestampToIso(candidate.ignitionOn.recorded_at);
-    if (!departureTimeGps) {
-      skipped += 1;
-      return;
-    }
-
-    if (candidate.movingRows.length === 0) {
-      console.log(`[GPS TRIP] Skipped (no movement) vehicle=${vehicleId} active_trip_id=${candidate.activeTripId ?? 'null'} departure=${departureTimeGps}`);
-      skipped += 1;
-      return;
-    }
-
-    const lastLocationUpdate = candidate.locationUpdates[candidate.locationUpdates.length - 1];
-    const tripDate = tripDateFromTimestamp(candidate.ignitionOn.recorded_at);
-    const arrivalTimeGps = ignitionOff ? timestampToIso(lastLocationUpdate.recorded_at) : null;
-    const tripStatusGps = ignitionOff ? 'completed' : 'en-route';
-    const endTimeForEngine = timestampToIso(ignitionOff?.recorded_at ?? lastLocationUpdate.recorded_at);
-
-    const coordinatesOrigin = coordinatesFromTelemetry(candidate.ignitionOn);
-    const coordinatesDestination = coordinatesFromTelemetry(lastLocationUpdate);
-    const gpsDistanceKm = calculateRouteDistanceKm(candidate.locationUpdates);
-    const startMs = new Date(departureTimeGps).getTime();
-    const endMs = endTimeForEngine ? new Date(endTimeForEngine).getTime() : startMs;
-    const engineHours = Math.max(0, (endMs - startMs) / 3600000);
-
-    const travelOrder = await findTravelOrderForGpsTrip(
-      vehicleId,
-      tripDate,
-      departureTimeGps,
-      arrivalTimeGps ?? endTimeForEngine,
-      coordinatesDestination,
-    );
-    const travelOrderId = travelOrder?.id ?? null;
-    const noTravelOrder = !travelOrderId;
-    const notesRemarks = null;
-    const tripType = await determineTripType({
-      coordinatesOrigin,
-    });
-
-    const result = await upsertTelemetryTripLog({
-      vehicleId,
-      driverId: travelOrder?.driver_id ?? null,
-      activeTripId: candidate.activeTripId,
-      tripDate,
-      originGpsStartPoint: candidate.ignitionOn.location_name || '',
-      destinationGpsEndPoint: lastLocationUpdate.location_name || '',
-      coordinatesOrigin,
-      coordinatesDestination,
-      departureTimeGps,
-      arrivalTimeGps,
-      gpsDistanceKm,
-      engineHours,
-      maxSpeedKph: candidate.maxSpeedKph,
-      tripStatusGps,
-      travelOrderId,
-      toStatusAuto: noTravelOrder ? 'NO TO' : (travelOrder?.status ?? null),
-      anomalyFlag: noTravelOrder,
-      notesRemarks,
-      tripType,
-    });
-
+  const countResult = (result: { status: 'created' | 'updated' }) => {
     if (result.status === 'created') created += 1;
     else updated += 1;
+  };
 
-    console.log(`[GPS TRIP] Completed vehicle=${vehicleId} active_trip_id=${candidate.activeTripId ?? 'null'} departure=${departureTimeGps} arrival=${arrivalTimeGps ?? 'null'}`);
-    console.log(`[GPS TRIP] Trip Type ${tripType} active_trip_id=${candidate.activeTripId ?? 'null'}`);
-    console.log(`[GPS TRIP] GPS Log ${result.status === 'created' ? 'Inserted' : 'Updated'} active_trip_id=${candidate.activeTripId ?? 'null'} noTO=${noTravelOrder}`);
+  const getTripLog = async (
+    vehicleId: string,
+    activeTripId: string | null,
+    tripType: 'OUTBOUND' | 'RETURN',
+  ): Promise<TelemetryTripLogRow | null> => {
+    if (!activeTripId) return null;
+    const result = await pool.query<TelemetryTripLogRow>(
+      `SELECT id, vehicle_id, driver_id, active_trip_id, trip_date,
+              origin_gps_start_point, destination_gps_end_point,
+              coordinates_origin, coordinates_destination,
+              departure_time_gps, arrival_time_gps, trip_status_gps,
+              trip_type, parent_trip_id, travel_order_id, to_status_auto,
+              pending_return_detection, motion_started_at
+         FROM gps_trip_logs
+        WHERE vehicle_id = $1
+          AND active_trip_id = $2
+          AND trip_type = $3
+        LIMIT 1`,
+      [vehicleId, activeTripId, tripType],
+    );
+    return result.rows[0] ?? null;
+  };
+
+  const telemetryPoints = async (
+    vehicleId: string,
+    activeTripId: string | null,
+    fromTime: string | null,
+    toTime: string | null,
+  ): Promise<TelemetryRow[]> => {
+    if (!activeTripId) return [];
+    const result = await pool.query<TelemetryRow>(
+      `SELECT vehicle_id, plate_number, event_type, latitude, longitude,
+              speed_kmh, location_name, recorded_at, active_trip_id
+         FROM gps_telemetry
+        WHERE vehicle_id = $1
+          AND active_trip_id = $2
+          AND ($3::timestamptz IS NULL OR recorded_at >= $3::timestamptz)
+          AND ($4::timestamptz IS NULL OR recorded_at <= $4::timestamptz)
+          AND latitude IS NOT NULL
+          AND longitude IS NOT NULL
+        ORDER BY recorded_at ASC`,
+      [vehicleId, activeTripId, fromTime, toTime],
+    );
+    return result.rows;
+  };
+
+  const updateTripMetrics = async (
+    id: string,
+    vehicleId: string,
+    activeTripId: string | null,
+    fromTime: string | null,
+    toTime: string | null,
+  ) => {
+    const points = await telemetryPoints(vehicleId, activeTripId, fromTime, toTime);
+    const gpsDistanceKm = calculateRouteDistanceKm(points);
+    const maxSpeedKph = points.reduce((max, point) => Math.max(max, Number(point.speed_kmh) || 0), 0);
+    const startMs = fromTime ? new Date(fromTime).getTime() : NaN;
+    const endMs = (toTime ?? points[points.length - 1]?.recorded_at) ? new Date(String(toTime ?? points[points.length - 1]?.recorded_at)).getTime() : NaN;
+    const engineHours = Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, (endMs - startMs) / 3600000) : 0;
+    await pool.query(
+      `UPDATE gps_trip_logs
+          SET gps_distance_km = $2,
+              max_speed_kph = $3,
+              engine_hours = $4
+        WHERE id = $1`,
+      [id, gpsDistanceKm, maxSpeedKph, engineHours],
+    );
+  };
+
+  const insertTripStop = async (
+    tripLog: TelemetryTripLogRow,
+    row: TelemetryRow,
+  ): Promise<{ inserted: boolean; stopOrder: number | null }> => {
+    const locationName = String(row.location_name ?? '').trim();
+    if (!locationName) {
+      console.log('[gps-trip-stop] skipped missing location', { gpsTripLogId: tripLog.id });
+      return { inserted: false, stopOrder: null };
+    }
+
+    const latestStop = await pool.query<{ stop_order: number; location_name: string }>(
+      `SELECT stop_order, location_name
+         FROM gps_trip_log_stops
+        WHERE gps_trip_log_id = $1
+        ORDER BY stop_order DESC
+        LIMIT 1`,
+      [tripLog.id],
+    );
+    const latest = latestStop.rows[0];
+    if (latest && normalizeStopLocationName(latest.location_name) === normalizeStopLocationName(locationName)) {
+      console.log('[gps-trip-stop] skipped duplicate same location', { gpsTripLogId: tripLog.id, locationName });
+      return { inserted: false, stopOrder: latest.stop_order };
+    }
+
+    const nextStopOrder = (latest?.stop_order ?? 0) + 1;
+    const latitude = row.latitude == null ? null : Number(row.latitude);
+    const longitude = row.longitude == null ? null : Number(row.longitude);
+    const coordinates = coordinatesFromTelemetry(row);
+    const arrivedAt = timestampToIso(row.recorded_at);
+    if (!arrivedAt) {
+      console.log('[gps-trip-stop] skipped missing arrived_at', { gpsTripLogId: tripLog.id });
+      return { inserted: false, stopOrder: null };
+    }
+
+    await pool.query(
+      `INSERT INTO gps_trip_log_stops
+         (gps_trip_log_id, active_trip_id, vehicle_id, stop_order,
+          location_name, coordinates, latitude, longitude, arrived_at,
+          idle_minutes, telemetry_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (gps_trip_log_id, stop_order) DO NOTHING`,
+      [
+        tripLog.id,
+        tripLog.active_trip_id,
+        tripLog.vehicle_id,
+        nextStopOrder,
+        locationName,
+        coordinates,
+        Number.isFinite(latitude) ? latitude : null,
+        Number.isFinite(longitude) ? longitude : null,
+        arrivedAt,
+        null,
+        row.id ?? null,
+      ],
+    );
+
+    console.log(`[gps-trip-stop] inserted stop_order=${nextStopOrder}`, {
+      gpsTripLogId: tripLog.id,
+      activeTripId: tripLog.active_trip_id,
+      locationName,
+    });
+    return { inserted: true, stopOrder: nextStopOrder };
   };
 
   for (const [vehicleId, telemetryRows] of rowsByVehicle) {
-    let candidate: TripCandidate | null = null;
-
     for (const row of telemetryRows) {
       try {
         const eventType = normalizeTelemetryEvent(row.event_type);
-
-        if (eventType === 'IGNITION_ON') {
-          if (candidate) {
-            console.log(
-              `[GPS TRIP] Started vehicle=${vehicleId} active_trip_id=${row.active_trip_id ?? 'null'} previous_active_trip_id=${candidate.activeTripId ?? 'null'} previousDeparture=${timestampToIso(candidate.ignitionOn.recorded_at)}`,
-            );
-          }
-          candidate = {
-            ignitionOn: row,
-            activeTripId: row.active_trip_id ?? null,
-            locationUpdates: [],
-            movingRows: [],
-            maxSpeedKph: 0,
-          };
-          console.log(`[GPS TRIP] Started vehicle=${vehicleId} active_trip_id=${row.active_trip_id ?? 'null'} recorded_at=${timestampToIso(row.recorded_at)}`);
+        const activeTripId = row.active_trip_id ?? null;
+        const recordedAt = timestampToIso(row.recorded_at);
+        if (!activeTripId || !recordedAt) {
+          skipped += 1;
           continue;
         }
 
-        if (!candidate) continue;
+        if (eventType === 'IGNITION_ON') {
+          const result = await upsertTelemetryTripLog({
+            vehicleId,
+            driverId: row.active_driver_id ?? row.driver_id ?? null,
+            activeTripId,
+            tripDate: tripDateFromTimestamp(row.recorded_at),
+            originGpsStartPoint: row.location_name || '',
+            destinationGpsEndPoint: row.location_name || '',
+            coordinatesOrigin: coordinatesFromTelemetry(row),
+            coordinatesDestination: coordinatesFromTelemetry(row),
+            departureTimeGps: recordedAt,
+            arrivalTimeGps: null,
+            gpsDistanceKm: 0,
+            engineHours: 0,
+            maxSpeedKph: Number(row.speed_kmh) || 0,
+            tripStatusGps: 'EN ROUTE',
+            travelOrderId: null,
+            toStatusAuto: 'NO_APPROVED_TO',
+            anomalyFlag: true,
+            notesRemarks: null,
+            tripType: 'OUTBOUND',
+            destinationVerified: false,
+            pendingReturnDetection: false,
+            motionStartedAt: null,
+            returnDetectedAt: null,
+          });
+          countResult(result);
+          console.log('[gps-trip-log] opened outbound', { vehicleId, activeTripId, status: result.status });
+          continue;
+        }
 
-        const speed = Number(row.speed_kmh) || 0;
-        candidate.maxSpeedKph = Math.max(candidate.maxSpeedKph, speed);
+        const outbound = await getTripLog(vehicleId, activeTripId, 'OUTBOUND');
+        if (!outbound) {
+          skipped += 1;
+          continue;
+        }
 
-        if (eventType === 'LOCATION_UPDATE' || eventType === 'MOVING') {
-          candidate.locationUpdates.push(row);
+        if (eventType === 'LOCATION_UPDATE') {
+          const returnTrip = await getTripLog(vehicleId, activeTripId, 'RETURN');
+          const currentCoord = coordinatesFromTelemetry(row);
 
-          if (speed > 0) {
-            candidate.movingRows.push(row);
-            console.log(`[GPS TRIP] Movement detected vehicle=${vehicleId} active_trip_id=${candidate.activeTripId ?? 'null'} recorded_at=${timestampToIso(row.recorded_at)} speed=${speed}`);
+          if (outbound.pending_return_detection && outbound.motion_started_at && !returnTrip) {
+            const distanceAtArrival = haversineDistance(outbound.coordinates_destination, outbound.coordinates_origin);
+            const distanceNow = haversineDistance(currentCoord, outbound.coordinates_origin);
+            console.log(`[return-detection] distance_at_arrival=${Number.isFinite(distanceAtArrival) ? distanceAtArrival.toFixed(2) : 'Infinity'}`);
+            console.log(`[return-detection] distance_now=${Number.isFinite(distanceNow) ? distanceNow.toFixed(2) : 'Infinity'}`);
+
+            if (
+              Number.isFinite(distanceAtArrival) &&
+              Number.isFinite(distanceNow) &&
+              distanceNow < distanceAtArrival - fleetConfig.trip.returnDirectionMarginMeters
+            ) {
+              const result = await upsertTelemetryTripLog({
+                vehicleId,
+                driverId: outbound.driver_id,
+                activeTripId,
+                tripDate: tripDateFromTimestamp(outbound.motion_started_at),
+                originGpsStartPoint: outbound.destination_gps_end_point || '',
+                destinationGpsEndPoint: fleetConfig.base.address,
+                coordinatesOrigin: outbound.coordinates_destination,
+                coordinatesDestination: defaultOriginCoord,
+                departureTimeGps: timestampToIso(outbound.motion_started_at) ?? recordedAt,
+                arrivalTimeGps: recordedAt,
+                gpsDistanceKm: 0,
+                engineHours: 0,
+                maxSpeedKph: Number(row.speed_kmh) || 0,
+                tripStatusGps: 'EN ROUTE',
+                travelOrderId: null,
+                toStatusAuto: 'NO_APPROVED_TO',
+                anomalyFlag: true,
+                notesRemarks: null,
+                tripType: 'RETURN',
+                parentTripId: outbound.id,
+                destinationVerified: false,
+                pendingReturnDetection: false,
+                motionStartedAt: null,
+                returnDetectedAt: recordedAt,
+              });
+              countResult(result);
+              await pool.query(
+                `UPDATE gps_trip_logs
+                    SET pending_return_detection = FALSE
+                  WHERE id = $1`,
+                [outbound.id],
+              );
+              await updateTripMetrics(result.id, vehicleId, activeTripId, timestampToIso(outbound.motion_started_at), recordedAt);
+              console.log('[return-detection] action=RETURN', { vehicleId, activeTripId });
+              console.log('[gps-trip-log] opened return', { vehicleId, activeTripId, status: result.status });
+              continue;
+            }
+
+            await pool.query(
+              `UPDATE gps_trip_logs
+                  SET destination_gps_end_point = $2,
+                      coordinates_destination = $3,
+                      arrival_time_gps = $4,
+                      trip_status_gps = 'EN ROUTE',
+                      pending_return_detection = FALSE,
+                      motion_started_at = NULL
+                WHERE id = $1`,
+              [outbound.id, row.location_name || outbound.destination_gps_end_point || '', currentCoord, recordedAt],
+            );
+            await updateTripMetrics(outbound.id, vehicleId, activeTripId, timestampToIso(outbound.departure_time_gps), recordedAt);
+            console.log('[return-detection] action=OUTBOUND_CONTINUED', { vehicleId, activeTripId });
+            console.log('[return-detection] outbound continued, waiting for future stops', { vehicleId, activeTripId });
+            continue;
           }
+
+          const activeLog = returnTrip ?? outbound;
+          const startTime = timestampToIso(activeLog.departure_time_gps);
+          await pool.query(
+            `UPDATE gps_trip_logs
+                SET destination_gps_end_point = $2,
+                    coordinates_destination = $3,
+                    arrival_time_gps = $4,
+                    trip_status_gps = 'EN ROUTE'
+              WHERE id = $1`,
+            [activeLog.id, row.location_name || activeLog.destination_gps_end_point || '', currentCoord, recordedAt],
+          );
+          await updateTripMetrics(activeLog.id, vehicleId, activeTripId, startTime, recordedAt);
+          console.log('[gps-trip-log] updated en route', { vehicleId, activeTripId, tripType: activeLog.trip_type });
+          continue;
+        }
+
+        if (eventType === 'IDLING_TOO_LONG') {
+          const currentCoord = coordinatesFromTelemetry(row);
+          await insertTripStop(outbound, row);
+          await pool.query(
+            `UPDATE gps_trip_logs
+                SET destination_gps_end_point = $2,
+                    coordinates_destination = $3,
+                    arrival_time_gps = $4,
+                    trip_status_gps = 'ARRIVED',
+                    destination_verified = FALSE,
+                    to_status_auto = COALESCE(to_status_auto, 'NO_APPROVED_TO'),
+                    pending_return_detection = TRUE,
+                    motion_started_at = NULL
+              WHERE id = $1`,
+            [outbound.id, row.location_name || outbound.destination_gps_end_point || '', currentCoord, recordedAt],
+          );
+          await updateTripMetrics(outbound.id, vehicleId, activeTripId, timestampToIso(outbound.departure_time_gps), recordedAt);
+          console.log('[gps-trip-log] arrived at stop', { vehicleId, activeTripId });
+          continue;
+        }
+
+        if (eventType === 'MOTION_STARTED') {
+          await pool.query(
+            `UPDATE gps_trip_logs
+                SET pending_return_detection = TRUE,
+                    motion_started_at = $2
+              WHERE id = $1`,
+            [outbound.id, recordedAt],
+          );
+          console.log('[return-detection] pending after motion started', { vehicleId, activeTripId });
           continue;
         }
 
         if (eventType === 'IGNITION_OFF') {
-          await finalizeCandidate(candidate, row);
-          candidate = null;
+          const returnTrip = await getTripLog(vehicleId, activeTripId, 'RETURN');
+          const activeLog = returnTrip ?? outbound;
+          const currentCoord = coordinatesFromTelemetry(row) ?? activeLog.coordinates_destination;
+          const destinationVerified =
+            activeLog.trip_type === 'RETURN' &&
+            isCoordinateClose(currentCoord, defaultOriginCoord, fleetConfig.arrival.radiusMeters);
+          await pool.query(
+            `UPDATE gps_trip_logs
+                SET destination_gps_end_point = $2,
+                    coordinates_destination = $3,
+                    arrival_time_gps = $4,
+                    trip_status_gps = 'COMPLETED',
+                    destination_verified = $5,
+                    pending_return_detection = FALSE,
+                    motion_started_at = NULL
+              WHERE id = $1`,
+            [
+              activeLog.id,
+              row.location_name || activeLog.destination_gps_end_point || '',
+              currentCoord,
+              recordedAt,
+              destinationVerified,
+            ],
+          );
+          await updateTripMetrics(activeLog.id, vehicleId, activeTripId, timestampToIso(activeLog.departure_time_gps), recordedAt);
+          console.log('[gps-trip-log] completed', { vehicleId, activeTripId, tripType: activeLog.trip_type });
         }
       } catch (rowErr) {
         console.error('[syncGpsTripLogsFromTelemetry] Error processing telemetry row:', (rowErr as Error).message);
-        failed += 1;
-      }
-    }
-
-    if (candidate) {
-      try {
-        await finalizeCandidate(candidate, null);
-      } catch (openTripErr) {
-        console.error('[syncGpsTripLogsFromTelemetry] Error processing open trip:', (openTripErr as Error).message);
         failed += 1;
       }
     }

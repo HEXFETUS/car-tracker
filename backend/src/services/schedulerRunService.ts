@@ -18,6 +18,11 @@ export interface SchedulerRun {
   finished_at: string | null;
   status: 'running' | 'success' | 'error';
   cycles_completed: number;
+  vehicles_processed: number;
+  telemetry_saved: number;
+  telegram_sent: number;
+  telegram_failed: number;
+  skip_reason: string | null;
   error_message: string | null;
   created_at: string;
 }
@@ -53,15 +58,36 @@ export async function completeSchedulerRun(
   id: number,
   finishedAt: string,
   cyclesCompleted: number,
+  metrics: {
+    vehiclesProcessed: number;
+    telemetrySaved: number;
+    telegramSent: number;
+    telegramFailed: number;
+    skipReason?: string | null;
+  },
 ): Promise<void> {
   const pool = getPool();
   await pool.query(
     `UPDATE scheduler_runs
      SET status = 'success',
          finished_at = $1,
-         cycles_completed = $2
-     WHERE id = $3`,
-    [finishedAt, cyclesCompleted, id],
+         cycles_completed = $2,
+         vehicles_processed = $3,
+         telemetry_saved = $4,
+         telegram_sent = $5,
+         telegram_failed = $6,
+         skip_reason = $7
+     WHERE id = $8`,
+    [
+      finishedAt,
+      cyclesCompleted,
+      metrics.vehiclesProcessed,
+      metrics.telemetrySaved,
+      metrics.telegramSent,
+      metrics.telegramFailed,
+      metrics.skipReason ?? null,
+      id,
+    ],
   );
 }
 
@@ -72,15 +98,36 @@ export async function failSchedulerRun(
   id: number,
   finishedAt: string,
   errorMessage: string,
+  metrics?: {
+    vehiclesProcessed?: number;
+    telemetrySaved?: number;
+    telegramSent?: number;
+    telegramFailed?: number;
+    skipReason?: string | null;
+  },
 ): Promise<void> {
   const pool = getPool();
   await pool.query(
     `UPDATE scheduler_runs
      SET status = 'error',
          finished_at = $1,
-         error_message = $2
-     WHERE id = $3`,
-    [finishedAt, errorMessage, id],
+         error_message = $2,
+         vehicles_processed = COALESCE($3, vehicles_processed),
+         telemetry_saved = COALESCE($4, telemetry_saved),
+         telegram_sent = COALESCE($5, telegram_sent),
+         telegram_failed = COALESCE($6, telegram_failed),
+         skip_reason = COALESCE($7, skip_reason)
+     WHERE id = $8`,
+    [
+      finishedAt,
+      errorMessage,
+      metrics?.vehiclesProcessed ?? null,
+      metrics?.telemetrySaved ?? null,
+      metrics?.telegramSent ?? null,
+      metrics?.telegramFailed ?? null,
+      metrics?.skipReason ?? null,
+      id,
+    ],
   );
 }
 
@@ -90,7 +137,9 @@ export async function failSchedulerRun(
 export async function getRecentSchedulerRuns(limit = 10): Promise<SchedulerRun[]> {
   const pool = getPool();
   const result = await pool.query<SchedulerRun>(
-    `SELECT id, started_at, finished_at, status, cycles_completed, error_message, created_at
+    `SELECT id, started_at, finished_at, status, cycles_completed,
+            vehicles_processed, telemetry_saved, telegram_sent, telegram_failed, skip_reason,
+            error_message, created_at
      FROM scheduler_runs
      ORDER BY started_at DESC
      LIMIT $1`,
@@ -108,7 +157,9 @@ export async function getSchedulerRunSummary(): Promise<SchedulerRunSummary> {
 
   // Get the latest run
   const latestResult = await pool.query<SchedulerRun>(
-    `SELECT id, started_at, finished_at, status, cycles_completed, error_message, created_at
+    `SELECT id, started_at, finished_at, status, cycles_completed,
+            vehicles_processed, telemetry_saved, telegram_sent, telegram_failed, skip_reason,
+            error_message, created_at
      FROM scheduler_runs
      ORDER BY started_at DESC
      LIMIT 1`,

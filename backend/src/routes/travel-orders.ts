@@ -1,10 +1,10 @@
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
+import { DEFAULT_ORIGIN_ADDRESS, DEFAULT_ORIGIN_LATLONG } from '../config/constants.js';
 
 const router: ExpressRouter = express.Router();
 
-/** Maps actual DB columns to API response shape. */
 interface TravelOrderRow {
   id: string;
   to_number: string;
@@ -18,24 +18,36 @@ interface TravelOrderRow {
   created_at: string;
   updated_at: string;
   origin_location: string | null;
-  // New columns from migration 006 (may not exist yet on older DBs)
   department?: string | null;
   traveler_name?: string | null;
   request_vehicle?: boolean;
   request_driver?: boolean;
   notes?: string | null;
-  // Migration 013: who approved/rejected
   approved_by?: string | null;
-  // Migration 016: lat/long coordinates
   lat_long_origin?: string | null;
   lat_long_destination?: string | null;
-  // Joined columns
+  location_name?: string | null;
   plate_number?: string;
   driver_name?: string;
   approver_name?: string | null;
 }
 
-/** API response shape sent to the frontend. */
+interface DestinationRow {
+  id: string;
+  travel_order_id: string;
+  stop_order: number;
+  location_name: string;
+  address: string | null;
+  lat_long: string | null;
+  notes: string | null;
+  estimated_arrival: string | null;
+  status: string;
+  arrived_at: string | null;
+  arrival_distance_meters: number | null;
+  gps_trip_log_id: string | null;
+  created_at: string;
+}
+
 interface TravelOrderResponse {
   id: string;
   toNumber: string;
@@ -62,475 +74,49 @@ interface TravelOrderResponse {
   updatedAt: string;
   latLongOrigin?: string | null;
   latLongDestination?: string | null;
+  locationName?: string | null;
+  destinations: DestinationResponse[];
 }
 
-// GET /api/travel-orders/pending — Fetch PENDING orders where vehicle_id AND driver_id are NULL
-router.get('/pending', async (_req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      WHERE to_.status = 'PENDING'
-        AND to_.vehicle_id IS NULL
-        AND to_.driver_id IS NULL
-      ORDER BY to_.created_at DESC
-    `);
-    const data = result.rows.map(mapRow);
-    res.json({ success: true, data, message: 'Pending travel orders retrieved successfully' });
-  } catch (error) {
-    console.error('GET /api/travel-orders/pending error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
+interface DestinationResponse {
+  id: string;
+  stopOrder: number;
+  locationName: string;
+  address: string | null;
+  latLong: string | null;
+  notes: string | null;
+  estimatedArrival: string | null;
+  status: string;
+  arrivedAt: string | null;
+  arrivalDistanceMeters: number | null;
+  gpsTripLogId: string | null;
+}
 
-// GET /api/travel-orders/approved — Fetch APPROVED orders
-router.get('/approved', async (_req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      WHERE to_.status = 'APPROVED'
-      ORDER BY to_.created_at DESC
-    `);
-    const data = result.rows.map(mapRow);
-    res.json({ success: true, data, message: 'Approved travel orders retrieved successfully' });
-  } catch (error) {
-    console.error('GET /api/travel-orders/approved error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
+async function fetchDestinations(travelOrderId: string): Promise<DestinationResponse[]> {
+  const pool = getPool();
+  const result = await pool.query<DestinationRow>(
+    `SELECT * FROM travel_order_destinations
+     WHERE travel_order_id = $1
+     ORDER BY stop_order ASC`,
+    [travelOrderId],
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    stopOrder: row.stop_order,
+    locationName: row.location_name,
+    address: row.address,
+    latLong: row.lat_long,
+    notes: row.notes,
+    estimatedArrival: row.estimated_arrival,
+    status: row.status,
+    arrivedAt: row.arrived_at,
+    arrivalDistanceMeters: row.arrival_distance_meters,
+    gpsTripLogId: row.gps_trip_log_id,
+  }));
+}
 
-// GET /api/travel-orders/for-approval — Fetch FOR_APPROVAL orders where vehicle_id AND driver_id are populated
-router.get('/for-approval', async (_req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      WHERE to_.status = 'FOR_APPROVAL'
-        AND to_.vehicle_id IS NOT NULL
-        AND to_.driver_id IS NOT NULL
-      ORDER BY to_.created_at DESC
-    `);
-    const data = result.rows.map(mapRow);
-    res.json({ success: true, data, message: 'For-approval travel orders retrieved successfully' });
-  } catch (error) {
-    console.error('GET /api/travel-orders/for-approval error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// GET /api/travel-orders/cancelled — Fetch CANCELLED orders
-router.get('/cancelled', async (_req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      WHERE to_.status = 'CANCELLED'
-      ORDER BY to_.created_at DESC
-    `);
-    const data = result.rows.map(mapRow);
-    res.json({ success: true, data, message: 'Cancelled travel orders retrieved successfully' });
-  } catch (error) {
-    console.error('GET /api/travel-orders/cancelled error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// GET /api/travel-orders/for-request — Fetch FOR_REQUEST orders
-router.get('/for-request', async (_req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      WHERE to_.status = 'FOR_REQUEST'
-      ORDER BY to_.created_at DESC
-    `);
-    const data = result.rows.map(mapRow);
-    res.json({ success: true, data, message: 'For-request travel orders retrieved successfully' });
-  } catch (error) {
-    console.error('GET /api/travel-orders/for-request error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// GET /api/travel-orders/scheduled — Fetch all scheduled (FOR_APPROVAL, APPROVED, ACTIVE) orders grouped by date
-router.get('/scheduled', async (_req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      WHERE to_.status IN ('FOR_APPROVAL','APPROVED','ACTIVE')
-        AND to_.scheduled_departure IS NOT NULL
-      ORDER BY to_.scheduled_departure ASC
-    `);
-    const data = result.rows.map(mapRow);
-    res.json({ success: true, data, message: 'Scheduled travel orders retrieved successfully' });
-  } catch (error) {
-    console.error('GET /api/travel-orders/scheduled error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// PATCH /api/travel-orders/:id/assign — Assign a vehicle and driver to a travel order
-router.patch('/:id/assign', async (req: Request, res: Response) => {
-  const { vehicle_id, driver_id } = req.body;
-
-  if (!vehicle_id || !driver_id) {
-    res.status(400).json({
-      success: false,
-      data: null,
-      error: 'Both vehicle_id and driver_id are required',
-    });
-    return;
-  }
-
-  try {
-    const pool = getPool();
-
-    // Validate that the vehicle exists and has one of the allowed tracking plates
-    const VALID_PLATES = ['KAR6444', 'KAR6412', 'KAR6558'];
-    const vehicleResult = await pool.query(
-      'SELECT id, plate_number FROM vehicles WHERE id = $1',
-      [vehicle_id],
-    );
-
-    if (vehicleResult.rows.length === 0) {
-      res.status(404).json({
-        success: false,
-        data: null,
-        error: 'Vehicle not found',
-      });
-      return;
-    }
-
-    const vehicle = vehicleResult.rows[0];
-    if (!VALID_PLATES.includes(vehicle.plate_number)) {
-      res.status(400).json({
-        success: false,
-        data: null,
-        error: `Vehicle plate "${vehicle.plate_number}" is not a valid tracking plate. Allowed plates: ${VALID_PLATES.join(', ')}`,
-      });
-      return;
-    }
-
-    // Validate that the driver exists
-    const driverResult = await pool.query(
-      'SELECT id FROM drivers WHERE id = $1',
-      [driver_id],
-    );
-
-    if (driverResult.rows.length === 0) {
-      res.status(404).json({
-        success: false,
-        data: null,
-        error: 'Driver not found',
-      });
-      return;
-    }
-
-    // Update the travel order with the assigned vehicle and driver,
-    // and automatically transition status to FOR_APPROVAL
-    const updateResult = await pool.query<TravelOrderRow>(
-      `UPDATE travel_orders
-       SET vehicle_id = $1, driver_id = $2, status = 'FOR_APPROVAL', updated_at = NOW()
-       WHERE id = $3
-       RETURNING *`,
-      [vehicle_id, driver_id, req.params.id],
-    );
-
-    if (updateResult.rows.length === 0) {
-      res.status(404).json({
-        success: false,
-        data: null,
-        error: 'Travel order not found',
-      });
-      return;
-    }
-
-    // Fetch the updated row with joined vehicle & driver info
-    const fullResult = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      WHERE to_.id = $1
-    `, [req.params.id]);
-
-    res.json({
-      success: true,
-      data: mapRow(fullResult.rows[0]),
-      message: 'Travel order assigned successfully',
-    });
-  } catch (error) {
-    console.error('PATCH /api/travel-orders/:id/assign error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// GET /api/travel-orders — List all with left-joined vehicle & driver
-router.get('/', async (_req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      ORDER BY to_.created_at DESC
-    `);
-    const data = result.rows.map(mapRow);
-    res.json({ success: true, data, message: 'Travel orders retrieved successfully' });
-  } catch (error) {
-    console.error('GET /api/travel-orders error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// GET /api/travel-orders/next-number — Get the next available TO number for the current year
-router.get('/next-number', async (_req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const year = new Date().getFullYear();
-    // Find the highest sequence number for TO numbers in the current year
-    const result = await pool.query<{ max_seq: number | null }>(
-      `SELECT MAX(CAST(SPLIT_PART(to_number, '-', 3) AS INTEGER)) AS max_seq
-       FROM travel_orders
-       WHERE to_number LIKE $1`,
-      [`TO-${year}-%`],
-    );
-    const nextSeq = (result.rows[0]?.max_seq ?? 0) + 1;
-    res.json({ success: true, data: nextSeq, message: 'Next TO number retrieved' });
-  } catch (error) {
-    console.error('GET /api/travel-orders/next-number error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// GET /api/travel-orders/:id
-router.get('/:id', async (req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query<TravelOrderRow>(`
-      SELECT
-        to_.*,
-        v.plate_number,
-        d.full_name AS driver_name,
-        u.name AS approver_name
-      FROM travel_orders to_
-      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
-      LEFT JOIN drivers  d ON d.id = to_.driver_id
-      LEFT JOIN users   u ON u.id = to_.approved_by
-      WHERE to_.id = $1
-    `, [req.params.id]);
-    if (result.rows.length === 0) {
-      res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
-      return;
-    }
-    res.json({ success: true, data: mapRow(result.rows[0]) });
-  } catch (error) {
-    console.error('GET /api/travel-orders/:id error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// POST /api/travel-orders — Create a new travel order
-router.post('/', async (req: Request, res: Response) => {
-  const {
-    vehicleId, driverId, originLocation, destinationLocation,
-    scheduledDepartureAt, scheduledArrivalAt, purpose, notes,
-    department, travelerName, requestVehicle, requestDriver,
-    toNumber,
-    latLongOrigin, latLongDestination,
-  } = req.body;
-
-  if (!destinationLocation) {
-    res.status(400).json({
-      success: false,
-      data: null,
-      error: 'Destination is required',
-    });
-    return;
-  }
-
-  if (!toNumber) {
-    res.status(400).json({
-      success: false,
-      data: null,
-      error: 'TO Number is required',
-    });
-    return;
-  }
-
-  try {
-    const pool = getPool();
-    const scheduledDepartureValue = scheduledDepartureAt;
-    const scheduledArrivalValue = scheduledArrivalAt || null;
-    console.log('[TO Create] Backend received scheduled_departure:', scheduledDepartureValue);
-    console.log('[TO Create] Backend received scheduled_arrival:', scheduledArrivalValue);
-    const result = await pool.query<TravelOrderRow>(`
-      INSERT INTO travel_orders
-        (to_number, vehicle_id, driver_id, origin_location, destination_target,
-         scheduled_departure, scheduled_arrival, purpose_of_travel, notes,
-         department, traveler_name, request_vehicle, request_driver,
-         lat_long_origin, lat_long_destination)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-      RETURNING *
-    `, [
-      toNumber,
-      vehicleId || null, driverId || null, originLocation || '', destinationLocation,
-      scheduledDepartureValue, scheduledArrivalValue,
-      purpose || '', notes || '',
-      department || '', travelerName || '',
-      requestVehicle ?? false, requestDriver ?? false,
-      latLongOrigin || null, latLongDestination || null,
-    ]);
-    console.log('[TO Create] DB returned scheduled_departure:', result.rows[0].scheduled_departure);
-    console.log('[TO Create] DB returned scheduled_arrival:', result.rows[0].scheduled_arrival);
-
-    res.status(201).json({
-      success: true,
-      data: mapRow(result.rows[0]),
-      message: 'Travel order created successfully',
-    });
-  } catch (error) {
-    console.error('POST /api/travel-orders error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// DELETE /api/travel-orders/:id
-router.delete('/:id', async (req: Request, res: Response) => {
-  try {
-    const pool = getPool();
-    const result = await pool.query(
-      'DELETE FROM travel_orders WHERE id = $1 RETURNING id',
-      [req.params.id],
-    );
-    if (result.rows.length === 0) {
-      res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
-      return;
-    }
-    res.json({ success: true, data: null, message: 'Travel order deleted successfully' });
-  } catch (error) {
-    console.error('DELETE /api/travel-orders/:id error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-// PATCH /api/travel-orders/:id — Update a travel order (e.g. status, fields)
-router.patch('/:id', async (req: Request, res: Response) => {
-  // Map camelCase API field names to snake_case DB column names
-  const fieldMap: Record<string, string> = {
-    status: 'status',
-    approvedBy: 'approved_by',
-    notes: 'notes',
-    originLocation: 'origin_location',
-    destinationLocation: 'destination_target',
-    scheduledDepartureAt: 'scheduled_departure',
-    scheduledArrivalAt: 'scheduled_arrival',
-    purpose: 'purpose_of_travel',
-    department: 'department',
-    travelerName: 'traveler_name',
-    requestVehicle: 'request_vehicle',
-    requestDriver: 'request_driver',
-    latLongOrigin: 'lat_long_origin',
-    latLongDestination: 'lat_long_destination',
-  };
-  const allowedFields = Object.keys(fieldMap);
-  const updates: string[] = [];
-  const values: unknown[] = [];
-  let idx = 1;
-
-  for (const field of allowedFields) {
-    if (req.body[field] !== undefined) {
-      updates.push(`${fieldMap[field]} = $${idx++}`);
-      values.push(req.body[field]);
-    }
-  }
-
-  if (updates.length === 0) {
-    res.status(400).json({ success: false, data: null, error: 'No valid fields to update' });
-    return;
-  }
-
-  try {
-    const pool = getPool();
-    values.push(req.params.id);
-    const result = await pool.query<TravelOrderRow>(
-      `UPDATE travel_orders SET ${updates.join(', ')} WHERE id = $${idx}
-       RETURNING *`,
-      values,
-    );
-    if (result.rows.length === 0) {
-      res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
-      return;
-    }
-    res.json({ success: true, data: mapRow(result.rows[0]), message: 'Travel order updated' });
-  } catch (error) {
-    console.error('PATCH /api/travel-orders/:id error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
-  }
-});
-
-function mapRow(row: TravelOrderRow): TravelOrderResponse {
+async function mapRow(row: TravelOrderRow): Promise<TravelOrderResponse> {
+  const destinations = await fetchDestinations(row.id);
   return {
     id: row.id,
     toNumber: row.to_number,
@@ -557,7 +143,600 @@ function mapRow(row: TravelOrderRow): TravelOrderResponse {
     updatedAt: row.updated_at,
     latLongOrigin: row.lat_long_origin ?? null,
     latLongDestination: row.lat_long_destination ?? null,
+    locationName: row.location_name ?? null,
+    destinations,
   };
 }
+
+router.get('/pending', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'PENDING'
+        AND to_.vehicle_id IS NULL
+        AND to_.driver_id IS NULL
+      ORDER BY to_.created_at DESC
+    `);
+    const data = await Promise.all(result.rows.map(mapRow));
+    res.json({ success: true, data, message: 'Pending travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/pending error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/approved', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'APPROVED'
+      ORDER BY to_.created_at DESC
+    `);
+    const data = await Promise.all(result.rows.map(mapRow));
+    res.json({ success: true, data, message: 'Approved travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/approved error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/for-approval', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'FOR_APPROVAL'
+        AND to_.vehicle_id IS NOT NULL
+        AND to_.driver_id IS NOT NULL
+      ORDER BY to_.created_at DESC
+    `);
+    const data = await Promise.all(result.rows.map(mapRow));
+    res.json({ success: true, data, message: 'For-approval travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/for-approval error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/cancelled', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'CANCELLED'
+      ORDER BY to_.created_at DESC
+    `);
+    const data = await Promise.all(result.rows.map(mapRow));
+    res.json({ success: true, data, message: 'Cancelled travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/cancelled error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/for-request', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status = 'FOR_REQUEST'
+      ORDER BY to_.created_at DESC
+    `);
+    const data = await Promise.all(result.rows.map(mapRow));
+    res.json({ success: true, data, message: 'For-request travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/for-request error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/scheduled', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.status IN ('FOR_APPROVAL','APPROVED','ACTIVE')
+        AND to_.scheduled_departure IS NOT NULL
+      ORDER BY to_.scheduled_departure ASC
+    `);
+    const data = await Promise.all(result.rows.map(mapRow));
+    res.json({ success: true, data, message: 'Scheduled travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/scheduled error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/:id/destinations', async (req: Request, res: Response) => {
+  try {
+    const data = await fetchDestinations(req.params.id);
+    res.json({ success: true, data, message: 'Destinations retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/:id/destinations error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.patch('/:id/assign', async (req: Request, res: Response) => {
+  const { vehicle_id, driver_id } = req.body;
+
+  if (!vehicle_id || !driver_id) {
+    res.status(400).json({
+      success: false,
+      data: null,
+      error: 'Both vehicle_id and driver_id are required',
+    });
+    return;
+  }
+
+  try {
+    const pool = getPool();
+    const VALID_PLATES = ['KAR6444', 'KAR6412', 'KAR6558'];
+    const vehicleResult = await pool.query(
+      'SELECT id, plate_number FROM vehicles WHERE id = $1',
+      [vehicle_id],
+    );
+
+    if (vehicleResult.rows.length === 0) {
+      res.status(404).json({ success: false, data: null, error: 'Vehicle not found' });
+      return;
+    }
+
+    const vehicle = vehicleResult.rows[0];
+    if (!VALID_PLATES.includes(vehicle.plate_number)) {
+      res.status(400).json({
+        success: false,
+        data: null,
+        error: `Vehicle plate "${vehicle.plate_number}" is not a valid tracking plate. Allowed plates: ${VALID_PLATES.join(', ')}`,
+      });
+      return;
+    }
+
+    const driverResult = await pool.query(
+      'SELECT id FROM drivers WHERE id = $1',
+      [driver_id],
+    );
+
+    if (driverResult.rows.length === 0) {
+      res.status(404).json({ success: false, data: null, error: 'Driver not found' });
+      return;
+    }
+
+    const updateResult = await pool.query<TravelOrderRow>(
+      `UPDATE travel_orders
+       SET vehicle_id = $1, driver_id = $2, status = 'FOR_APPROVAL', updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [vehicle_id, driver_id, req.params.id],
+    );
+
+    if (updateResult.rows.length === 0) {
+      res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
+      return;
+    }
+
+    const fullResult = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.id = $1
+    `, [req.params.id]);
+
+    res.json({
+      success: true,
+      data: await mapRow(fullResult.rows[0]),
+      message: 'Travel order assigned successfully',
+    });
+  } catch (error) {
+    console.error('PATCH /api/travel-orders/:id/assign error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      ORDER BY to_.created_at DESC
+    `);
+    const data = await Promise.all(result.rows.map(mapRow));
+    res.json({ success: true, data, message: 'Travel orders retrieved successfully' });
+  } catch (error) {
+    console.error('GET /api/travel-orders error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/next-number', async (_req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const year = new Date().getFullYear();
+    const result = await pool.query<{ max_seq: number | null }>(
+      `SELECT MAX(CAST(SPLIT_PART(to_number, '-', 3) AS INTEGER)) AS max_seq
+       FROM travel_orders
+       WHERE to_number LIKE $1`,
+      [`TO-${year}-%`],
+    );
+    const nextSeq = (result.rows[0]?.max_seq ?? 0) + 1;
+    res.json({ success: true, data: nextSeq, message: 'Next TO number retrieved' });
+  } catch (error) {
+    console.error('GET /api/travel-orders/next-number error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.get('/:id', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.id = $1
+    `, [req.params.id]);
+    if (result.rows.length === 0) {
+      res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
+      return;
+    }
+    const data = await mapRow(result.rows[0]);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('GET /api/travel-orders/:id error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.post('/', async (req: Request, res: Response) => {
+  const {
+    vehicleId, driverId, originLocation, destinationLocation,
+    scheduledDepartureAt, scheduledArrivalAt, purpose, notes,
+    department, travelerName, requestVehicle, requestDriver,
+    toNumber,
+    latLongOrigin, latLongDestination,
+    destinations,
+  } = req.body;
+
+  if (!destinationLocation && (!destinations || destinations.length === 0)) {
+    res.status(400).json({
+      success: false,
+      data: null,
+      error: 'At least one destination is required',
+    });
+    return;
+  }
+
+  if (!toNumber) {
+    res.status(400).json({
+      success: false,
+      data: null,
+      error: 'TO Number is required',
+    });
+    return;
+  }
+
+  try {
+    const pool = getPool();
+    const scheduledDepartureValue = scheduledDepartureAt;
+    const scheduledArrivalValue = scheduledArrivalAt || null;
+
+    const originNormalized = (originLocation || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const defaultNormalized = DEFAULT_ORIGIN_ADDRESS.replace(/\s+/g, ' ').trim().toLowerCase();
+    const isDefaultOrigin = !originLocation || originNormalized === defaultNormalized;
+
+    const resolvedOriginLocation = isDefaultOrigin ? DEFAULT_ORIGIN_ADDRESS : (originLocation || '');
+    const finalLatLongOrigin = isDefaultOrigin
+      ? DEFAULT_ORIGIN_LATLONG
+      : (latLongOrigin || null);
+
+    const destList = destinations && destinations.length > 0
+      ? destinations.map((d: any, i: number) => ({
+          locationName: d.locationName || d.location_name || '',
+          address: d.address || null,
+          latLong: d.latLong || d.lat_long || null,
+          notes: d.notes || null,
+          estimatedArrival: d.estimatedArrival || d.estimated_arrival || null,
+          stopOrder: d.stopOrder ?? d.stop_order ?? i + 1,
+        }))
+      : destinationLocation
+        ? [{ locationName: destinationLocation, address: null, latLong: latLongDestination || null, notes: null, estimatedArrival: null, stopOrder: 1 }]
+        : [];
+
+    const lastDest = destList[destList.length - 1];
+    const finalDestination = lastDest?.locationName || destinationLocation || '';
+    const finalLatLong = lastDest?.latLong || latLongDestination || null;
+
+    console.log('[TO Create] Backend received scheduled_departure:', scheduledDepartureValue);
+    console.log('[TO Create] Backend received scheduled_arrival:', scheduledArrivalValue);
+
+    const client = await pool.connect();
+    let createdRow: TravelOrderRow | undefined;
+    try {
+      await client.query('BEGIN');
+
+      const result = await client.query<TravelOrderRow>(`
+        INSERT INTO travel_orders
+          (to_number, vehicle_id, driver_id, origin_location, destination_target,
+           scheduled_departure, scheduled_arrival, purpose_of_travel, notes,
+           department, traveler_name, request_vehicle, request_driver,
+           lat_long_origin, lat_long_destination, location_name)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        RETURNING *
+      `, [
+        toNumber,
+        vehicleId || null, driverId || null, resolvedOriginLocation, finalDestination,
+        scheduledDepartureValue, scheduledArrivalValue,
+        purpose || '', notes || '',
+        department || '', travelerName || '',
+        requestVehicle ?? false, requestDriver ?? false,
+        finalLatLongOrigin, finalLatLong,
+        finalDestination,
+      ]);
+
+      createdRow = result.rows[0];
+      console.log('[TO Create] DB returned travelOrderId:', createdRow.id);
+
+      if (destList.length > 0) {
+        for (const dest of destList) {
+          await client.query(
+            `INSERT INTO travel_order_destinations
+               (travel_order_id, stop_order, location_name, address, lat_long, notes, estimated_arrival)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              createdRow.id,
+              dest.stopOrder,
+              dest.locationName,
+              dest.address,
+              dest.latLong,
+              dest.notes,
+              dest.estimatedArrival,
+            ],
+          );
+        }
+        console.log(`[TO Create] Inserted ${destList.length} destinations for travel order ${createdRow.id}`);
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    res.status(201).json({
+      success: true,
+      data: await mapRow(createdRow),
+      message: 'Travel order created successfully',
+    });
+  } catch (error) {
+    console.error('POST /api/travel-orders error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      'DELETE FROM travel_orders WHERE id = $1 RETURNING id',
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
+      return;
+    }
+    res.json({ success: true, data: null, message: 'Travel order deleted successfully' });
+  } catch (error) {
+    console.error('DELETE /api/travel-orders/:id error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
+
+router.patch('/:id', async (req: Request, res: Response) => {
+  const fieldMap: Record<string, string> = {
+    status: 'status',
+    approvedBy: 'approved_by',
+    notes: 'notes',
+    originLocation: 'origin_location',
+    destinationLocation: 'destination_target',
+    scheduledDepartureAt: 'scheduled_departure',
+    scheduledArrivalAt: 'scheduled_arrival',
+    purpose: 'purpose_of_travel',
+    department: 'department',
+    travelerName: 'traveler_name',
+    requestVehicle: 'request_vehicle',
+    requestDriver: 'request_driver',
+    latLongOrigin: 'lat_long_origin',
+    latLongDestination: 'lat_long_destination',
+    locationName: 'location_name',
+  };
+  const allowedFields = Object.keys(fieldMap);
+  const updates: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+
+  for (const field of allowedFields) {
+    if (req.body[field] !== undefined) {
+      if (field === 'originLocation') {
+        const originNormalized = (req.body[field] || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const defaultNormalized = DEFAULT_ORIGIN_ADDRESS.replace(/\s+/g, ' ').trim().toLowerCase();
+        const isDefaultOrigin = !req.body[field] || originNormalized === defaultNormalized;
+
+        if (isDefaultOrigin) {
+          updates.push(`${fieldMap[field]} = $${idx++}`);
+          values.push(DEFAULT_ORIGIN_ADDRESS);
+          updates.push(`lat_long_origin = $${idx++}`);
+          values.push(DEFAULT_ORIGIN_LATLONG);
+          continue;
+        }
+      }
+
+      updates.push(`${fieldMap[field]} = $${idx++}`);
+      values.push(req.body[field]);
+    }
+  }
+
+  if (updates.length === 0 && !req.body.destinations) {
+    res.status(400).json({ success: false, data: null, error: 'No valid fields to update' });
+    return;
+  }
+
+  try {
+    const pool = getPool();
+
+    if (updates.length > 0) {
+      values.push(req.params.id);
+    }
+
+    const client = await pool.connect();
+    let updatedRow: TravelOrderRow | undefined;
+    try {
+      await client.query('BEGIN');
+
+      if (updates.length > 0) {
+        const result = await client.query<TravelOrderRow>(
+          `UPDATE travel_orders SET ${updates.join(', ')} WHERE id = $${idx}
+           RETURNING *`,
+          values,
+        );
+        if (result.rows.length === 0) {
+          await client.query('ROLLBACK');
+          res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
+          return;
+        }
+        updatedRow = result.rows[0];
+      } else {
+        updatedRow = await pool.query<TravelOrderRow>(
+          `SELECT * FROM travel_orders WHERE id = $1`,
+          [req.params.id],
+        ).then(r => r.rows[0]);
+        if (!updatedRow) {
+          res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
+          return;
+        }
+      }
+
+      if (req.body.destinations && Array.isArray(req.body.destinations)) {
+        await client.query(
+          'DELETE FROM travel_order_destinations WHERE travel_order_id = $1',
+          [req.params.id],
+        );
+
+        for (const dest of req.body.destinations) {
+          await client.query(
+            `INSERT INTO travel_order_destinations
+               (travel_order_id, stop_order, location_name, address, lat_long, notes, estimated_arrival)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              req.params.id,
+              dest.stopOrder ?? dest.stop_order ?? 1,
+              dest.locationName || dest.location_name || '',
+              dest.address || null,
+              dest.latLong || dest.lat_long || null,
+              dest.notes || null,
+              dest.estimatedArrival || dest.estimated_arrival || null,
+            ],
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    const fullResult = await pool.query<TravelOrderRow>(`
+      SELECT
+        to_.*,
+        v.plate_number,
+        d.full_name AS driver_name,
+        u.name AS approver_name
+      FROM travel_orders to_
+      LEFT JOIN vehicles v ON v.id = to_.vehicle_id
+      LEFT JOIN drivers  d ON d.id = to_.driver_id
+      LEFT JOIN users   u ON u.id = to_.approved_by
+      WHERE to_.id = $1
+    `, [req.params.id]);
+
+    res.json({ success: true, data: await mapRow(fullResult.rows[0]), message: 'Travel order updated' });
+  } catch (error) {
+    console.error('PATCH /api/travel-orders/:id error:', (error as Error).message);
+    res.status(500).json({ success: false, data: null, error: 'Database error' });
+  }
+});
 
 export default router;

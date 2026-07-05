@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Upload, MapPin, User, Truck, FileText, Calendar, ChevronRight, ChevronLeft } from 'lucide-react';
+import { X, Upload, MapPin, User, Truck, FileText, Calendar, ChevronRight, ChevronLeft, Plus, Trash2, GripVertical } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { fetchNextToNumber } from '../api/travel-orders-api';
 import { PlaceSearchInput } from './PlaceSearchInput';
 import { PinpointMapModal } from './PinpointMapModal';
 import { useNotification } from '@/shared/context/NotificationContext';
-import type { TravelOrder } from '../types';
+import type { TravelOrder, TravelOrderDestination } from '../types';
+import { DEFAULT_ORIGIN_ADDRESS, DEFAULT_ORIGIN_LATLONG } from '../constants';
 
 interface TravelOrderFormProps {
   onSubmit: (order: TravelOrder) => void;
@@ -29,9 +30,15 @@ interface FormErrors {
   boundFrom?: string;
   boundTo?: string;
   purpose?: string;
+  destinations?: string;
 }
 
 type MapTarget = 'origin' | 'destination';
+interface MapState {
+  target: MapTarget;
+  destIndex?: number;
+  initialQuery: string;
+}
 
 function generateToNumber(seq: number): string {
   const year = new Date().getFullYear();
@@ -111,7 +118,7 @@ export function TravelOrderForm({
   onCancel,
   existingCount = 0,
   canEditDateIssued = false,
-  defaultOrigin = 'Trade Street, Zone 1, Pueblo de Oro, Balulang, Cagayan de Oro, Northern Mindanao, 9000, Philippines',
+  defaultOrigin = DEFAULT_ORIGIN_ADDRESS,
   submitLabel = 'Create Travel Order',
   cancelLabel = 'Cancel',
   fetchNextToNumberFn,
@@ -122,7 +129,6 @@ export function TravelOrderForm({
   const [departureDateTime, setDepartureDateTime] = useState('');
   const [returnDateTime, setReturnDateTime] = useState('');
   const [boundFrom, setBoundFrom] = useState(defaultOrigin);
-  const [boundTo, setBoundTo] = useState('');
   const [purpose, setPurpose] = useState('');
   const [requestVehicle, setRequestVehicle] = useState(false);
   const [requestDriver, setRequestDriver] = useState(false);
@@ -137,16 +143,19 @@ export function TravelOrderForm({
 
   // Lat/Lng state
   const [latLongOrigin, setLatLongOrigin] = useState<string | null>(null);
-  const [latLongDestination, setLatLongDestination] = useState<string | null>(null);
 
   // Track whether location was pinpointed via the map (hides "Show on Map" footer)
   const [originPinpointed, setOriginPinpointed] = useState(false);
-  const [destPinpointed, setDestPinpointed] = useState(false);
+
+  // Multiple destinations state
+  const [destinations, setDestinations] = useState<TravelOrderDestination[]>([
+    { stopOrder: 1, locationName: '', address: null, latLong: null, notes: null },
+  ]);
+  const [destPinpointed, setDestPinpointed] = useState<Record<number, boolean>>({});
 
   // Map modal state
   const [isMapOpen, setIsMapOpen] = useState(false);
-  const [mapTarget, setMapTarget] = useState<MapTarget>('origin');
-  const [mapInitialQuery, setMapInitialQuery] = useState('');
+  const [mapState, setMapState] = useState<MapState>({ target: 'origin', initialQuery: '' });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -162,7 +171,6 @@ export function TravelOrderForm({
     setDepartureDateTime('');
     setReturnDateTime('');
     setBoundFrom(defaultOrigin);
-    setBoundTo('');
     setPurpose('');
     setRequestVehicle(false);
     setRequestDriver(false);
@@ -172,9 +180,9 @@ export function TravelOrderForm({
     setErrors({});
     setDateIssued(new Date().toISOString().slice(0, 10));
     setLatLongOrigin(null);
-    setLatLongDestination(null);
     setOriginPinpointed(false);
-    setDestPinpointed(false);
+    setDestinations([{ stopOrder: 1, locationName: '', address: null, latLong: null, notes: null }]);
+    setDestPinpointed({});
     setCurrentStep(0);
 
     const fetcher = fetchNextToNumberFn ?? fetchNextToNumber;
@@ -192,8 +200,13 @@ export function TravelOrderForm({
     if (!department.trim()) errs.department = 'Department is required';
     if (!travelerName.trim()) errs.travelerName = 'Traveler name is required';
     if (!boundFrom.trim()) errs.boundFrom = 'Origin is required';
-    if (!boundTo.trim()) errs.boundTo = 'Destination is required';
     if (!purpose.trim()) errs.purpose = 'Purpose of travel is required';
+
+    // Validate at least one destination has a location name
+    const validDestinations = destinations.filter((d) => d.locationName.trim());
+    if (validDestinations.length === 0) {
+      errs.destinations = 'At least one destination is required';
+    }
 
     // Date validation
     if (!departureDateTime) {
@@ -236,6 +249,22 @@ export function TravelOrderForm({
   }, [departureDateTime, returnDateTime]);
 
   function buildOrder(): TravelOrder {
+    const validDestinations = destinations
+      .filter((d) => d.locationName.trim())
+      .map((d, i) => ({ ...d, stopOrder: i + 1 }));
+
+    const lastDest = validDestinations[validDestinations.length - 1];
+
+    // ── Default origin coordinates ──
+    // If the origin matches the default address (ignoring case/extra spaces),
+    // force the default coordinates even if the user didn't interact with the map.
+    const originNormalized = boundFrom.replace(/\s+/g, ' ').trim().toLowerCase();
+    const defaultNormalized = DEFAULT_ORIGIN_ADDRESS.replace(/\s+/g, ' ').trim().toLowerCase();
+    const isDefaultOrigin = !boundFrom || originNormalized === defaultNormalized;
+    const resolvedLatLongOrigin = isDefaultOrigin
+      ? DEFAULT_ORIGIN_LATLONG
+      : latLongOrigin;
+
     return {
       toNumber,
       dateIssued,
@@ -244,15 +273,16 @@ export function TravelOrderForm({
       departureDateTime,
       returnDateTime,
       boundFrom: boundFrom.trim(),
-      boundTo: boundTo.trim(),
+      boundTo: lastDest?.locationName || '',
       purpose: purpose.trim(),
       requestVehicle,
       requestDriver,
       remarks: remarks.trim() || undefined,
       imageAttachment: imageData,
       status: 'pending',
-      latLongOrigin,
-      latLongDestination,
+      latLongOrigin: resolvedLatLongOrigin,
+      latLongDestination: lastDest?.latLong || null,
+      destinations: validDestinations,
     };
   }
 
@@ -267,9 +297,10 @@ export function TravelOrderForm({
     }
 
     const order = buildOrder();
+    const destNames = order.destinations?.map((d) => d.locationName).join(' → ') || order.boundTo;
     const confirmed = await confirm({
       title: 'Save Travel Order?',
-      message: `You are about to create a new travel order from "${order.boundFrom}" to "${order.boundTo}" for ${order.travelerName}. This action can be modified later.`,
+      message: `You are about to create a new travel order from "${order.boundFrom}" to "${destNames}" for ${order.travelerName}. This action can be modified later.`,
       type: 'info',
     });
     if (!confirmed) return;
@@ -282,7 +313,7 @@ export function TravelOrderForm({
     const errs = validate();
     switch (stepIndex) {
       case 0: // Trip Info
-        return !!(errs.boundFrom || errs.boundTo || errs.departureDateTime || errs.returnDateTime || errs.purpose);
+        return !!(errs.boundFrom || errs.destinations || errs.departureDateTime || errs.returnDateTime || errs.purpose);
       case 1: // Personnel
         return !!(errs.department || errs.travelerName);
       default:
@@ -333,26 +364,61 @@ export function TravelOrderForm({
     setLatLongOrigin(`${lat},${lng}`);
   }
 
-  function handleSelectDestinationLocation(placeName: string, lat: string, lng: string) {
-    setBoundTo(placeName);
-    setLatLongDestination(`${lat},${lng}`);
+  function handleSelectDestinationLocation(index: number, placeName: string, lat: string, lng: string) {
+    setDestinations((prev) =>
+      prev.map((d, i) =>
+        i === index ? { ...d, locationName: placeName, latLong: `${lat},${lng}` } : d,
+      ),
+    );
   }
 
-  function openMapFor(target: MapTarget, currentQuery: string) {
-    setMapTarget(target);
-    setMapInitialQuery(currentQuery || (target === 'origin' ? boundFrom : boundTo));
+  function addDestination() {
+    setDestinations((prev) => [
+      ...prev,
+      { stopOrder: prev.length + 1, locationName: '', address: null, latLong: null, notes: null },
+    ]);
+  }
+
+  function removeDestination(index: number) {
+    if (destinations.length <= 1) return;
+    setDestinations((prev) =>
+      prev.filter((_, i) => i !== index).map((d, i) => ({ ...d, stopOrder: i + 1 })),
+    );
+    setDestPinpointed((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+  }
+
+  function updateDestination(index: number, field: keyof TravelOrderDestination, value: any) {
+    setDestinations((prev) =>
+      prev.map((d, i) => (i === index ? { ...d, [field]: value } : d)),
+    );
+  }
+
+  function openMapForOrigin() {
+    setMapState({ target: 'origin', initialQuery: boundFrom });
+    setIsMapOpen(true);
+  }
+
+  function openMapForDestination(index: number) {
+    setMapState({ target: 'destination', destIndex: index, initialQuery: destinations[index]?.locationName || '' });
     setIsMapOpen(true);
   }
 
   function handleMapConfirm(lat: string, lng: string, address: string) {
-    if (mapTarget === 'origin') {
+    if (mapState.target === 'origin') {
       setBoundFrom(address);
       setLatLongOrigin(`${lat},${lng}`);
       setOriginPinpointed(true);
-    } else {
-      setBoundTo(address);
-      setLatLongDestination(`${lat},${lng}`);
-      setDestPinpointed(true);
+    } else if (mapState.destIndex !== undefined) {
+      setDestinations((prev) =>
+        prev.map((d, i) =>
+          i === mapState.destIndex ? { ...d, locationName: address, latLong: `${lat},${lng}` } : d,
+        ),
+      );
+      setDestPinpointed((prev) => ({ ...prev, [mapState.destIndex!]: true }));
     }
   }
 
@@ -464,52 +530,109 @@ export function TravelOrderForm({
                     className={inputClass(errors.purpose) + ' resize-none'}
                   />
                 </FormField>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <FormField
-                    label="Origin"
-                    required
-                    icon={<MapPin className="size-4" />}
+
+                {/* Origin */}
+                <FormField
+                  label="Origin"
+                  required
+                  icon={<MapPin className="size-4" />}
+                  error={errors.boundFrom}
+                >
+                  <PlaceSearchInput
+                    value={boundFrom}
+                    onChange={setBoundFrom}
+                    onSelectLocation={handleSelectOriginLocation}
+                    placeholder="e.g. Manila"
                     error={errors.boundFrom}
-                  >
-                    <PlaceSearchInput
-                      value={boundFrom}
-                      onChange={setBoundFrom}
-                      onSelectLocation={handleSelectOriginLocation}
-                      placeholder="e.g. Manila"
-                      error={errors.boundFrom}
-                      mapLabel="Show on Map to set exact location"
-                      onShowOnMap={() => openMapFor('origin', boundFrom)}
-                      hideShowOnMap={originPinpointed}
-                    />
-                    {latLongOrigin && (
-                      <p className="mt-1 text-xs text-zinc-400">
-                        Coordinates: {latLongOrigin}
-                      </p>
-                    )}
-                  </FormField>
-                  <FormField
-                    label="Destination"
-                    required
-                    icon={<MapPin className="size-4 text-brand-teal" />}
-                    error={errors.boundTo}
-                  >
-                    <PlaceSearchInput
-                      value={boundTo}
-                      onChange={setBoundTo}
-                      onSelectLocation={handleSelectDestinationLocation}
-                      placeholder="e.g. Cebu"
-                      error={errors.boundTo}
-                      mapLabel="Show on Map to set exact location"
-                      onShowOnMap={() => openMapFor('destination', boundTo)}
-                      hideShowOnMap={destPinpointed}
-                    />
-                    {latLongDestination && (
-                      <p className="mt-1 text-xs text-zinc-400">
-                        Coordinates: {latLongDestination}
-                      </p>
-                    )}
-                  </FormField>
+                    mapLabel="Show on Map to set exact location"
+                    onShowOnMap={openMapForOrigin}
+                    hideShowOnMap={originPinpointed}
+                  />
+                  {latLongOrigin && (
+                    <p className="mt-1 text-xs text-zinc-400">
+                      Coordinates: {latLongOrigin}
+                    </p>
+                  )}
+                </FormField>
+
+                {/* Destination Stops */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="flex items-center gap-1.5 text-sm font-medium text-zinc-700">
+                      <MapPin className="size-4 text-brand-teal" />
+                      Destinations
+                      <span className="text-red-500">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={addDestination}
+                      className="inline-flex items-center gap-1 rounded-lg bg-brand-teal/10 px-3 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/20 transition-colors"
+                    >
+                      <Plus className="size-3.5" />
+                      Add Destination
+                    </button>
+                  </div>
+                  {errors.destinations && (
+                    <p className="mb-2 text-xs text-red-500">{errors.destinations}</p>
+                  )}
+
+                  <div className="space-y-3">
+                    {destinations.map((dest, index) => (
+                      <div
+                        key={index}
+                        className={cn(
+                          'rounded-lg border p-3 transition-colors',
+                          errors.destinations && !dest.locationName.trim()
+                            ? 'border-red-300 bg-red-50'
+                            : 'border-zinc-200 bg-white'
+                        )}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <GripVertical className="size-4 text-zinc-300" />
+                            <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                              Destination {index + 1}
+                            </span>
+                            {index === destinations.length - 1 && destinations.length > 1 && (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                                Final
+                              </span>
+                            )}
+                          </div>
+                          {destinations.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeDestination(index)}
+                              className="rounded-full p-1 text-zinc-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                              title="Remove destination"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <PlaceSearchInput
+                            value={dest.locationName}
+                            onChange={(val) => updateDestination(index, 'locationName', val)}
+                            onSelectLocation={(placeName, lat, lng) =>
+                              handleSelectDestinationLocation(index, placeName, lat, lng)
+                            }
+                            placeholder={`e.g. Destination ${index + 1}`}
+                            mapLabel="Show on Map to set exact location"
+                            onShowOnMap={() => openMapForDestination(index)}
+                            hideShowOnMap={destPinpointed[index]}
+                          />
+                          {dest.latLong && (
+                            <p className="text-xs text-zinc-400">
+                              Coordinates: {dest.latLong}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField
                     label="Departure Date"
@@ -833,8 +956,14 @@ export function TravelOrderForm({
         isOpen={isMapOpen}
         onClose={() => setIsMapOpen(false)}
         onConfirm={handleMapConfirm}
-        initialQuery={mapInitialQuery}
-        locationLabel={mapTarget === 'origin' ? 'Bound From (Origin)' : 'Bound To (Destination)'}
+        initialQuery={mapState.initialQuery}
+        initialLat={mapState.target === 'origin' ? DEFAULT_ORIGIN_LATLONG.split(',')[0] : undefined}
+        initialLng={mapState.target === 'origin' ? DEFAULT_ORIGIN_LATLONG.split(',')[1] : undefined}
+        locationLabel={
+          mapState.target === 'origin'
+            ? 'Origin'
+            : `Destination ${(mapState.destIndex ?? 0) + 1}`
+        }
       />
     </>
   );

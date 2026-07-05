@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
 import {
   tableContainerClass,
@@ -7,11 +8,8 @@ import {
   tableRowClass,
   tableCellClass,
 } from '@/shared/styles/table-constants';
-import {
-  MOCK_MONTHLY_KPI,
-  MOCK_VEHICLE_SUMMARIES,
-} from '@/modules/reports/mock-data';
-import type { MonthlyKpi, VehicleMonthlySummary } from '@/modules/reports/types';
+import type { VehicleMonthlySummary } from '@/modules/reports/types';
+import { fetchMonthlyReport } from '@/modules/reports/api/reports-api';
 import {
   FileText,
   MapPin,
@@ -21,28 +19,81 @@ import {
   XCircle,
   BarChart3,
   TrendingUp,
-  Car,
+  Loader2,
+  Inbox,
 } from 'lucide-react';
 
-export function MonthlyReportPage() {
-  const kpi: MonthlyKpi = MOCK_MONTHLY_KPI;
-  const vehicleSummaries: VehicleMonthlySummary[] = MOCK_VEHICLE_SUMMARIES;
+interface MonthlyReportPageProps {
+  selectedMonth: number;
+  selectedYear: number;
+  onMonthChange: (month: number) => void;
+  onYearChange: (year: number) => void;
+}
 
-  // Compact stat pills
+export function MonthlyReportPage({
+  selectedMonth,
+  selectedYear,
+}: MonthlyReportPageProps) {
+  const [vehicleSummaries, setVehicleSummaries] = useState<VehicleMonthlySummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadReport = async (month: number, year: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchMonthlyReport({ month, year });
+      setVehicleSummaries(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load monthly report');
+      setVehicleSummaries([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadReport(selectedMonth, selectedYear);
+  }, [selectedMonth, selectedYear]);
+
+  const totalApprovedTOs = useMemo(() => vehicleSummaries.reduce((sum, v) => sum + v.totalApprovedTOs, 0), [vehicleSummaries]);
+  const totalGpsTrips = useMemo(() => vehicleSummaries.reduce((sum, v) => sum + v.totalGpsTrips, 0), [vehicleSummaries]);
+  const totalGpsDistanceKm = useMemo(() => vehicleSummaries.reduce((sum, v) => sum + v.totalGpsDistanceKm, 0), [vehicleSummaries]);
+  const linkedTOs = useMemo(() => vehicleSummaries.reduce((sum, v) => sum + (v.linkedTrips ?? 0), 0), [vehicleSummaries]);
+  const unauthorizedTripsFlagged = useMemo(() => vehicleSummaries.reduce((sum, v) => sum + v.unauthorizedTrips, 0), [vehicleSummaries]);
+  const varianceIssues = useMemo(() => vehicleSummaries.filter(v => v.totalGpsTrips !== v.totalApprovedTOs).length, [vehicleSummaries]);
+  const approvalRatePct = useMemo(() => {
+    if (totalGpsTrips === 0) return 0;
+    return (linkedTOs / totalGpsTrips) * 100;
+  }, [vehicleSummaries, totalGpsTrips, linkedTOs]);
+  const averageGpsTripDistanceKm = useMemo(() => {
+    if (totalGpsTrips === 0) return 0;
+    return totalGpsDistanceKm / totalGpsTrips;
+  }, [vehicleSummaries, totalGpsTrips, totalGpsDistanceKm]);
+
   const statPills = [
-    { label: 'Total Approved TOs', value: kpi.totalApprovedTOs, icon: <FileText className="size-3.5" /> },
-    { label: 'GPS Trips', value: kpi.totalGpsTripsRecorded, icon: <MapPin className="size-3.5" /> },
-    { label: 'Total Distance', value: `${(kpi.totalGpsDistanceKm / 1000).toFixed(1)}k km`, icon: <Gauge className="size-3.5" /> },
-    { label: 'Linked TOs', value: kpi.tripsWithLinkedTO, icon: <CheckCircle2 className="size-3.5" /> },
-    { label: 'Unauthorized', value: kpi.unauthorizedTripsFlagged, icon: <XCircle className="size-3.5" /> },
-    { label: 'Variance Issues', value: kpi.varianceExceedances, icon: <AlertTriangle className="size-3.5" /> },
-    { label: 'Approval Rate', value: `${kpi.toApprovalRatePct.toFixed(1)}%`, icon: <TrendingUp className="size-3.5" /> },
-    { label: 'Avg Trip Dist.', value: `${kpi.averageGpsTripDistanceKm.toFixed(1)} km`, icon: <BarChart3 className="size-3.5" /> },
+    { label: 'Total Approved TOs', value: totalApprovedTOs, icon: <FileText className="size-3.5" /> },
+    { label: 'GPS Trips', value: totalGpsTrips, icon: <MapPin className="size-3.5" /> },
+    { label: 'Total Distance', value: `${(totalGpsDistanceKm / 1000).toFixed(1)}k km`, icon: <Gauge className="size-3.5" /> },
+    { label: 'Linked TOs', value: totalGpsTrips, icon: <CheckCircle2 className="size-3.5" /> },
+    { label: 'Unauthorized', value: unauthorizedTripsFlagged, icon: <XCircle className="size-3.5" /> },
+    { label: 'Variance Issues', value: varianceIssues, icon: <AlertTriangle className="size-3.5" /> },
+    { label: 'Approval Rate', value: `${approvalRatePct.toFixed(1)}%`, icon: <TrendingUp className="size-3.5" /> },
+    { label: 'Avg Trip Dist.', value: `${averageGpsTripDistanceKm.toFixed(1)} km`, icon: <BarChart3 className="size-3.5" /> },
   ];
+
 
   return (
     <div className="space-y-3">
-      {/* ── Compact Stats Pills ── */}
+      {loading && (
+        <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <Loader2 className="size-3.5 animate-spin" />
+          Loading...
+        </div>
+      )}
+      {error && <div className="text-xs text-red-600">{error}</div>}
+
+      {/* Compact Stats Pills */}
       <div className="flex flex-wrap gap-2">
         {statPills.map((pill) => (
           <span
@@ -56,7 +107,7 @@ export function MonthlyReportPage() {
         ))}
       </div>
 
-      {/* ── Per-Vehicle Summary Table ── */}
+      {/* Per-Vehicle Summary Table */}
       <div>
         <div className={tableContainerClass}>
           <table className={tableClass}>
@@ -71,65 +122,37 @@ export function MonthlyReportPage() {
               </tr>
             </thead>
             <tbody>
-              {vehicleSummaries.map((vs) => (
-                <tr key={vs.vehiclePlateNo} className={tableRowClass}>
-                  <td className={tableCellClass}>{vs.vehiclePlateNo}</td>
-                  <td className={cn(tableCellClass, 'text-right font-mono')}>{vs.totalGpsTrips}</td>
-                  <td className={cn(tableCellClass, 'text-right font-mono')}>{vs.totalGpsDistanceKm.toFixed(1)}</td>
-                  <td className={cn(tableCellClass, 'text-right font-mono')}>{vs.totalApprovedTOs}</td>
-                  <td className={cn(tableCellClass, 'text-right')}>
-                    {vs.unauthorizedTrips > 0 ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-600">
-                        {vs.unauthorizedTrips}
-                      </span>
-                    ) : (
-                      <span className="font-mono text-zinc-400">0</span>
-                    )}
+              {vehicleSummaries.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-0">
+                    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-white px-4 py-10 text-center">
+                      <Inbox className="size-8 text-zinc-300 mb-2" />
+                      <p className="text-sm text-zinc-500">No data available for the selected month and year.</p>
+                    </div>
                   </td>
-                  <td className={cn(tableCellClass, 'max-w-[220px]')}>{vs.remarks || '—'}</td>
                 </tr>
-              ))}
+              ) : (
+                vehicleSummaries.map((vs) => (
+                  <tr key={vs.vehiclePlateNo} className={tableRowClass}>
+                    <td className={tableCellClass}>{vs.vehiclePlateNo}</td>
+                    <td className={cn(tableCellClass, 'text-right font-mono')}>{vs.totalGpsTrips}</td>
+                    <td className={cn(tableCellClass, 'text-right font-mono')}>{vs.totalGpsDistanceKm.toFixed(1)}</td>
+                    <td className={cn(tableCellClass, 'text-right font-mono')}>{vs.totalApprovedTOs}</td>
+                    <td className={cn(tableCellClass, 'text-right')}>
+                      {vs.unauthorizedTrips > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-600">
+                          {vs.unauthorizedTrips}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-zinc-400">0</span>
+                      )}
+                    </td>
+                    <td className={cn(tableCellClass, 'max-w-[220px]')}>{vs.remarks || '—'}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
-        </div>
-
-        {/* Mobile vehicle cards */}
-        <div className="space-y-3 md:hidden">
-          {vehicleSummaries.map((vs) => (
-            <div key={vs.vehiclePlateNo} className="rounded-xl bg-white p-4 shadow-brand border border-zinc-100">
-              <div className="mb-2 flex items-center gap-2">
-                <div className="rounded-lg bg-brand-moss/30 p-1.5 text-brand-teal">
-                  <Car className="size-4" />
-                </div>
-                <p className="text-sm font-semibold text-zinc-900">{vs.vehiclePlateNo}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <p className="text-zinc-400">GPS Trips</p>
-                  <p className="font-medium text-zinc-800">{vs.totalGpsTrips}</p>
-                </div>
-                <div>
-                  <p className="text-zinc-400">GPS Distance</p>
-                  <p className="font-medium text-zinc-800">{vs.totalGpsDistanceKm.toFixed(1)} km</p>
-                </div>
-                <div>
-                  <p className="text-zinc-400">Approved TOs</p>
-                  <p className="font-medium text-zinc-800">{vs.totalApprovedTOs}</p>
-                </div>
-                <div>
-                  <p className="text-zinc-400">Unauthorized</p>
-                  <p className={cn('font-medium', vs.unauthorizedTrips > 0 ? 'text-red-600' : 'text-zinc-800')}>
-                    {vs.unauthorizedTrips}
-                  </p>
-                </div>
-              </div>
-              {vs.remarks && (
-                <p className="mt-2 rounded-lg bg-brand-cream px-3 py-1.5 text-xs text-zinc-500">
-                  {vs.remarks}
-                </p>
-              )}
-            </div>
-          ))}
         </div>
       </div>
     </div>

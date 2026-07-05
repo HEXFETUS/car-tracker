@@ -11,9 +11,10 @@
 import { randomUUID } from 'node:crypto';
 import { syncFleetAndAlert, sendTelegram, getVehicleEmoji, formatIgnitionAlert, formatVehicleHeader } from '@car-tracker/tracker';
 import { findVehicleByPlate } from './gpsLogService.js';
-import { insertTelemetry, getLatestTelemetry, updateTelemetryTelegramMessage } from './gpsTelemetryService.js';
+import { insertTelemetry, getLatestTelemetry, updateTelemetryTelegramDelivery, updateTelemetryTelegramMessage } from './gpsTelemetryService.js';
 import { getPool } from '../db/db.js';
 import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
+import { getFleetConfig } from './fleetConfigService.js';
 
 // ── Scheduler State ────────────────────────────────────────────
 
@@ -28,6 +29,26 @@ interface SchedulerState {
   intervalId: ReturnType<typeof setInterval> | null;
   paused: boolean;
   intervalSeconds: number;
+}
+
+export interface SchedulerCycleSummary {
+  skipped: boolean;
+  skipReason: string | null;
+  vehiclesProcessed: number;
+  telemetrySaved: number;
+  telemetrySkipped: number;
+  telegramSent: number;
+  telegramFailed: number;
+  alertsSent: number;
+  alertsSkipped: number;
+  alertsFailed: number;
+  alertsPersisted: number;
+  gpsLogsSaved: number;
+  gpsLogsFailed: number;
+  travelOrdersMatched: number;
+  unauthorizedTravelAlerts: number;
+  durationSeconds: number;
+  fleetConfigVersion: string;
 }
 
 // ── Mutable current interval (initialised from env, but can be
@@ -51,6 +72,9 @@ const state: SchedulerState = {
   paused: false,
   intervalSeconds: currentIntervalSeconds,
 };
+
+// Mutex to prevent overlapping cycle executions
+let cycleLock = false;
 
 // ── Event Type Constants ───────────────────────────────────────
 // Must match the event_type values saved in gps_telemetry.
@@ -184,7 +208,7 @@ export function startScheduler(): void {
   );
 
   // Run immediately on start, then on interval
-  runCycle();
+  void runCycle();
 
   state.intervalId = setInterval(runCycle, intervalMs);
 }
@@ -495,18 +519,24 @@ async function saveAndSendTelemetryAlert(params: SaveAndSendTelemetryAlertParams
     console.log(`[alert-pipeline] telegram attempt ${eventType} ${savedTelemetry.id}`);
     try {
       const tg = await sendTelegram(telegramMessage);
+      const attemptedAt = new Date().toISOString();
       if (tg?.ok) {
         telegramSent = true;
+        await updateTelemetryTelegramDelivery(savedTelemetry.id, 'sent', null, attemptedAt);
         console.log(`[alert-pipeline] telegram result ${eventType} ok sent`);
       } else {
         telegramError = tg?.error ?? 'telegram_not_ok';
+        await updateTelemetryTelegramDelivery(savedTelemetry.id, 'failed', telegramError, attemptedAt);
         console.error(`[alert-pipeline] telegram result ${eventType} fail ${telegramError}`);
       }
     } catch (err) {
+      const attemptedAt = new Date().toISOString();
       telegramError = errorMessage(err);
+      await updateTelemetryTelegramDelivery(savedTelemetry.id, 'failed', telegramError, attemptedAt);
       console.error(`[alert-pipeline] telegram result ${eventType} exception ${telegramError}`);
     }
   } else {
+    await updateTelemetryTelegramDelivery(savedTelemetry.id, 'skipped', null, new Date().toISOString());
     console.log(`[alert-pipeline] telegram skipped ${eventType} ${savedTelemetry.id} reason=no_message`);
   }
 
@@ -583,10 +613,211 @@ async function getLatestLocationUpdateLocation(vehicleId: string, activeTripId: 
   return result.rows[0]?.location_name ?? null;
 }
 
-async function runCycle(): Promise<void> {
+// ── Arrival Detection ──────────────────────────────────────────
+// Compares current GPS position against the next pending destination.
+// Uses FLEET_CONFIG.arrival for radius and idle thresholds.
+
+interface NextPendingDestination {
+  id: string;
+  travelOrderId: string;
+  stopOrder: number;
+  locationName: string;
+  latLong: string | null;
+}
+
+/**
+ * Find the next pending destination for a travel order.
+ * Returns the first destination with status = 'PENDING' ordered by stop_order.
+ */
+async function findNextPendingDestination(travelOrderId: string): Promise<NextPendingDestination | null> {
+  const pool = getPool();
+  const result = await pool.query<{ id: string; travel_order_id: string; stop_order: number; location_name: string; lat_long: string | null }>(
+    `SELECT id, travel_order_id, stop_order, location_name, lat_long
+     FROM travel_order_destinations
+     WHERE travel_order_id = $1
+       AND status = 'PENDING'
+     ORDER BY stop_order ASC
+     LIMIT 1`,
+    [travelOrderId],
+  );
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    travelOrderId: row.travel_order_id,
+    stopOrder: row.stop_order,
+    locationName: row.location_name,
+    latLong: row.lat_long,
+  };
+}
+
+/**
+ * Mark a destination as ARRIVED and advance the next destination to IN_PROGRESS.
+ * Also updates the travel_orders row with the last destination info for backward compatibility.
+ */
+async function markDestinationArrived(
+  destinationId: string,
+  travelOrderId: string,
+  distanceMeters: number,
+  gpsTripLogId?: string | null,
+): Promise<void> {
+  const pool = getPool();
+  const now = new Date().toISOString();
+
+  // Mark current destination as ARRIVED
+  await pool.query(
+    `UPDATE travel_order_destinations
+        SET status = 'ARRIVED',
+            arrived_at = $2,
+            arrival_distance_meters = $3,
+            gps_trip_log_id = COALESCE($4, gps_trip_log_id)
+      WHERE id = $1`,
+    [destinationId, now, distanceMeters, gpsTripLogId],
+  );
+
+  // Find the next pending destination and set it to IN_PROGRESS
+  const nextResult = await pool.query<{ id: string; stop_order: number }>(
+    `SELECT id, stop_order
+     FROM travel_order_destinations
+     WHERE travel_order_id = $1
+       AND status = 'PENDING'
+     ORDER BY stop_order ASC
+     LIMIT 1`,
+    [travelOrderId],
+  );
+
+  if (nextResult.rows.length > 0) {
+    // There's a next destination — set it to IN_PROGRESS
+    await pool.query(
+      `UPDATE travel_order_destinations
+          SET status = 'IN_PROGRESS'
+        WHERE id = $1`,
+      [nextResult.rows[0].id],
+    );
+    console.log(`[arrival] Advanced to next destination id=${nextResult.rows[0].id} stop=${nextResult.rows[0].stop_order} for travel_order=${travelOrderId}`);
+  } else {
+    // No more pending destinations — all stops completed
+    // Update travel_orders to COMPLETED
+    await pool.query(
+      `UPDATE travel_orders
+          SET status = 'COMPLETED',
+              actual_arrival_at = $2,
+              updated_at = $2
+        WHERE id = $1`,
+      [travelOrderId, now],
+    );
+    console.log(`[arrival] All destinations completed for travel_order=${travelOrderId} — marked as COMPLETED`);
+  }
+
+  // Update backward-compat columns on travel_orders with the last ARRIVED destination
+  const lastArrived = await pool.query<{ location_name: string; lat_long: string | null }>(
+    `SELECT location_name, lat_long
+     FROM travel_order_destinations
+     WHERE travel_order_id = $1
+       AND status = 'ARRIVED'
+     ORDER BY stop_order DESC
+     LIMIT 1`,
+    [travelOrderId],
+  );
+  if (lastArrived.rows.length > 0) {
+    await pool.query(
+      `UPDATE travel_orders
+          SET destination_target = $2,
+              location_name = $2,
+              lat_long_destination = $3
+        WHERE id = $1`,
+      [travelOrderId, lastArrived.rows[0].location_name, lastArrived.rows[0].lat_long],
+    );
+  }
+}
+
+/**
+ * Check if a vehicle has arrived at its next pending destination.
+ * Called during each scheduler cycle for vehicles with active travel orders.
+ */
+async function checkArrival(
+  vehicleId: string,
+  travelOrderId: string,
+  latitude: number | null,
+  longitude: number | null,
+  speedKmh: number,
+  currentIgnition: boolean,
+  elapsedIdleMinutes: number,
+): Promise<{ arrived: boolean; destinationId: string | null; distanceMeters: number | null }> {
+  // Only check arrival if vehicle is idling (speed <= 0, ignition on)
+  if (!currentIgnition || speedKmh > 0) {
+    return { arrived: false, destinationId: null, distanceMeters: null };
+  }
+
+  // Must be idling for at least FLEET_CONFIG.arrival.idleMinutes
+  if (elapsedIdleMinutes < getFleetConfig().arrival.idleMinutes) {
+    return { arrived: false, destinationId: null, distanceMeters: null };
+  }
+
+  // Find the next pending destination
+  const nextDest = await findNextPendingDestination(travelOrderId);
+  if (!nextDest || !nextDest.latLong) {
+    return { arrived: false, destinationId: null, distanceMeters: null };
+  }
+
+  // Parse destination coordinates
+  const [destLat, destLng] = nextDest.latLong.split(',').map(Number);
+  if (isNaN(destLat) || isNaN(destLng)) {
+    return { arrived: false, destinationId: null, distanceMeters: null };
+  }
+
+  // Calculate distance from current GPS to destination
+  const distance = haversineDistanceMeters(latitude, longitude, destLat, destLng);
+  if (distance === null) {
+    return { arrived: false, destinationId: null, distanceMeters: null };
+  }
+
+  console.log(`[arrival] vehicle=${vehicleId} dest=${nextDest.locationName} distance=${distance.toFixed(1)}m idle=${elapsedIdleMinutes.toFixed(1)}min threshold=${getFleetConfig().arrival.radiusMeters}m/${getFleetConfig().arrival.idleMinutes}min`);
+
+  // Check if within arrival radius
+  if (distance <= getFleetConfig().arrival.radiusMeters) {
+    console.log(`[arrival] ARRIVED at ${nextDest.locationName} vehicle=${vehicleId} distance=${distance.toFixed(1)}m`);
+    await markDestinationArrived(nextDest.id, travelOrderId, Math.round(distance));
+    return { arrived: true, destinationId: nextDest.id, distanceMeters: Math.round(distance) };
+  }
+
+  return { arrived: false, destinationId: null, distanceMeters: null };
+}
+
+function skippedCycleSummary(skipReason: string): SchedulerCycleSummary {
+  return {
+    skipped: true,
+    skipReason,
+    vehiclesProcessed: 0,
+    telemetrySaved: 0,
+    telemetrySkipped: 0,
+    telegramSent: 0,
+    telegramFailed: 0,
+    alertsSent: 0,
+    alertsSkipped: 0,
+    alertsFailed: 0,
+    alertsPersisted: 0,
+    gpsLogsSaved: 0,
+    gpsLogsFailed: 0,
+    travelOrdersMatched: 0,
+    unauthorizedTravelAlerts: 0,
+    durationSeconds: 0,
+    fleetConfigVersion: String(getFleetConfig().version),
+  };
+}
+
+async function runCycle(): Promise<SchedulerCycleSummary> {
+  // Prevent overlapping executions
+  if (cycleLock) {
+    console.log('[scheduler] Previous cycle still running — skipping this execution');
+    return skippedCycleSummary('lock_active');
+  }
+  cycleLock = true;
+
   if (state.paused) {
     console.log('[scheduler] Paused — skipping cycle');
-    return;
+    cycleLock = false;
+    return skippedCycleSummary('paused');
   }
 
   const cycleStart = Date.now();
@@ -599,20 +830,24 @@ async function runCycle(): Promise<void> {
 
     // ── Fetch driver, TO number & destination coordinates from approved travel orders ───
     // Single query to get all vehicle-to-driver mappings and TO destination coordinates
+    // Now also fetches multiple destinations from travel_order_destinations for GPS matching
     const driverOverrides = new Map<string, string>();
     const toNumberOverrides = new Map<string, string>();
     const toDestinationOverrides = new Map<string, string>();
+    const toDestinationsList = new Map<string, Array<{ locationName: string; latLong: string | null; stopOrder: number }>>();
+    const toTravelOrderIds = new Map<string, string>(); // vehicle_id → travel_order_id
     const noToVehicleIds = new Set<string>();
     try {
-      const allTOData = await pool.query<{ vehicle_id: string; driver_name: string | null; to_number: string; lat_long_destination: string | null }>(
+      const allTOData = await pool.query<{ vehicle_id: string; driver_name: string | null; to_number: string; lat_long_destination: string | null; id: string }>(
         `SELECT DISTINCT ON (to_table.vehicle_id) 
            to_table.vehicle_id, 
            d.full_name AS driver_name,
            to_table.to_number,
-           to_table.lat_long_destination
+           to_table.lat_long_destination,
+           to_table.id
          FROM travel_orders to_table
          LEFT JOIN drivers d ON d.id = to_table.driver_id
-         WHERE to_table.status = 'APPROVED'
+         WHERE to_table.status IN ('APPROVED', 'ACTIVE')
          AND to_table.vehicle_id IS NOT NULL
          AND DATE(to_table.scheduled_departure) = CURRENT_DATE`,
       );
@@ -620,6 +855,28 @@ async function runCycle(): Promise<void> {
         if (row.driver_name) driverOverrides.set(row.vehicle_id, row.driver_name);
         if (row.to_number) toNumberOverrides.set(row.vehicle_id, row.to_number);
         if (row.lat_long_destination) toDestinationOverrides.set(row.vehicle_id, row.lat_long_destination);
+        toTravelOrderIds.set(row.vehicle_id, row.id);
+
+        // Fetch all destinations for this travel order
+        try {
+          const destResult = await pool.query<{ location_name: string; lat_long: string | null; stop_order: number }>(
+            `SELECT location_name, lat_long, stop_order
+             FROM travel_order_destinations
+             WHERE travel_order_id = $1
+             ORDER BY stop_order ASC`,
+            [row.id],
+          );
+          if (destResult.rows.length > 0) {
+            toDestinationsList.set(row.vehicle_id, destResult.rows.map((d) => ({
+              locationName: d.location_name,
+              latLong: d.lat_long,
+              stopOrder: d.stop_order,
+            })));
+          }
+        } catch (destErr) {
+          // travel_order_destinations table may not exist yet on older DBs
+          console.log(`[scheduler] No destinations found for travel order ${row.id}: ${(destErr as Error).message}`);
+        }
       }
       // Track vehicles with NO approved TO for today (for warning suffix)
       const allVehicleResult = await pool.query<{ vehicle_id: string }>(
@@ -630,7 +887,7 @@ async function runCycle(): Promise<void> {
           noToVehicleIds.add(v.vehicle_id);
         }
       }
-      console.log(`[scheduler] Fetched ${driverOverrides.size} driver, ${toNumberOverrides.size} TO overrides, ${toDestinationOverrides.size} TO destinations, ${noToVehicleIds.size} vehicles with no TO`);
+      console.log(`[scheduler] Fetched ${driverOverrides.size} driver, ${toNumberOverrides.size} TO overrides, ${toDestinationOverrides.size} TO destinations, ${toDestinationsList.size} multi-destination routes, ${noToVehicleIds.size} vehicles with no TO`);
     } catch (err) {
       console.error('[scheduler] Failed to fetch overrides:', (err as Error).message);
     }
@@ -675,6 +932,15 @@ async function runCycle(): Promise<void> {
     // Therefore, scheduler MUST NOT persist GPS logs from live status.
     let gpsLogsSaved = 0;
     let gpsLogsFailed = 0;
+    let telegramSent = 0;
+    let telegramFailed = 0;
+    const trackTelegramResult = (alertResult: SaveAndSendTelemetryAlertResult) => {
+      if (alertResult.telegramSent) {
+        telegramSent += 1;
+      } else if (alertResult.telegramError && alertResult.telegramError !== 'missing_id') {
+        telegramFailed += 1;
+      }
+    };
     // GPS log persistence from scheduler is disabled.
     // See trackingHistorySyncService.ts for the proper sync flow.
 
@@ -814,6 +1080,7 @@ async function runCycle(): Promise<void> {
             recordedAt: new Date().toISOString(),
             telegramMessage: message,
           });
+          trackTelegramResult(result);
 
           if (!result.savedTelemetry.id) {
             telemetrySkipped += 1;
@@ -894,6 +1161,7 @@ async function runCycle(): Promise<void> {
               recordedAt,
               telegramMessage: message,
             });
+            trackTelegramResult(result);
 
             if (!result.savedTelemetry.id) {
               telemetrySkipped += 1;
@@ -935,6 +1203,7 @@ async function runCycle(): Promise<void> {
               recordedAt,
               telegramMessage: message,
             });
+            trackTelegramResult(result);
 
             if (!result.savedTelemetry.id) {
               telemetrySkipped += 1;
@@ -984,6 +1253,7 @@ async function runCycle(): Promise<void> {
                 recordedAt,
                 telegramMessage: message,
               });
+              trackTelegramResult(result);
 
               if (result.savedTelemetry.id) {
                 if (result.savedTelemetry.inserted) {
@@ -1045,6 +1315,7 @@ async function runCycle(): Promise<void> {
               recordedAt,
               telegramMessage: message,
             });
+            trackTelegramResult(result);
 
             if (result.savedTelemetry.id) {
               if (result.savedTelemetry.inserted) {
@@ -1068,6 +1339,28 @@ async function runCycle(): Promise<void> {
             const elapsedMinutes = Number.isFinite(apiIdleMinutes)
               ? apiIdleMinutes
               : Math.max(0, (Date.now() - new Date(idlingStartedAt).getTime()) / 60000);
+
+            // ── Arrival Detection ────────────────────────────────
+            // Check if vehicle has arrived at its next pending destination
+            const travelOrderId = toTravelOrderIds.get(vehicleId);
+            if (travelOrderId) {
+              const arrivalResult = await checkArrival(
+                vehicleId,
+                travelOrderId,
+                latitude,
+                longitude,
+                speed,
+                currentIgnition,
+                elapsedMinutes,
+              );
+              if (arrivalResult.arrived) {
+                console.log(`[arrival] Vehicle ${vehicleId} arrived at destination ${arrivalResult.destinationId} distance=${arrivalResult.distanceMeters}m`);
+                // Close idling session since we arrived
+                await closeIdlingDedupDb(vehicleId, activeTripId);
+                continue;
+              }
+            }
+
             const thresholdMinutes = idlingThresholdForMinutes(elapsedMinutes);
 
             if (thresholdMinutes === null) {
@@ -1083,7 +1376,21 @@ async function runCycle(): Promise<void> {
               continue;
             }
 
-            const message = `⏱ IDLING TOO LONG - ${getVehicleEmoji(plateNumber)} ${formatVehicleHeader(plateNumber, toNumber)}\n\n⏱ Idling for ${Math.round(elapsedMinutes * 10) / 10} minutes\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+            let destinationStopNumber = 1;
+            try {
+              const stopCountResult = await pool.query<{ stop_count: string }>(
+                `SELECT COUNT(*) AS stop_count
+                   FROM gps_trip_log_stops
+                  WHERE vehicle_id = $1
+                    AND active_trip_id = $2`,
+                [vehicleId, activeTripId],
+              );
+              destinationStopNumber = parseInt(stopCountResult.rows[0]?.stop_count ?? '0', 10) + 1;
+            } catch (stopCountError) {
+              console.warn('[gps-trip-stop] stop count unavailable for Telegram:', (stopCountError as Error).message);
+            }
+
+            const message = `⏱ IDLING TOO LONG - ${getVehicleEmoji(plateNumber)} ${formatVehicleHeader(plateNumber, toNumber)}\n\nDestination Stop: ${destinationStopNumber}\n⏱ Idling for ${Math.round(elapsedMinutes * 10) / 10} minutes\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
 
             const result = await saveAndSendTelemetryAlert({
               eventType: EVENT_TYPE.IDLING,
@@ -1099,6 +1406,7 @@ async function runCycle(): Promise<void> {
               recordedAt,
               telegramMessage: message,
             });
+            trackTelegramResult(result);
 
             if (!result.savedTelemetry.id) {
               telemetrySkipped += 1;
@@ -1312,6 +1620,7 @@ async function runCycle(): Promise<void> {
             recordedAt,
             telegramMessage,
           });
+          trackTelegramResult(result);
 
           if (!result.savedTelemetry.id) {
             telemetrySkipped += 1;
@@ -1358,6 +1667,8 @@ async function runCycle(): Promise<void> {
     state.lastRunAt = new Date().toISOString();
     state.cyclesCompleted += 1;
 
+    const fleetConfigVersion = getFleetConfig().version;
+
     const summary = [
       `vehicles=${result.vehicles}`,
       `alerts_sent=${result.alerts.sent}`,
@@ -1368,13 +1679,36 @@ async function runCycle(): Promise<void> {
       `gps_logs_failed=${gpsLogsFailed}`,
       `telemetry_saved=${telemetrySaved}`,
       `telemetry_skipped=${telemetrySkipped}`,
+      `telegram_sent=${telegramSent}`,
+      `telegram_failed=${telegramFailed}`,
+      `travel_orders_matched=${toTravelOrderIds.size}`,
       `unauthorized_travel_alerts=${unauthorizedTravelAlertsCreated}`,
       `duration=${duration.toFixed(2)}s`,
+      `fleet_config=${fleetConfigVersion}`,
     ].join(', ');
 
     state.lastResult = `ok: ${summary}`;
 
     console.log(`[scheduler] Cycle ${cycleLabel} completed — ${summary}`);
+    return {
+      skipped: false,
+      skipReason: null,
+      vehiclesProcessed: Number(result.vehicles ?? 0),
+      telemetrySaved,
+      telemetrySkipped,
+      telegramSent,
+      telegramFailed,
+      alertsSent: Number(result.alerts?.sent ?? 0),
+      alertsSkipped: Number(result.alerts?.skipped ?? 0),
+      alertsFailed: Number(result.alerts?.failed ?? 0),
+      alertsPersisted: Number(result.alerts?.persisted ?? 0),
+      gpsLogsSaved,
+      gpsLogsFailed,
+      travelOrdersMatched: toTravelOrderIds.size,
+      unauthorizedTravelAlerts: unauthorizedTravelAlertsCreated,
+      durationSeconds: duration,
+      fleetConfigVersion: String(fleetConfigVersion),
+    };
   } catch (error) {
     const duration = (Date.now() - cycleStart) / 1000;
     state.errors += 1;
@@ -1384,5 +1718,43 @@ async function runCycle(): Promise<void> {
     state.lastResult = `error: ${message}`;
 
     console.error(`[scheduler] Cycle ${cycleLabel} failed — ${message}`);
+    throw error;
+  } finally {
+    // Always release the lock
+    cycleLock = false;
   }
+}
+
+// ── Scheduler Health Check ──────────────────────────────────────
+//
+// Run this after a cron execution to verify the scheduler processed
+// all expected scenarios correctly.
+//
+// Expected scenarios:
+// - IGNITION_ON: One event
+// - LOCATION_UPDATE (new location): One new row
+// - LOCATION_UPDATE (same location): Skip
+// - IDLING_TOO_LONG: Thresholds 10, 30, 60...
+// - MOTION_STARTED: No LOCATION_UPDATE in same poll
+// - IGNITION_OFF: Active trip closed
+//
+// Returns a summary object for health check endpoints.
+export function getSchedulerHealthCheck(): {
+  running: boolean;
+  cyclesCompleted: number;
+  errors: number;
+  lastRunAt: string | null;
+  lastRunDuration: number | null;
+  lastResult: string | null;
+  fleetConfigVersion: string;
+} {
+  return {
+    running: state.running,
+    cyclesCompleted: state.cyclesCompleted,
+    errors: state.errors,
+    lastRunAt: state.lastRunAt,
+    lastRunDuration: state.lastRunDuration,
+    lastResult: state.lastResult,
+    fleetConfigVersion: String(getFleetConfig().version),
+  };
 }

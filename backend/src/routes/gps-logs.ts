@@ -300,13 +300,12 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// POST /api/gps-logs/ensure-log — Create or update one GPS log per Travel Order
+// POST /api/gps-logs/ensure-log — Link or update one GPS log per Travel Order
 //
-// When telemetry is received, call this endpoint instead of creating
-// a new GPS log every time. It checks if a GPS log already exists for
-// the given travel_order_id:
+// Telemetry is the source of truth for creating GPS logs. This endpoint
+// only links a Travel Order to an existing telemetry-created GPS log:
 //   - If YES: updates trip_status and updated_at only
-//   - If NO:  creates a new GPS log with initial status
+//   - If NO:  links the best existing unlinked GPS log for the same vehicle/date
 //
 // Body:
 //   travel_order_id (required) - UUID of the travel order
@@ -367,39 +366,69 @@ router.post('/ensure-log', async (req: Request, res: Response) => {
         created: false,
       });
     } else {
-      // Create new GPS log
-      // Look up the travel order to get TO number details
       const toResult = await pool.query(
-        `SELECT to_number, status FROM travel_orders WHERE id = $1 LIMIT 1`,
+        `SELECT id, to_number, status, scheduled_departure, scheduled_arrival
+           FROM travel_orders
+          WHERE id = $1
+          LIMIT 1`,
         [travel_order_id],
       );
-      const toData = toResult.rows[0] || {};
-      const toStatus = toData?.status || null;
+      const toData = toResult.rows[0];
 
-      const gpsRecordNo = await generateGpsRecordNo(null);
-      const tripDate = new Date().toISOString().split('T')[0];
+      if (!toData) {
+        res.status(404).json({ success: false, data: null, error: 'Travel order not found' });
+        return;
+      }
 
       const result = await pool.query<GpsLogRow>(
-        `INSERT INTO gps_trip_logs
-          (gps_record_no, trip_date, vehicle_id, driver_id,
-           origin_gps_start_point, destination_gps_end_point,
-           trip_status_gps, travel_order_id, to_status_auto,
-           anomaly_flag, notes_remarks)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-         RETURNING *`,
+        `WITH candidate AS (
+           SELECT id
+             FROM gps_trip_logs
+            WHERE vehicle_id = $1
+              AND travel_order_id IS NULL
+              AND trip_date = COALESCE($2::timestamptz::date, CURRENT_DATE)
+            ORDER BY ABS(EXTRACT(EPOCH FROM (departure_time_gps - $2::timestamptz))) ASC NULLS LAST,
+                     created_at DESC
+            LIMIT 1
+         )
+         UPDATE gps_trip_logs g
+            SET travel_order_id = $3,
+                driver_id = COALESCE($4, g.driver_id),
+                trip_status_gps = $5,
+                to_status_auto = $6,
+                anomaly_flag = FALSE,
+                notes_remarks = COALESCE($7, g.notes_remarks),
+                updated_at = NOW()
+           FROM candidate
+          WHERE g.id = candidate.id
+          RETURNING g.*`,
         [
-          gpsRecordNo, tripDate, vehicle_id, driver_id || null,
-          '', '',
-          status, travel_order_id, toStatus,
-          false, notes || null,
+          vehicle_id,
+          toData.scheduled_departure ?? null,
+          travel_order_id,
+          driver_id || null,
+          status,
+          toData.status || null,
+          notes || null,
         ],
       );
 
-      res.status(201).json({
+      if (result.rows.length === 0) {
+        res.status(404).json({
+          success: false,
+          data: null,
+          error: 'No existing GPS trip log found to link. GPS logs are created from telemetry, not Travel Orders.',
+        });
+        return;
+      }
+
+      console.log('[gps-trip-log] linked to TO', { travelOrderId: travel_order_id, gpsLogId: result.rows[0].id });
+
+      res.json({
         success: true,
         data: mapRow(result.rows[0]),
-        message: 'GPS log created successfully',
-        created: true,
+        message: 'GPS log linked to Travel Order successfully',
+        created: false,
       });
     }
   } catch (error) {
@@ -1425,6 +1454,33 @@ router.get('/:id/details', async (req: Request, res: Response) => {
       eventType: row.event_type,
     }));
 
+    const stopsResult = await pool.query(
+      `SELECT id, gps_trip_log_id, active_trip_id, vehicle_id, stop_order,
+              stop_type, location_name, coordinates, latitude, longitude,
+              arrived_at, idle_minutes, telemetry_id, created_at
+         FROM gps_trip_log_stops
+        WHERE gps_trip_log_id = $1
+        ORDER BY stop_order ASC`,
+      [trip.id],
+    );
+
+    const stops = stopsResult.rows.map((stop: any) => ({
+      id: stop.id,
+      gpsTripLogId: stop.gps_trip_log_id,
+      activeTripId: stop.active_trip_id,
+      vehicleId: stop.vehicle_id,
+      stopOrder: Number(stop.stop_order),
+      stopType: stop.stop_type,
+      locationName: stop.location_name,
+      coordinates: stop.coordinates,
+      latitude: stop.latitude == null ? null : Number(stop.latitude),
+      longitude: stop.longitude == null ? null : Number(stop.longitude),
+      arrivedAt: stop.arrived_at,
+      idleMinutes: stop.idle_minutes == null ? null : Number(stop.idle_minutes),
+      telemetryId: stop.telemetry_id,
+      createdAt: stop.created_at,
+    }));
+
     // Engine Hours: IGNITION_ON → IGNITION_OFF
     let ignitionOnTime: string | null = null;
     let ignitionOffTime: string | null = null;
@@ -1597,11 +1653,55 @@ router.get('/:id/details', async (req: Request, res: Response) => {
         },
         route,
         routeCount: route.length,
+        stops,
+        stopsCount: stops.length,
       },
     });
   } catch (error) {
     const err = error as Error;
     console.error('GET /api/gps-logs/:id/details error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// GET /api/gps-logs/:id/stops — Stops timeline for a GPS trip log
+// ─────────────────────────────────────────────────────────────────
+router.get('/:id/stops', async (req: Request, res: Response) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT id, gps_trip_log_id, active_trip_id, vehicle_id, stop_order,
+              stop_type, location_name, coordinates, latitude, longitude,
+              arrived_at, idle_minutes, telemetry_id, created_at
+         FROM gps_trip_log_stops
+        WHERE gps_trip_log_id = $1
+        ORDER BY stop_order ASC`,
+      [req.params.id],
+    );
+
+    res.json({
+      success: true,
+      data: result.rows.map((stop: any) => ({
+        id: stop.id,
+        gpsTripLogId: stop.gps_trip_log_id,
+        activeTripId: stop.active_trip_id,
+        vehicleId: stop.vehicle_id,
+        stopOrder: Number(stop.stop_order),
+        stopType: stop.stop_type,
+        locationName: stop.location_name,
+        coordinates: stop.coordinates,
+        latitude: stop.latitude == null ? null : Number(stop.latitude),
+        longitude: stop.longitude == null ? null : Number(stop.longitude),
+        arrivedAt: stop.arrived_at,
+        idleMinutes: stop.idle_minutes == null ? null : Number(stop.idle_minutes),
+        telemetryId: stop.telemetry_id,
+        createdAt: stop.created_at,
+      })),
+    });
+  } catch (error) {
+    const err = error as Error;
+    console.error('GET /api/gps-logs/:id/stops error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
