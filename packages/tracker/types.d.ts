@@ -107,6 +107,8 @@ export function sendTelegram(message: string): Promise<{ ok: boolean; error?: st
 
 export function getVehicleEmoji(plateNumber: string): string;
 
+export function formatVehicleHeader(name: string, toNumber?: string | null): string;
+
 export function formatIgnitionAlert(name: string, ignition: boolean, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
 
 // ── Trip Log Transformer ──────────────────────────────────────

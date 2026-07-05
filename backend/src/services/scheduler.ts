@@ -9,7 +9,7 @@
 // The interval can be changed at runtime via updateInterval().
 
 import { randomUUID } from 'node:crypto';
-import { syncFleetAndAlert, sendTelegram, getVehicleEmoji, formatIgnitionAlert } from '@car-tracker/tracker';
+import { syncFleetAndAlert, sendTelegram, getVehicleEmoji, formatIgnitionAlert, formatVehicleHeader } from '@car-tracker/tracker';
 import { findVehicleByPlate } from './gpsLogService.js';
 import { insertTelemetry, getLatestTelemetry, updateTelemetryTelegramMessage } from './gpsTelemetryService.js';
 import { getPool } from '../db/db.js';
@@ -792,7 +792,7 @@ async function runCycle(): Promise<void> {
           const locationText = locationName || 'Unknown location';
           const driverName = driverOverrides.get(vid) || 'Unassigned';
           const vehicleEmoji = getVehicleEmoji(plate ?? '');
-          const message = `🚨 NO APPROVED TRAVEL ORDER - ${vehicleEmoji} ${plate ?? 'Unknown'}\n👤 Driver: ${driverName}\n📍 Location: ${locationText}\n🕘 ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+          const message = `🚨 NO APPROVED TRAVEL ORDER - ${vehicleEmoji} ${formatVehicleHeader(plate ?? 'Unknown', null)}\n👤 Driver: ${driverName}\n📍 Location: ${locationText}\n🕘 ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
           console.log('[TELEMETRY INSERT]', {
             plateNumber: plate ?? 'Unknown',
             sourceEventType: EVENT_TYPE.NO_APPROVED_TRAVEL_ORDER,
@@ -968,7 +968,7 @@ async function runCycle(): Promise<void> {
             // save/send MOTION_STARTED, close idling session, skip LOCATION_UPDATE
             if (activeIdlingSession?.activeTripId && Number(activeIdlingSession.lastAlertedDurationMinutes ?? 0) >= 10) {
               const motionTripId = activeIdlingSession.activeTripId;
-              const message = `🟢 MOTION STARTED - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+              const message = `🟢 MOTION STARTED - ${getVehicleEmoji(plateNumber)} ${formatVehicleHeader(plateNumber, toNumber)}\n\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
 
               const result = await saveAndSendTelemetryAlert({
                 eventType: EVENT_TYPE.MOTION_STARTED,
@@ -1029,7 +1029,7 @@ async function runCycle(): Promise<void> {
               continue;
             }
 
-            const message = `🗺 LOCATION UPDATE - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n📍 ${locationName}\n⚡ Speed: ${speed} km/h\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+            const message = `🗺 LOCATION UPDATE - ${getVehicleEmoji(plateNumber)} ${formatVehicleHeader(plateNumber, toNumber)}\n\n📍 ${locationName}\n⚡ Speed: ${speed} km/h\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
 
             const result = await saveAndSendTelemetryAlert({
               eventType: EVENT_TYPE.LOCATION_UPDATE,
@@ -1083,7 +1083,7 @@ async function runCycle(): Promise<void> {
               continue;
             }
 
-            const message = `⏱ IDLING TOO LONG - ${getVehicleEmoji(plateNumber)} ${plateNumber}\n\n⏱ Idling for ${Math.round(elapsedMinutes * 10) / 10} minutes\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
+            const message = `⏱ IDLING TOO LONG - ${getVehicleEmoji(plateNumber)} ${formatVehicleHeader(plateNumber, toNumber)}\n\n⏱ Idling for ${Math.round(elapsedMinutes * 10) / 10} minutes\n⛽ Fuel: ${fuelLiters ?? 'Unknown'} L\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
 
             const result = await saveAndSendTelemetryAlert({
               eventType: EVENT_TYPE.IDLING,

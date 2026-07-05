@@ -238,6 +238,14 @@ function formatLocationTime(location, eventTime) {
   return [`📍 ${location}`, `🕘 ${formatEventTime(eventTime)}`];
 }
 
+export function formatVehicleHeader(name, toNumber = null) {
+  const plate = String(name || '').trim();
+  if (toNumber && String(toNumber).trim()) {
+    return `${plate} (${String(toNumber).trim()})`;
+  }
+  return `${plate} (⚠️ No TO)`;
+}
+
 export function formatSpeedingAlert(name, speed, location, eventTime, toNumber = null, driver = null) {
   const excess = Math.max(0, speed - SPEED_LIMIT_KMH);
   const extraLines = [];
@@ -245,7 +253,7 @@ export function formatSpeedingAlert(name, speed, location, eventTime, toNumber =
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `🚨 SPEEDING - ${vehicleEmoji} ${name}`,
+    `🚨 SPEEDING - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
     `⚡ Speed: ${formatSpeed(speed)} km/h (Limit: ${SPEED_LIMIT_KMH} km/h)`,
     `📈 Excess: +${formatSpeed(excess)} km/h over limit`,
     ...extraLines,
@@ -259,7 +267,7 @@ export function formatIgnitionAlert(name, ignition, location, eventTime, toNumbe
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `${ignition ? '🔑 IGNITION ON' : '🔒 IGNITION OFF'} - ${vehicleEmoji} ${name}`,
+    `${ignition ? '🔑 IGNITION ON' : '🔒 IGNITION OFF'} - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
     ...extraLines,
     ...formatLocationTime(location, eventTime),
   );
@@ -267,10 +275,9 @@ export function formatIgnitionAlert(name, ignition, location, eventTime, toNumbe
 
 export function formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber = null, driver = null) {
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
-  const noToText = toNumber ? '' : ' (NO TO)';
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `🔴 IGNITION OFF - ${vehicleEmoji} ${name}${noToText}`,
+    `🔴 IGNITION OFF - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
     `📍 ${location}`,
     `⛽ Fuel: ${formatFuelLiters(fuel)}`,
     `👤 Driver: ${driverText || 'Unassigned'}`,
@@ -283,7 +290,7 @@ export function formatMotionAlert(name, location, eventTime, toNumber = null, dr
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
-  return formatAlert(`🟢 MOTION STARTED - ${vehicleEmoji} ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
+  return formatAlert(`🟢 MOTION STARTED - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`, ...extraLines, ...formatLocationTime(location, eventTime));
 }
 
 export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber = null, driver = null) {
@@ -292,7 +299,7 @@ export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `🗺 LOCATION UPDATE - ${vehicleEmoji} ${name}`,
+    `🗺 LOCATION UPDATE - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
     `📍 ${location}`,
     `⚡ Speed: ${formatSpeed(speed)} km/h`,
     `⛽ Fuel: ${formatFuelLiters(fuel)}`,
@@ -306,7 +313,7 @@ export function formatIdleAlert(name, location, eventTime, toNumber = null, driv
   const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
-  return formatAlert(`⏱ IDLING - ${vehicleEmoji} ${name}`, ...extraLines, ...formatLocationTime(location, eventTime));
+  return formatAlert(`⏱ IDLING - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`, ...extraLines, ...formatLocationTime(location, eventTime));
 }
 
 export function formatIdlingTooLongAlert(name, idleMinutes, fuel, location, eventTime, toNumber = null, driver = null) {
@@ -315,7 +322,7 @@ export function formatIdlingTooLongAlert(name, idleMinutes, fuel, location, even
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `⏱ IDLING TOO LONG - ${vehicleEmoji} ${name}`,
+    `⏱ IDLING TOO LONG - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
     `⏱ Idling for ${formatMinutes(idleMinutes)}`,
     `⛽ Fuel: ${formatFuelLiters(fuel)}`,
     ...extraLines,
@@ -329,7 +336,7 @@ export function formatFuelAlert(name, fuel, location, eventTime, toNumber = null
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
-    `⛽ FUEL LOW - ${vehicleEmoji} ${name}`,
+    `⛽ FUEL LOW - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
     `Fuel: ${formatFuelLiters(fuel)} (Warning below ${LOW_FUEL_LITERS} L)`,
     ...extraLines,
     ...formatLocationTime(location, eventTime),
