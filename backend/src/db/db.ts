@@ -64,6 +64,10 @@ export function getPool(): pg.Pool {
   return pool;
 }
 
+export function setPoolForTest(testPool: pg.Pool | null): void {
+  pool = testPool;
+}
+
 /**
  * Gracefully shut down the pool (call during app shutdown).
  */

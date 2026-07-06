@@ -15,6 +15,8 @@ export interface AlertSummary {
   persisted: number;
 }
 
+export const IDLE_ALERT_THRESHOLDS_MINUTES: number[];
+
 /** Per-vehicle status object returned in the sync result data array. */
 export interface VehicleStatus {
   id: string;

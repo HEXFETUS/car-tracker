@@ -287,36 +287,50 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
       }
     }
 
-    const duplicateResult = await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
-      `SELECT id
-            , latitude
-            , longitude
-         FROM gps_telemetry
-        WHERE vehicle_id = $1
-          AND CASE event_type
-            WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
-            WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
-            WHEN 'IGNITION ON' THEN 'IGNITION_ON'
-            WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
-            WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
-            WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
-            WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
-            WHEN 'IDLING ALERT' THEN 'IDLING_TOO_LONG'
-            WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING_TOO_LONG'
-            WHEN 'IDLING' THEN 'IDLING_TOO_LONG'
-            WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
-            ELSE event_type
-          END = $2
-          AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
-          AND lower(trim(regexp_replace(regexp_replace(coalesce(location_name, ''), ',+$', ''), '\\s+', ' ', 'g'))) = $4
-        LIMIT 1`,
-      [
-        data.vehicleId,
-        eventType,
-        recordedAtMinute,
-        normalizedLocationName,
-      ],
-    );
+    const duplicateResult = eventType === 'IGNITION_ON'
+      ? await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
+        `SELECT id, latitude, longitude
+           FROM gps_telemetry
+          WHERE vehicle_id = $1
+            AND active_trip_id = $2
+            AND CASE event_type
+              WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+              WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+              ELSE event_type
+            END = 'IGNITION_ON'
+          LIMIT 1`,
+        [data.vehicleId, data.activeTripId ?? null],
+      )
+      : await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
+        `SELECT id
+              , latitude
+              , longitude
+           FROM gps_telemetry
+          WHERE vehicle_id = $1
+            AND CASE event_type
+              WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
+              WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
+              WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+              WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+              WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
+              WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
+              WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
+              WHEN 'IDLING ALERT' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
+              ELSE event_type
+            END = $2
+            AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
+            AND lower(trim(regexp_replace(regexp_replace(coalesce(location_name, ''), ',+$', ''), '\\s+', ' ', 'g'))) = $4
+          LIMIT 1`,
+        [
+          data.vehicleId,
+          eventType,
+          recordedAtMinute,
+          normalizedLocationName,
+        ],
+      );
     const duplicateRow = duplicateResult.rows[0];
     if (duplicateRow?.id) {
       if (eventType !== 'LOCATION_UPDATE') {
@@ -372,31 +386,45 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
     console.log(
       `[telemetry] INSERT gps_telemetry skipped by conflict vehicle=${data.vehicleId} event=${eventType} active_trip_id=${data.activeTripId ?? 'null'}`,
     );
-    const conflictResult = await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
-      `SELECT id
-            , latitude
-            , longitude
-         FROM gps_telemetry
-        WHERE vehicle_id = $1
-          AND CASE event_type
-            WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
-            WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
-            WHEN 'IGNITION ON' THEN 'IGNITION_ON'
-            WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
-            WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
-            WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
-            WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
-            WHEN 'IDLING ALERT' THEN 'IDLING_TOO_LONG'
-            WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING_TOO_LONG'
-            WHEN 'IDLING' THEN 'IDLING_TOO_LONG'
-            WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
-            ELSE event_type
-          END = $2
-          AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
-          AND lower(trim(regexp_replace(regexp_replace(coalesce(location_name, ''), ',+$', ''), '\\s+', ' ', 'g'))) = $4
-        LIMIT 1`,
-      [data.vehicleId, eventType, recordedAtMinute, normalizedLocationName],
-    );
+    const conflictResult = eventType === 'IGNITION_ON'
+      ? await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
+        `SELECT id, latitude, longitude
+           FROM gps_telemetry
+          WHERE vehicle_id = $1
+            AND active_trip_id = $2
+            AND CASE event_type
+              WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+              WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+              ELSE event_type
+            END = 'IGNITION_ON'
+          LIMIT 1`,
+        [data.vehicleId, data.activeTripId ?? null],
+      )
+      : await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
+        `SELECT id
+              , latitude
+              , longitude
+           FROM gps_telemetry
+          WHERE vehicle_id = $1
+            AND CASE event_type
+              WHEN 'LOCATION UPDATE' THEN 'LOCATION_UPDATE'
+              WHEN 'LOCATION UPDATE ALERT' THEN 'LOCATION_UPDATE'
+              WHEN 'IGNITION ON' THEN 'IGNITION_ON'
+              WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
+              WHEN 'IGNITION OFF' THEN 'IGNITION_OFF'
+              WHEN 'IGNITION OFF ALERT' THEN 'IGNITION_OFF'
+              WHEN 'MOVING ALERT' THEN 'MOTION_STARTED'
+              WHEN 'IDLING ALERT' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING TOO LONG ALERT' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING' THEN 'IDLING_TOO_LONG'
+              WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
+              ELSE event_type
+            END = $2
+            AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
+            AND lower(trim(regexp_replace(regexp_replace(coalesce(location_name, ''), ',+$', ''), '\\s+', ' ', 'g'))) = $4
+          LIMIT 1`,
+        [data.vehicleId, eventType, recordedAtMinute, normalizedLocationName],
+      );
     const conflictRow = conflictResult.rows[0];
     let conflictId = conflictRow?.id ?? null;
     if (conflictId && data.telegramMessage) {
