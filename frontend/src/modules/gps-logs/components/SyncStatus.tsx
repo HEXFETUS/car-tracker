@@ -3,6 +3,7 @@
 // Displays the last synchronization time and a loading indicator for auto-sync.
 
 import { Loader2 } from 'lucide-react';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 
 interface SyncStatusProps {
   autoSyncing: boolean;
@@ -20,12 +21,7 @@ export function SyncStatus({ autoSyncing, lastSyncTime }: SyncStatusProps) {
       ) : lastSyncTime ? (
         <span>
           Last synchronized:{' '}
-          {lastSyncTime.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })}
+          {formatDateTimeManila(lastSyncTime.toISOString())}
         </span>
       ) : (
         <span>No synchronization yet</span>

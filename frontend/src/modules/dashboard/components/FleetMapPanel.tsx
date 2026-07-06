@@ -9,6 +9,7 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 import { cn } from '@/shared/lib/utils';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import type { LiveMonitoringRow } from '../api/dashboard-api';
 
 // Ensure Leaflet default icon URLs are set (fixes blank markers in some bundlers)
@@ -24,12 +25,6 @@ interface FleetMapPanelProps {
 }
 
 type FilterKey = 'All' | 'Moving' | 'Idling' | 'Offline' | 'Alert' | 'No TO' | 'Maintenance Due';
-
-function fmtTime(iso: string | null): string {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
 
 function getVehicleStatus(row: LiveMonitoringRow): 'moving' | 'idling' | 'offline' | 'alert' {
     const speed = Number(row.speed_kmh ?? row.speed ?? 0);
@@ -223,7 +218,7 @@ export function FleetMapPanel({ vehicles, selectedVehicleId, onSelectVehicle, on
                                             <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', meta.badge)}>{meta.label}</span>
                                         </div>
                                         <p className="mt-1 text-sm font-medium text-zinc-700">{entry.detail}</p>
-                                        <p className="mt-1 text-xs text-zinc-500">{entry.driver} · {fmtTime(entry.time)}</p>
+                                        <p className="mt-1 text-xs text-zinc-500">{entry.driver} · {formatDateTimeManila(entry.time)}</p>
                                     </div>
                                 </button>
                             );
@@ -333,7 +328,7 @@ function MapView({ vehicles, selectedVehicleId, onSelectVehicle, onOpenTripDetai
             <div><span class="font-semibold text-zinc-700">TO:</span> ${vehicle.current_travel_order || '—'}</div>
             <div><span class="font-semibold text-zinc-700">GPS #:</span> ${vehicle.current_travel_order_id?.slice(0, 8) || '—'}</div>
             <div><span class="font-semibold text-zinc-700">Trip Type:</span> ${vehicle.current_travel_order ? 'Active trip' : 'No active trip'}</div>
-            <div><span class="font-semibold text-zinc-700">Updated:</span> ${fmtTime(vehicle.last_seen)}</div>
+            <div><span class="font-semibold text-zinc-700">Updated:</span> ${formatDateTimeManila(vehicle.last_seen)}</div>
           </div>
           <div class="text-xs text-zinc-600 mt-1"><span class="font-semibold text-zinc-700">Destination:</span> ${vehicle.destination || '—'}</div>
           <div class="mt-3 flex flex-wrap gap-2">

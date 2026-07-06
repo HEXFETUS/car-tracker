@@ -21,7 +21,8 @@ import {
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { cn } from '@/shared/lib/utils';
-import { fetchTripDetails, updateGpsLogNotes, type TripDetailsResponse } from '../api/gps-logs-api';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
+import { fetchNoToTripDetails, fetchTripDetails, updateGpsLogNotes, type TripDetailsResponse } from '../api/gps-logs-api';
 
 // Fix Leaflet default marker icon issue
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
@@ -36,18 +37,7 @@ interface TripDetailsModalProps {
   onClose: () => void;
   onOpenTrip?: (id: string) => void;
   logId: string | null;
-}
-
-function formatDateTime(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  source?: 'to' | 'no-to';
 }
 
 function formatNumber(val: number | null | undefined, decimals = 2): string {
@@ -105,7 +95,7 @@ function AnomalyBadge({ show }: { show: boolean }) {
   );
 }
 
-export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDetailsModalProps) {
+export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 'to' }: TripDetailsModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<TripDetailsResponse['data'] | null>(null);
@@ -119,7 +109,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
     try {
       setLoading(true);
       setError(null);
-      const result = await fetchTripDetails(logId);
+      const result = source === 'no-to' ? await fetchNoToTripDetails(logId) : await fetchTripDetails(logId);
       setData(result.data);
       setNotes(result.data.trip.notes ?? '');
       console.log('[TripDetailsModal] Trip data:', result.data.trip);
@@ -128,7 +118,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
     } finally {
       setLoading(false);
     }
-  }, [logId]);
+  }, [logId, source]);
 
   useEffect(() => {
     if (isOpen && logId) {
@@ -175,7 +165,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
       fillOpacity: 1,
     })
       .addTo(map)
-      .bindPopup(`<b>Start</b><br/>${route[0].lat.toFixed(5)}, ${route[0].lng.toFixed(5)}<br/>${formatDateTime(route[0].timestamp)}`);
+      .bindPopup(`<b>Start</b><br/>${route[0].lat.toFixed(5)}, ${route[0].lng.toFixed(5)}<br/>${formatDateTimeManila(route[0].timestamp)}`);
 
     // End marker (red)
     const end = latLngs[latLngs.length - 1];
@@ -188,7 +178,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
       fillOpacity: 1,
     })
       .addTo(map)
-      .bindPopup(`<b>End</b><br/>${route[route.length - 1].lat.toFixed(5)}, ${route[route.length - 1].lng.toFixed(5)}<br/>${formatDateTime(route[route.length - 1].timestamp)}`);
+      .bindPopup(`<b>End</b><br/>${route[route.length - 1].lat.toFixed(5)}, ${route[route.length - 1].lng.toFixed(5)}<br/>${formatDateTimeManila(route[route.length - 1].timestamp)}`);
 
     // Fit bounds
     const bounds = polyline.getBounds();
@@ -252,7 +242,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
           <div className="flex items-center gap-3">
             <Navigation className="size-5 text-brand-teal" />
             <div>
-              <h2 className="text-lg font-bold text-zinc-800">Trip Details</h2>
+              <h2 className="text-lg font-bold text-zinc-800">{source === 'no-to' ? 'No TO Details' : 'Trip Details'}</h2>
               {trip && (
                 <p className="text-xs text-zinc-500 mt-0.5">
                   {trip.vehicle} — {trip.driver}
@@ -337,18 +327,34 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
                   <InfoSection title="Origin" icon={<CircleDot className="size-4 text-emerald-600" />}>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                       <InfoField label="Address" value={trip.origin || '—'} />
-                      <InfoField label="Start Time" value={formatDateTime(trip.startTime)} />
+                      <InfoField label="Start Time" value={formatDateTimeManila(trip.startTime)} />
                       <InfoField label="Start Coordinates" value={trip.coordinatesOrigin || '—'} />
                     </div>
                   </InfoSection>
 
-                  <InfoSection title="Destination / Arrival" icon={<Flag className="size-4 text-red-600" />}>
+                  <InfoSection title="Arrival" icon={<Flag className="size-4 text-red-600" />}>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                      <InfoField label="Address" value={trip.destination || '—'} />
-                      <InfoField label="Arrived Time" value={formatDateTime(trip.arrivedTime)} />
-                      <InfoField label="Arrived Coordinates" value={trip.arrivedCoordinates || '—'} />
-                      <InfoField label="Arrived Location" value={trip.arrivedLocation || '—'} />
-                      <InfoField label="End Coordinates" value={trip.coordinatesDestination || '—'} />
+                      <InfoField label="Destination Address" value={trip.plannedDestinationAddress || trip.toDestination || trip.destination || '—'} />
+                      <InfoField label="Arrived Time" value={formatDateTimeManila(trip.arrivedTime)} />
+                      <InfoField label="Destination Coordinates" value={trip.plannedDestinationCoordinates || '—'} />
+                      {source !== 'no-to' && (
+                        <>
+                          <InfoField label="Arrived Location" value={trip.arrivedLocation || '—'} />
+                          <InfoField label="Arrived Coordinates" value={trip.arrivedCoordinates || '—'} />
+                          <InfoField label="Matched Distance" value={trip.matchedDestinationDistanceM != null ? `${formatNumber(trip.matchedDestinationDistanceM, 0)} m` : '—'} />
+                        </>
+                      )}
+                    </div>
+                  </InfoSection>
+
+                  <InfoSection title="End" icon={<MapPin className="size-4 text-brand-teal" />}>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <InfoField label="End Address" value={trip.endAddress || trip.destination || '—'} />
+                      <InfoField label="End Time" value={formatDateTimeManila(trip.returnedToBaseAt || trip.endTime)} />
+                      <InfoField label="End Coordinates" value={trip.endCoordinates || trip.coordinatesDestination || '—'} />
+                      {source !== 'no-to' && (
+                        <InfoField label="Returned to Base Distance" value={trip.matchedOriginDistanceM != null ? `${formatNumber(trip.matchedOriginDistanceM, 0)} m` : '—'} />
+                      )}
                     </div>
                   </InfoSection>
 
@@ -359,61 +365,71 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId }: TripDet
                       <MetricTile icon={<Timer className="size-4" />} label="Engine Hours" value={trip.engineHours != null ? `${formatNumber(trip.engineHours, 1)} hrs` : '—'} />
                       <MetricTile icon={<Clock3 className="size-4" />} label="Moving Hours" value={trip.movingHours != null ? `${formatNumber(trip.movingHours, 1)} hrs` : '—'} />
                       <MetricTile icon={<Gauge className="size-4" />} label="Max Speed" value={trip.maxSpeed != null ? `${formatNumber(trip.maxSpeed, 0)} kph` : '—'} />
-                      <MetricTile icon={<Activity className="size-4" />} label="End Time" value={formatDateTime(trip.endTime)} />
-                      <MetricTile icon={<Link2 className="size-4" />} label="Linked TO" value={trip.linkedTO || '—'} />
-                      <MetricTile icon={<ClipboardCheck className="size-4" />} label="TO Status" value={trip.toStatus || '—'} />
+                      {source !== 'no-to' && (
+                        <>
+                          <MetricTile icon={<Link2 className="size-4" />} label="Linked TO" value={trip.linkedTO || '—'} />
+                          <MetricTile icon={<ClipboardCheck className="size-4" />} label="TO Status" value={trip.travelOrderStatus || trip.toStatus || '—'} />
+                        </>
+                      )}
                     </div>
                   </InfoSection>
-                  <InfoSection title="Linked Trip" icon={<Navigation className="size-4 text-brand-teal" />}>
-                    <div className="space-y-3">
-                      <div className="rounded-2xl border border-zinc-200 bg-white p-4">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
-                        <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.missionDisplay || 'Standalone'}</p>
+                  {source !== 'no-to' && trip.anomalyReason && (
+                    <InfoSection title="Anomaly" icon={<Activity className="size-4 text-red-600" />}>
+                      <InfoField label="Reason" value={trip.anomalyReason} />
+                    </InfoSection>
+                  )}
+                  {source !== 'no-to' && (
+                    <InfoSection title="Linked Trip" icon={<Navigation className="size-4 text-brand-teal" />}>
+                      <div className="space-y-3">
+                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
+                          <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.missionDisplay || 'Standalone'}</p>
+                        </div>
+                        {trip.linkedOutboundTrip && (
+                          <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
+                                <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.linkedOutboundTrip.gpsRecordNo} (Outbound)</p>
+                              </div>
+                              {onOpenTrip && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onOpenTrip(trip.linkedOutboundTrip!.id);
+                                  }}
+                                  className="rounded-lg border border-brand-teal bg-brand-teal/5 px-3 py-2 text-xs font-semibold text-brand-teal hover:bg-brand-teal/10 transition-colors"
+                                >
+                                  View Details
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {trip.linkedReturnTrip && (
+                          <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
+                                <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.linkedReturnTrip.gpsRecordNo} (Return)</p>
+                              </div>
+                              {onOpenTrip && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onOpenTrip(trip.linkedReturnTrip!.id);
+                                  }}
+                                  className="rounded-lg border border-brand-teal bg-brand-teal/5 px-3 py-2 text-xs font-semibold text-brand-teal hover:bg-brand-teal/10 transition-colors"
+                                >
+                                  View Details
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      {trip.linkedOutboundTrip && (
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
-                              <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.linkedOutboundTrip.gpsRecordNo} (Outbound)</p>
-                            </div>
-                            {onOpenTrip && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  onOpenTrip(trip.linkedOutboundTrip!.id);
-                                }}
-                                className="rounded-lg border border-brand-teal bg-brand-teal/5 px-3 py-2 text-xs font-semibold text-brand-teal hover:bg-brand-teal/10 transition-colors"
-                              >
-                                View Details
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                      {trip.linkedReturnTrip && (
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Linked Trip</p>
-                              <p className="mt-2 text-sm font-semibold text-zinc-800">{trip.linkedReturnTrip.gpsRecordNo} (Return)</p>
-                            </div>
-                            {onOpenTrip && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  onOpenTrip(trip.linkedReturnTrip!.id);
-                                }}
-                                className="rounded-lg border border-brand-teal bg-brand-teal/5 px-3 py-2 text-xs font-semibold text-brand-teal hover:bg-brand-teal/10 transition-colors"
-                              >
-                                View Details
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </InfoSection>
+                    </InfoSection>
+                  )}
                 </div>
 
                 {/* Editable Notes */}

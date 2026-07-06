@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import {
   tableContainerClass,
   tableClass,
@@ -52,14 +53,6 @@ function getPlateColor(plate: string) {
   }
   const index = Math.abs(hashString(plate)) % PLATE_COLORS.length;
   return PLATE_COLORS[index];
-}
-
-function formatDateTime(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
 }
 
 function formatNumber(val: number | null | undefined, decimals = 2): string {
@@ -359,7 +352,7 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                     const evt = getEventConfig(row.eventType);
                     return (
                       <tr key={row.id} className={tableRowClass}>
-                        <td className={tableCellClass}>{formatDateTime(row.recordedAt)}</td>
+                        <td className={tableCellClass}>{formatDateTimeManila(row.recordedAt)}</td>
                         <td className={tableCellClass}>
                           <span className={cn("inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium font-mono", getPlateColor(row.plateNumber))}>
                             <Car className="size-3" />
@@ -420,7 +413,7 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                         <Car className="size-2.5" />
                         {row.plateNumber}
                       </span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">{formatDateTime(row.recordedAt)}</p>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">{formatDateTimeManila(row.recordedAt)}</p>
                     </div>
                     <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', evt.color)}>
                       {evt.icon}

@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { History, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import {
   tableClass,
   tableHeaderClass,
@@ -115,7 +116,7 @@ export function SchedulerRunHistory() {
                 <div className="col-span-2">
                   <p className="text-[11px] text-zinc-400">Last Run</p>
                   <p className="text-xs font-medium text-zinc-700">
-                    {new Date(data.summary.lastRunAt).toLocaleString()}
+                    {formatDateTimeManila(data.summary.lastRunAt)}
                   </p>
                 </div>
               )}
@@ -141,8 +142,8 @@ export function SchedulerRunHistory() {
                   {data.runs.slice(0, 20).map((run) => (
                     <tr key={run.id} className={tableRowClass}>
                       <td className={tableCellClass}>#{run.id}</td>
-                      <td className={tableCellClass}>{new Date(run.started_at).toLocaleString()}</td>
-                      <td className={tableCellClass}>{run.finished_at ? new Date(run.finished_at).toLocaleString() : '—'}</td>
+                      <td className={tableCellClass}>{formatDateTimeManila(run.started_at)}</td>
+                      <td className={tableCellClass}>{run.finished_at ? formatDateTimeManila(run.finished_at) : '—'}</td>
                       <td className={tableCellClass}>{formatDuration(run.started_at, run.finished_at)}</td>
                       <td className={tableCellClass}>
                         <SettingsStatusBadge status={getRunStatusVariant(run.status)} />

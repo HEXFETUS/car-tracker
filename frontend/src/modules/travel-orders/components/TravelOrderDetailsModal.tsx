@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, ArrowUpDown, Navigation } from 'lucide-react';
+import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
+import { formatDateManila, formatTimeManila, formatDateTimeManila } from '@/shared/lib/date-utils';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import {
@@ -160,20 +161,11 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
   }
 
   function formatDateOnly(dateStr: string | null) {
-    if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
+    return formatDateManila(dateStr);
   }
 
   function formatTimeOnly(dateStr: string | null) {
-    if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    return formatTimeManila(dateStr);
   }
 
   function handleClose() {
@@ -580,7 +572,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                             )}
                             {dest.arrivedAt && (
                               <p className="text-xs text-green-600">
-                                🕐 Arrived {new Date(dest.arrivedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                🕐 Arrived {formatDateTimeManila(dest.arrivedAt)}
                                 {dest.arrivalDistanceMeters && ` (${dest.arrivalDistanceMeters}m)`}
                               </p>
                             )}

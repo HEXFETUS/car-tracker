@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { syncFleetAndAlert, sendTelegram, getVehicleEmoji, formatIgnitionAlert, formatVehicleHeader } from '@car-tracker/tracker';
 import { findVehicleByPlate, syncGpsTripLogsFromTelemetry } from './gpsLogService.js';
+import { syncNoToLogsFromTelemetry } from './noToLifecycleService.js';
 import { insertTelemetry, getLatestTelemetry, updateTelemetryTelegramDelivery, updateTelemetryTelegramMessage } from './gpsTelemetryService.js';
 import { getPool } from '../db/db.js';
 import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
@@ -965,6 +966,14 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
     }
     if (result.data.length > 0) {
       console.log('[scheduler] Sample vehicle:', JSON.stringify(result.data[0], null, 2));
+    }
+
+    // ── No-TO Log Sync ───────────────────────────────────────
+    try {
+      const noToResult = await syncNoToLogsFromTelemetry();
+      console.log(`[scheduler] No-TO sync: created=${noToResult.created} updated=${noToResult.updated} skipped=${noToResult.skipped} failed=${noToResult.failed}`);
+    } catch (noToErr) {
+      console.error('[scheduler] No-TO sync failed:', (noToErr as Error).message);
     }
 
     // ── GPS Log Persistence (DISABLED for scheduler) ───────────

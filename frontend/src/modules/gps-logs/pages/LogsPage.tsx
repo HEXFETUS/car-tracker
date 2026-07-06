@@ -3,10 +3,11 @@
 // Dedicated page for GPS Logs functionality.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, Navigation, AlertTriangle, Eye, History, Calendar, X, Car, RefreshCw, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { Loader2, Navigation, AlertTriangle, Eye, History, Calendar, X, Car, RefreshCw } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { apiFetch } from '@/shared/api-client';
 import { cn } from '@/shared/lib/utils';
+import { formatDateManila } from '@/shared/lib/date-utils';
 import {
   tableContainerClass,
   tableClass,
@@ -29,19 +30,8 @@ import { GpsLogsToolbar, type TabKey } from '../components/GpsLogsToolbar';
 
 // ── Helpers ────────────────────────────────────────────────────
 
-function formatDate(iso: string | undefined | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function getTripType(log: EnrichedGpsTripLog): 'RETURN' | 'OUTBOUND' {
-  return String(log.tripType ?? '').toUpperCase() === 'RETURN' ? 'RETURN' : 'OUTBOUND';
-}
-
 function getMissionDisplay(log: EnrichedGpsTripLog): string {
-  const tripType = getTripType(log);
+  const tripType = String(log.tripType ?? '').toUpperCase() === 'RETURN' ? 'RETURN' : 'OUTBOUND';
   if (tripType === 'RETURN') {
     return log.parentGpsRecordNo ? `${log.parentGpsRecordNo} (Outbound)` : 'Standalone';
   }
@@ -49,22 +39,6 @@ function getMissionDisplay(log: EnrichedGpsTripLog): string {
     return `${log.pairedReturnGpsRecordNo} (Return)`;
   }
   return 'Standalone';
-}
-
-function TripTypeBadge({ tripType }: { tripType: 'RETURN' | 'OUTBOUND' }) {
-  const isReturn = tripType === 'RETURN';
-  const Icon = isReturn ? ArrowDownLeft : ArrowUpRight;
-  return (
-    <span className={cn(
-      'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold',
-      isReturn
-        ? 'border-blue-200 bg-blue-50 text-blue-700'
-        : 'border-orange-200 bg-orange-50 text-orange-700',
-    )}>
-      <Icon className="size-3.5" />
-      {isReturn ? 'Return' : 'Outbound'}
-    </span>
-  );
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -78,6 +52,18 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: 'bg-zinc-50 text-zinc-500 border-zinc-200',
   completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
+
+function getTOStatusBadgeClass(status: string | null | undefined): string {
+  const colorMap: Record<string, string> = {
+    APPROVED: 'bg-green-50 text-green-700 border-green-200',
+    PENDING: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+    'FOR REQUEST': 'bg-blue-50 text-blue-700 border-blue-200',
+    REJECTED: 'bg-red-50 text-red-700 border-red-200',
+    CANCELLED: 'bg-gray-50 text-gray-500 border-gray-200',
+    COMPLETED: 'bg-green-50 text-green-700 border-green-200',
+  };
+  return colorMap[status ?? ''] ?? 'bg-gray-50 text-gray-500 border-gray-200';
+}
 
 const pageSize = 25;
 
@@ -347,7 +333,6 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                     <th className={tableHeaderCellClass}>Linked TO Number</th>
                     <th className={tableHeaderCellClass}>Vehicle</th>
                     <th className={tableHeaderCellClass}>Driver</th>
-                    <th className={tableHeaderCellClass}>Trip Type</th>
                     <th className={tableHeaderCellClass}>Trip Status</th>
                     <th className={cn(tableHeaderCellClass, 'text-center')}>Anomaly</th>
                     <th className={cn(tableHeaderCellClass, 'text-right')}>Action</th>
@@ -355,24 +340,37 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                 </thead>
                 <tbody>
                   {displayLogs.map((log) => {
-                    const hasAnomaly = log.anomalyFlag && !log.toNumber;
-                    const tripType = getTripType(log);
+                    // Anomaly logic:
+                    // - No travel order linked → "NO TO"
+                    // - Linked but travel order status != APPROVED → "No Approved TO"
+                    // - Linked and status == APPROVED → no anomaly
+                    const noTravelOrder = !log.travelOrderId;
+                    const hasAnomaly = noTravelOrder || (log.travelOrderStatus && log.travelOrderStatus !== 'APPROVED');
+                    const anomalyReason = noTravelOrder ? 'NO TO' : (log.travelOrderStatus && log.travelOrderStatus !== 'APPROVED' ? 'No Approved TO' : null);
                     const isCompleted = log.tripStatusGps === 'completed' || log.tripStatusGps === 'arrived' || (log.departureTimeGps && log.arrivalTimeGps);
                     const isOngoing = log.tripStatusGps === 'en-route' || log.tripStatusGps === 'departed' || log.tripStatusGps === 'ongoing' || log.tripStatusGps === 'tracking_started';
                     const tripStatus = isCompleted ? 'Completed' : isOngoing ? 'Ongoing' : log.tripStatusGps === 'cancelled' ? 'Cancelled' : log.tripStatusGps === 'pending' ? 'Not Synced' : 'No GPS';
                     return (
                       <tr key={log.id} className={cn(tableRowClass, hasAnomaly && 'bg-red-50/40 hover:bg-red-50/60')}>
-                        <td className={tableCellClass}>{formatDate(log.toDate || log.tripDate || log.createdAt || log.departureTimeGps)}</td>
+                        <td className={tableCellClass}>{formatDateManila(log.toDate || log.tripDate || log.createdAt || log.departureTimeGps)}</td>
                         <td className={tableCellClass}>
                           <span className="font-mono text-xs text-brand-teal font-medium">
                             {log.gpsRecordNo || '—'}
                           </span>
                         </td>
                         <td className={tableCellClass}>
-                          {log.toStatusAuto ? <span className="text-xs text-zinc-500">{log.toStatusAuto}</span> : hasAnomaly ? <span className="text-xs text-orange-600 font-medium">NO TO</span> : <span className="text-zinc-300">—</span>}
+                          {log.travelOrderStatus ? (
+                            <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase', getTOStatusBadgeClass(log.travelOrderStatus))}>
+                              {log.travelOrderStatus}
+                            </span>
+                          ) : noTravelOrder ? (
+                            <span className="text-xs text-orange-600 font-medium">NO TO</span>
+                          ) : (
+                            <span className="text-zinc-300">—</span>
+                          )}
                         </td>
                         <td className={tableCellClass}>
-                          {log.toNumber ? <span className="font-mono text-xs text-brand-teal font-medium">{log.toNumber}</span> : hasAnomaly ? <span className="inline-flex items-center rounded-md bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700">ANOMALY - NO TO</span> : <span className="text-zinc-300">—</span>}
+                          {log.toNumber ? <span className="font-mono text-xs text-brand-teal font-medium">{log.toNumber}</span> : hasAnomaly ? <span className="inline-flex items-center rounded-md bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700">ANOMALY - {anomalyReason}</span> : <span className="text-zinc-300">—</span>}
                         </td>
                         <td className={tableCellClass}>
                           <span className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 font-mono">
@@ -381,14 +379,13 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                           </span>
                         </td>
                         <td className={cn(tableCellClass, 'max-w-32 truncate')} title={log.driverName}>{log.driverName}</td>
-                        <td className={tableCellClass}><TripTypeBadge tripType={tripType} /></td>
                         <td className={tableCellClass}>
                           <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize', STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600')}>
                             {tripStatus}
                           </span>
                         </td>
                         <td className={cn(tableCellClass, 'text-center')}>
-                          {hasAnomaly ? <span className="inline-flex items-center rounded-md bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700">⚠ ANOMALY</span> : <span className="text-zinc-300 text-xs">—</span>}
+                          {hasAnomaly ? <span className="inline-flex items-center rounded-md bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700">⚠ {anomalyReason}</span> : <span className="text-zinc-300 text-xs">—</span>}
                         </td>
                         <td className={cn(tableCellClass, 'text-right')}>
                           <button
@@ -418,8 +415,8 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
           {/* Mobile cards */}
           <div className="space-y-3 md:hidden">
             {displayLogs.map((log) => {
-              const hasAnomaly = log.anomalyFlag && !log.toNumber;
-              const tripType = getTripType(log);
+              const noTravelOrder = !log.travelOrderId;
+              const hasAnomaly = noTravelOrder || (log.travelOrderStatus && log.travelOrderStatus !== 'APPROVED');
               const isCompleted = log.tripStatusGps === 'completed' || log.tripStatusGps === 'arrived' || (log.departureTimeGps && log.arrivalTimeGps);
               const isOngoing = log.tripStatusGps === 'en-route' || log.tripStatusGps === 'departed' || log.tripStatusGps === 'ongoing' || log.tripStatusGps === 'tracking_started';
               const tripStatus = isCompleted ? 'Completed' : isOngoing ? 'Ongoing' : log.tripStatusGps === 'cancelled' ? 'Cancelled' : log.tripStatusGps === 'pending' ? 'Not Synced' : 'No GPS';
@@ -427,14 +424,13 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                 <div key={log.id} className={cn('rounded-xl bg-white shadow-brand border border-zinc-100 overflow-hidden', hasAnomaly && 'ring-1 ring-red-200')}>
                 <div className="flex items-center justify-between bg-brand-cream/60 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs text-zinc-500">{formatDate(log.toDate || log.tripDate || log.createdAt || log.departureTimeGps)}</p>
+                      <p className="text-xs text-zinc-500">{formatDateManila(log.toDate || log.tripDate || log.createdAt || log.departureTimeGps)}</p>
                       <p className="text-xs font-mono text-brand-teal font-medium mt-0.5">
                         GPS Number: {log.gpsRecordNo || '—'}
                       </p>
                       {log.toNumber && <p className="text-xs font-mono text-brand-teal font-medium mt-0.5">{log.toNumber}</p>}
                     </div>
                     <div className="flex flex-col items-end gap-1">
-                      <TripTypeBadge tripType={tripType} />
                       <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize', STATUS_COLORS[log.tripStatusGps] ?? 'bg-zinc-50 text-zinc-600')}>
                         {tripStatus}
                       </span>

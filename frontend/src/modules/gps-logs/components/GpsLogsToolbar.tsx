@@ -4,10 +4,10 @@
 // Tabs on the left, filters in the middle, actions on the right.
 // Wraps gracefully on smaller screens.
 
-import { History, Gauge, Search, RotateCcw } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, FileWarning, Search, RotateCcw } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
-export type TabKey = 'logs' | 'telemetry';
+export type TabKey = 'logs' | 'no-to' | 'alerts';
 
 interface GpsLogsToolbarProps {
   activeTab: TabKey;
@@ -24,8 +24,9 @@ interface GpsLogsToolbarProps {
 }
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: 'logs', label: 'Logs', icon: <History className="size-4" /> },
-  { key: 'telemetry', label: 'Telemetry', icon: <Gauge className="size-4" /> },
+  { key: 'logs', label: 'TO Logs', icon: <ClipboardCheck className="size-4" /> },
+  { key: 'no-to', label: 'No TO Logs', icon: <FileWarning className="size-4" /> },
+  { key: 'alerts', label: 'Alerts', icon: <AlertTriangle className="size-4" /> },
 ];
 
 export function GpsLogsToolbar({

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Loader2, Check, MapPin, Calendar, Clock, Truck, UserCircle, FileText, ClipboardCheck } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import {
   fetchVehicles,
   fetchDrivers,
@@ -94,13 +95,7 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
 
   function formatDateTime(dateStr: string | null) {
     if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    return formatDateTimeManila(dateStr);
   }
 
   async function handleAssign() {

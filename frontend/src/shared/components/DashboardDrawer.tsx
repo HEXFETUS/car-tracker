@@ -7,19 +7,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { X, Car, MapPin, Navigation, Gauge, AlertTriangle, Radio, ExternalLink, Star, Activity, Loader2 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import { useDrawer, type DrawerView } from '@/shared/context/DrawerContext';
 import { useRecentActivity } from '@/shared/context/RecentActivityContext';
 import { useFavorites } from '@/shared/context/FavoritesContext';
 import { apiFetch } from '@/shared/api-client';
 
 // ── Helpers ────────────────────────────────────────────────────
-
-function fmtTime(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
 
 function fmtSpeed(n: number | null | undefined): string {
   if (n == null) return '—';
@@ -250,7 +244,7 @@ function VehicleDrawerContent({ view }: { view: Extract<DrawerView, { type: 'veh
             ) : '—'
           } />
           <DrawerRow label="Location" value={vehicle.locationName || '—'} />
-          <DrawerRow label="Last Updated" value={fmtTime(vehicle.lastUpdated)} />
+          <DrawerRow label="Last Updated" value={formatDateTimeManila(vehicle.lastUpdated)} />
         </DrawerSection>
 
         <DrawerSection title="Route" icon={Navigation}>
@@ -575,7 +569,7 @@ function AlertDrawerContent({ view: _view }: { view: Extract<DrawerView, { type:
           <DrawerRow label="Type" value={<span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700">IDLING</span>} />
           <DrawerRow label="Vehicle" value="—" />
           <DrawerRow label="Location" value="—" />
-          <DrawerRow label="Time" value={fmtTime(new Date().toISOString())} />
+          <DrawerRow label="Time" value={formatDateTimeManila(new Date().toISOString())} />
         </DrawerSection>
 
         <DrawerSection>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { AlertTriangle, Bell, CheckCheck, Megaphone, Plane, Settings } from 'lucide-react';
 import type { Notification, NotificationType } from '@/shared/types';
 import { cn } from '@/shared/lib/utils';
+import { formatDateManila } from '@/shared/lib/date-utils';
 import {
   fetchNotifications,
   fetchUnreadCount,
@@ -27,7 +28,7 @@ function formatRelativeTime(value: string) {
   if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
-  return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatDateManila(value);
 }
 
 function buildTarget(notification: Notification) {

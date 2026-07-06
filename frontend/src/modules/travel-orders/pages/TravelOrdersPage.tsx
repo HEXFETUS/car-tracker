@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Loader2, Eye, MapPin, Calendar, User, Truck, UserCircle, Search, RotateCcw } from 'lucide-react';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { NewTravelOrderModal } from '../components/NewTravelOrderModal';
 import { TravelOrderDetailsModal } from '../components/TravelOrderDetailsModal';
@@ -132,13 +133,7 @@ export function TravelOrdersPage() {
 
   function formatDateTime(dateStr: string | null) {
     if (!dateStr) return null;
-    return new Date(dateStr).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    return formatDateTimeManila(dateStr);
   }
 
   const statusBadge = (status: string) => {

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, Eye, Wrench, Search } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
+import { formatDateManila } from '@/shared/lib/date-utils';
 import {
   tableContainerClass,
   tableClass,
@@ -195,7 +196,7 @@ export function VehiclesPage({ searchQuery = '' }: VehiclesPageProps) {
                       )}
                     </td>
                     <td className={tableCellClass}>
-                      {new Date(vehicle.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {formatDateManila(vehicle.updatedAt)}
                     </td>
                     <td className={cn(tableCellClass, 'text-right')}>
                       <button

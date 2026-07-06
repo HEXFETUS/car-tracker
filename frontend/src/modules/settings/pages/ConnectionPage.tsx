@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import {
   fetchConnectionStatus,
   updateSchedulerInterval,
@@ -42,7 +43,7 @@ function connectionStatusToVariant(status: ConnectionCheck['status']): StatusVar
 function formatDate(dateStr: unknown): string {
   if (!dateStr || typeof dateStr !== 'string') return '—';
   try {
-    return new Date(dateStr).toLocaleString();
+    return formatDateTimeManila(dateStr);
   } catch {
     return String(dateStr);
   }
@@ -491,7 +492,7 @@ export const ConnectionPage = forwardRef<ConnectionPageHandle, object>(function 
       {/* Timestamp */}
       {timestamp && (
         <p className="text-center text-xs text-zinc-400">
-          Last updated: {new Date(timestamp).toLocaleString()}
+          Last updated: {formatDateTimeManila(timestamp)}
         </p>
       )}
     </div>

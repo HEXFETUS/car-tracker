@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { X, Calendar, Clock, User, MapPin, ArrowRight, Truck, UserCircle } from 'lucide-react';
 import type { PendingTravelOrder } from '../api/requests-api';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 
 interface ScheduleModalProps {
   isOpen: boolean;
@@ -40,7 +41,8 @@ export function ScheduleModal({ isOpen, onClose, date, orders }: ScheduleModalPr
 
   if (!isOpen) return null;
 
-  const dateStr = date.toLocaleDateString('en-US', {
+  const dateStr = date.toLocaleDateString('en-PH', {
+    timeZone: 'Asia/Manila',
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -49,13 +51,7 @@ export function ScheduleModal({ isOpen, onClose, date, orders }: ScheduleModalPr
 
   function formatDateTime(dateStr: string | null) {
     if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    return formatDateTimeManila(dateStr);
   }
 
   return (

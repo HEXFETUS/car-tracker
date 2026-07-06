@@ -18,7 +18,7 @@ export interface TelemetryInsert {
   locationName: string | null;
   driverId?: string | null;
   travelOrderId?: string | null;
-  toNumber: string | null;
+  toNumber?: string | null;
   recordedAt: string;
   activeTripId?: string | null;
   telegramMessage?: string | null;
@@ -40,7 +40,6 @@ export interface TelemetryRow {
   locationName: string | null;
   driverId: string | null;
   travelOrderId: string | null;
-  toNumber: string | null;
   recordedAt: string;
   createdAt: string;
   activeTripId: string | null;
@@ -67,7 +66,6 @@ interface TelemetryDbRow {
   location_name: string | null;
   driver_id: string | null;
   travel_order_id: string | null;
-  to_number: string | null;
   recorded_at: string;
   created_at: string;
   active_trip_id: string | null;
@@ -235,6 +233,8 @@ export async function telemetryExists(
 
 /**
  * Insert a single telemetry data point.
+ * travel_order_id (UUID) is the single source of truth.
+ * The TO number is obtained by JOINing to travel_orders.to_number.
  */
 export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted: boolean; updated: boolean; id: string | null }> {
   const pool = getPool();
@@ -249,7 +249,6 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
   });
   const recordedAtMinute = recordedAtMinuteIso(data.recordedAt);
   let inheritedTravelOrderId = data.travelOrderId ?? null;
-  let inheritedToNumber = data.toNumber ?? null;
   let inheritedDriverId = data.driverId ?? null;
   if (data.activeTripId && !inheritedTravelOrderId) {
     const inheritedResult = await pool.query<{
@@ -379,9 +378,9 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
       `INSERT INTO gps_telemetry
        (vehicle_id, plate_number, event_type, latitude, longitude,
         speed_kmh, fuel_liters, ignition, location_name,
-        driver_id, travel_order_id, to_number, recorded_at, active_trip_id, telegram_message,
+        driver_id, travel_order_id, recorded_at, active_trip_id, telegram_message,
         telegram_status, telegram_error, telegram_attempted_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
      ON CONFLICT DO NOTHING
      RETURNING id`,
        [
@@ -396,7 +395,6 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
          data.locationName,
          inheritedDriverId,
          inheritedTravelOrderId,
-         null,
          data.recordedAt,
          data.activeTripId ?? null,
          data.telegramMessage ?? null,
@@ -648,7 +646,6 @@ export async function fetchTelemetry(
     locationName: row.location_name,
     driverId: row.driver_id ?? null,
     travelOrderId: row.travel_order_id ?? null,
-    toNumber: row.to_number,
     recordedAt: row.recorded_at,
     createdAt: row.created_at,
     activeTripId: row.active_trip_id ?? null,

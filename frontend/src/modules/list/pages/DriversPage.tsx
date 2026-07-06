@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, User, Phone, Mail, Calendar, Eye, Search } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
+import { formatDateManila } from '@/shared/lib/date-utils';
 import {
   tableContainerClass,
   tableClass,
@@ -17,12 +18,7 @@ import { fetchDrivers, createDriver } from '../api/drivers-api';
 import type { Driver } from '@car-tracker/shared';
 
 function formatExpiryDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  return formatDateManila(dateStr);
 }
 
 function isExpired(dateStr: string): boolean {
@@ -234,7 +230,7 @@ export function DriversPage({ searchQuery = '' }: DriversPageProps) {
                         </span>
                       </td>
                       <td className={tableCellClass}>
-                        {new Date(driver.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {formatDateManila(driver.updatedAt)}
                       </td>
                       <td className={cn(tableCellClass, 'text-right')}>
                         <button

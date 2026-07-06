@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { cn } from '@/shared/lib/utils';
+import { formatDateManila } from '@/shared/lib/date-utils';
 import {
   tableContainerClass,
   tableClass,
@@ -640,7 +641,7 @@ export const UsersPage = forwardRef<UsersPageHandle, object>(function UsersPage(
                       <h2 className="text-lg font-semibold text-zinc-900">{editUser.name}</h2>
                       <div className="flex items-center gap-2 mt-1">
                         <UserTypeBadge type={editUser.userType} />
-                        <span className="text-xs text-zinc-400">Last updated: {new Date().toLocaleDateString()}</span>
+                        <span className="text-xs text-zinc-400">Last updated: {formatDateManila(new Date().toISOString())}</span>
                       </div>
                     </div>
                   </div>

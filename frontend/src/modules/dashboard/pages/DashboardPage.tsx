@@ -13,6 +13,7 @@ import {
   ShieldCheck, Gauge, Activity,
   ChevronRight,
 } from 'lucide-react';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import {
   PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -78,12 +79,6 @@ function fmtKm(n: number): string {
 
 function fmtPct(n: number): string {
   return n.toFixed(1) + '%';
-}
-
-function fmtTime(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtSpeed(n: number): string {
@@ -424,7 +419,7 @@ function LoadingSkeleton() {
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const [lastUpdated, setLastUpdated] = useState<string>(new Date().toLocaleString());
+  const [lastUpdated, setLastUpdated] = useState<string>(formatDateTimeManila(new Date().toISOString()));
   const [realtimeData, setRealtimeData] = useState<{ moving: number; idling: number } | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [alertSeverityFilter, setAlertSeverityFilter] = useState<'All' | 'Critical' | 'Warning' | 'Info'>('All');
@@ -468,7 +463,7 @@ export function DashboardPage() {
     if (!summaryQuery.data?.realTime) return;
     const { vehiclesMoving, vehiclesIdling } = summaryQuery.data.realTime;
     setRealtimeData({ moving: vehiclesMoving, idling: vehiclesIdling });
-    setLastUpdated(new Date().toLocaleString());
+    setLastUpdated(formatDateTimeManila(new Date().toISOString()));
   }, [summaryQuery.data?.realTime?.vehiclesMoving, summaryQuery.data?.realTime?.vehiclesIdling]);
 
   const summary = summaryQuery.data ?? { kpis: emptyDashboardData().kpis, realTime: emptyDashboardData().realTime };
@@ -660,7 +655,7 @@ export function DashboardPage() {
                     <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-bold">{severity}</span>
                   </div>
                   <p className="mt-1 text-sm">{alert.alert_message}</p>
-                  <p className="mt-2 text-xs opacity-80">{fmtTime(alert.time)} · {alert.location}</p>
+                  <p className="mt-2 text-xs opacity-80">{formatDateTimeManila(alert.time)} · {alert.location}</p>
                 </div>
               );
             }) : <EmptyState message="No alerts in the current filter" />}
@@ -736,8 +731,8 @@ export function DashboardPage() {
                           <td className={tableCellClass}>{trip.plate_number}</td>
                           <td className={tableCellClass}>{trip.driver_name}</td>
                           <td className={tableCellClass}>{trip.origin_location} → {trip.destination_target}</td>
-                          <td className={tableCellClass}>{fmtTime(trip.scheduled_departure)}</td>
-                          <td className={tableCellClass}>{fmtTime(trip.scheduled_arrival)}</td>
+                          <td className={tableCellClass}>{formatDateTimeManila(trip.scheduled_departure)}</td>
+                          <td className={tableCellClass}>{formatDateTimeManila(trip.scheduled_arrival)}</td>
                           <td className={tableCellClass}>
                             <div className="flex items-center gap-2">
                               <div className="h-1.5 flex-1 rounded-full bg-brand-cream">
@@ -784,8 +779,8 @@ export function DashboardPage() {
                       <td className="py-2.5 pr-3 text-zinc-600">{row.current_travel_order || '—'}</td>
                       <td className="py-2.5 pr-3 text-zinc-600">{row.origin || '—'}</td>
                       <td className="py-2.5 pr-3 text-zinc-600">{row.destination || '—'}</td>
-                      <td className="py-2.5 pr-3 text-zinc-600">{fmtTime(row.departure_time)}</td>
-                      <td className="py-2.5 pr-3 text-zinc-600">{fmtTime(row.arrival_time)}</td>
+                      <td className="py-2.5 pr-3 text-zinc-600">{formatDateTimeManila(row.departure_time)}</td>
+                      <td className="py-2.5 pr-3 text-zinc-600">{formatDateTimeManila(row.arrival_time)}</td>
                       <td className="py-2.5 pr-3"><StatusBadge status={row.trip_status || 'N/A'} /></td>
                       <td className="py-2.5 text-right text-zinc-600">{fmtKm(row.distance_traveled)}</td>
                     </tr>
@@ -815,7 +810,7 @@ export function DashboardPage() {
                   <tbody>
                     {d.tables.recentAlerts.map((alert) => (
                       <tr key={alert.id} className={tableRowClass}>
-                        <td className={tableCellClass}>{fmtTime(alert.time)}</td>
+                        <td className={tableCellClass}>{formatDateTimeManila(alert.time)}</td>
                         <td className={tableCellClass}>{alert.vehicle}</td>
                         <td className={tableCellClass}><AlertBadge type={alert.alert_type} /></td>
                         <td className={tableCellClass}>{alert.alert_message}</td>
@@ -858,7 +853,7 @@ export function DashboardPage() {
                         <td className={tableCellClass}>{trip.gps_distance_km ? fmtKm(trip.gps_distance_km) : '—'}</td>
                         <td className={tableCellClass}>{trip.max_speed_kph ? fmtDuration(trip.arrival_time_gps, trip.arrival_time_gps) : '—'}</td>
                         <td className={tableCellClass}>{(trip as any).moving_hours ? `${(trip as any).moving_hours}h` : '—'}</td>
-                        <td className={tableCellClass}>{fmtTime(trip.arrival_time_gps)}</td>
+                        <td className={tableCellClass}>{formatDateTimeManila(trip.arrival_time_gps)}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Loader2, Fuel, Wrench, Trash2, Edit3, AlertTriangle, ClipboardList, CheckCircle, Car, Calendar, Info } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
+import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import { updateVehicle, toggleVehicleRepair, deleteVehicle } from '../api/vehicles-api';
 import type { Vehicle } from '@car-tracker/shared';
 
@@ -397,12 +398,12 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
               <DetailRow
                 icon={<Calendar className="size-4" />}
                 label="Created"
-                value={new Date(vehicle.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                value={formatDateTimeManila(vehicle.createdAt)}
               />
               <DetailRow
                 icon={<Calendar className="size-4" />}
                 label="Last Updated"
-                value={new Date(vehicle.updatedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                value={formatDateTimeManila(vehicle.updatedAt)}
               />
             </div>
           </SectionCard>

@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router';
 import { type TabKey } from '../components/GpsLogsToolbar';
 import { LogsPage } from './LogsPage';
+import { NoToLogsPage } from './NoToLogsPage';
 import { TelemetryPage } from './TelemetryPage';
 
 export function GpsLogsPage() {
@@ -21,8 +22,10 @@ export function GpsLogsPage() {
   // Sync tab from URL search params
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab === 'logs' || tab === 'telemetry') {
+    if (tab === 'logs' || tab === 'no-to' || tab === 'alerts') {
       setActiveTab(tab);
+    } else if (tab === 'telemetry') {
+      setActiveTab('alerts');
     }
   }, [searchParams]);
 
@@ -42,7 +45,17 @@ export function GpsLogsPage() {
           onDateFilterChange={setDateFilter}
         />
       )}
-      {activeTab === 'telemetry' && (
+      {activeTab === 'no-to' && (
+        <NoToLogsPage
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          vehicleFilter={vehicleFilter}
+          onVehicleFilterChange={setVehicleFilter}
+          dateFilter={dateFilter}
+          onDateFilterChange={setDateFilter}
+        />
+      )}
+      {activeTab === 'alerts' && (
         <TelemetryPage
           activeTab={activeTab}
           onTabChange={handleTabChange}

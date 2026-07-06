@@ -4,6 +4,7 @@ import { useNotification } from '@/shared/context/NotificationContext';
 import { useAuth } from '@/modules/auth/context/auth-context';
 import { canAccessTab } from '@/shared/config/role-access';
 import { cn } from '@/shared/lib/utils';
+import { formatDateTimeManila, formatDateManila } from '@/shared/lib/date-utils';
 import {
   fetchForRequestOrders,
   fetchScheduledOrders,
@@ -147,13 +148,7 @@ export function RequestsPage() {
 
   function formatDateTime(dateStr: string | null) {
     if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    return formatDateTimeManila(dateStr);
   }
 
   // ── Calendar helpers ─────────────────────────────────────────
@@ -530,12 +525,7 @@ export function RequestsPage() {
                         Scheduled Orders
                       </h3>
                       <p className="text-xs text-zinc-400">
-                        {new Date(selectedDateKey + 'T00:00:00').toLocaleDateString('en-US', {
-                          weekday: 'long',
-                          month: 'long',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
+                        {formatDateManila(selectedDateKey + 'T00:00:00')}
                       </p>
                     </div>
 

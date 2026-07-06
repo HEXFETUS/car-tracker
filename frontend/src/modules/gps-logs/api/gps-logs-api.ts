@@ -34,6 +34,7 @@ export interface EnrichedGpsTripLog {
   maxSpeedKph: number | null;
   tripStatusGps: string;
   travelOrderId: string | null;
+  travelOrderStatus: string | null;
   toStatusAuto: string | null;
   anomalyFlag: boolean;
   notesRemarks: string | null;
@@ -59,6 +60,55 @@ export interface GpsLogsResult {
   page: number;
   pageSize: number;
   message?: string;
+}
+
+export interface NoToGpsLog {
+  id: string;
+  noToRecordNo: string;
+  tripDate: string;
+  vehicleId: string | null;
+  driverId: string | null;
+  travelOrderId: string | null;
+  linkedToNumber: string | null;
+  vehiclePlateNo: string;
+  driverName: string;
+  originAddress: string | null;
+  originCoordinates: string | null;
+  destinationAddress: string | null;
+  destinationCoordinates: string | null;
+  departureTime: string | null;
+  arrivalTime: string | null;
+  distanceKm: number | null;
+  engineHours: number | null;
+  movingHours: number | null;
+  maxSpeedKph: number | null;
+  status: string;
+  statusDisplay: string;
+  anomalyFlag: boolean;
+  anomalyReason: string | null;
+  notes: string | null;
+  linkedAt: string | null;
+  convertedGpsTripLogId: string | null;
+  createdAt: string;
+}
+
+export interface NoToGpsLogsResult {
+  success: boolean;
+  data: NoToGpsLog[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface NoToLinkOption {
+  id: string;
+  toNumber: string;
+  scheduledDeparture: string | null;
+  scheduledArrival: string | null;
+  origin: string | null;
+  destination: string | null;
+  vehiclePlateNo: string | null;
+  driverName: string | null;
 }
 
 export interface SyncHistoryResult {
@@ -170,6 +220,52 @@ export async function fetchGpsLogs(params: {
   const res = await apiFetch(url);
   if (!res.ok) throw new Error('Failed to fetch GPS logs');
   return res.json();
+}
+
+export async function fetchNoToGpsLogs(params: {
+  page?: number;
+  pageSize?: number;
+  vehicleId?: string;
+  tripDate?: string;
+} = {}): Promise<NoToGpsLogsResult> {
+  const qs = new URLSearchParams();
+  if (params.page) qs.set('page', String(params.page));
+  if (params.pageSize) qs.set('pageSize', String(params.pageSize));
+  if (params.vehicleId) qs.set('vehicleId', params.vehicleId);
+  if (params.tripDate) qs.set('tripDate', params.tripDate);
+  const res = await apiFetch(`${API_BASE}/no-to?${qs.toString()}`);
+  return parseJsonOrThrow<NoToGpsLogsResult>(res, 'Failed to fetch No TO GPS logs');
+}
+
+export interface NoToSyncResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+}
+
+export async function syncNoToLogs(): Promise<{ success: boolean; data: NoToSyncResult; message: string }> {
+  const res = await apiFetch(`${API_BASE}/no-to/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return parseJsonOrThrow(res, 'Failed to sync No TO logs');
+}
+
+export async function fetchNoToLinkOptions(vehicleId?: string | null): Promise<{ success: boolean; data: NoToLinkOption[] }> {
+  const qs = new URLSearchParams();
+  if (vehicleId) qs.set('vehicleId', vehicleId);
+  const res = await apiFetch(`${API_BASE}/no-to/link-options?${qs.toString()}`);
+  return parseJsonOrThrow<{ success: boolean; data: NoToLinkOption[] }>(res, 'Failed to fetch Travel Order options');
+}
+
+export async function linkNoToGpsLog(id: string, travelOrderId: string): Promise<{ success: boolean; data: { telemetryBackfilled: number; linkedToNumber: string } }> {
+  const res = await apiFetch(`${API_BASE}/no-to/${id}/link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ travel_order_id: travelOrderId }),
+  });
+  return parseJsonOrThrow<{ success: boolean; data: { telemetryBackfilled: number; linkedToNumber: string } }>(res, 'Failed to link No TO GPS log');
 }
 
 /**
@@ -389,6 +485,13 @@ export interface TripRoutePoint {
   timestamp: string;
   speed: number;
   locationName: string | null;
+  activeTripId?: string | null;
+}
+
+export interface ActiveTripSession {
+  activeTripId: string;
+  startTime: string | null;
+  endTime: string | null;
 }
 
 export interface TripDetails {
@@ -409,6 +512,8 @@ export interface TripDetails {
   toDestination: string | null;
   toStatus: string | null;
   startTime: string | null;
+  plannedDestinationAddress?: string | null;
+  plannedDestinationCoordinates?: string | null;
   parentTripId?: string | null;
   parentGpsRecordNo?: string | null;
   pairedReturnId?: string | null;
@@ -420,7 +525,14 @@ export interface TripDetails {
   endTime: string | null;
   arrivedCoordinates: string | null;
   arrivedLocation: string | null;
+  matchedDestinationDistanceM?: number | null;
+  endAddress?: string | null;
+  endCoordinates?: string | null;
+  returnedToBaseAt?: string | null;
+  matchedOriginDistanceM?: number | null;
+  travelOrderStatus?: string | null;
   anomalyFlag: boolean;
+  anomalyReason?: string | null;
   coordinatesOrigin: string | null;
   coordinatesDestination: string | null;
   tripType?: string | null;
@@ -432,6 +544,7 @@ export interface TripDetailsResponse {
     trip: TripDetails;
     route: TripRoutePoint[];
     routeCount: number;
+    activeTripSessions?: ActiveTripSession[];
   };
 }
 
@@ -464,6 +577,11 @@ export async function fetchTripDetails(id: string): Promise<TripDetailsResponse>
   const json = await res.json();
   console.log('[fetchTripDetails] Raw API response:', JSON.stringify(json, null, 2));
   return json;
+}
+
+export async function fetchNoToTripDetails(id: string): Promise<TripDetailsResponse> {
+  const res = await apiFetch(`${API_BASE}/no-to/${id}/details`);
+  return parseJsonOrThrow<TripDetailsResponse>(res, 'Failed to fetch No TO trip details');
 }
 
 /**

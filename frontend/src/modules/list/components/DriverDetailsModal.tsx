@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Loader2, Phone, Mail, Calendar, Trash2, Edit3, User, FileText, Info } from 'lucide-react';
 import { useNotification } from '@/shared/context/NotificationContext';
+import { formatDateTimeManila, formatDateManila } from '@/shared/lib/date-utils';
 import { updateDriver, deleteDriver } from '../api/drivers-api';
 import type { Driver } from '@car-tracker/shared';
 
@@ -12,8 +13,7 @@ interface DriverDetailsModalProps {
 }
 
 function formatExpiryDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDateManila(dateStr);
 }
 
 function isExpired(dateStr: string): boolean {
@@ -308,12 +308,12 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
               <DetailRow
                 icon={<Calendar className="size-4" />}
                 label="Created"
-                value={new Date(driver.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                value={formatDateTimeManila(driver.createdAt)}
               />
               <DetailRow
                 icon={<Calendar className="size-4" />}
                 label="Last Updated"
-                value={new Date(driver.updatedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                value={formatDateTimeManila(driver.updatedAt)}
               />
             </div>
           </SectionCard>

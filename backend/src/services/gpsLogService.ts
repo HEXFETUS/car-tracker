@@ -7,6 +7,7 @@ import { getPool } from '../db/db.js';
 import { createGpsAlert, getVehiclePlate } from './gpsAlertService.js';
 import { DEFAULT_ORIGIN, DEFAULT_BASE_RADIUS_METERS } from '../config/constants.js';
 import { getFleetConfig } from './fleetConfigService.js';
+import { syncBusinessTripLogsFromTelemetry } from './businessTripLifecycleService.js';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -610,7 +611,6 @@ export async function updateGpsTripLog(
     parentTripId?: string | null;
     travelOrderId?: string | null;
     toStatusAuto?: string | null;
-    travelOrderNo?: string | null;
   },
 ): Promise<void> {
   const pool = getPool();
@@ -674,11 +674,6 @@ export async function updateGpsTripLog(
     setClauses.push(`to_status_auto = $${idx++}`);
     values.push(updates.toStatusAuto);
   }
-  if (updates.travelOrderNo !== undefined) {
-    setClauses.push(`travel_order_no = $${idx++}`);
-    values.push(updates.travelOrderNo);
-  }
-
   if (setClauses.length === 0) return;
 
   values.push(id);
@@ -1356,6 +1351,10 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
   skipped: number;
   failed: number;
 }> {
+  if (process.env.BUSINESS_TRIP_LIFECYCLE_SYNC !== 'legacy') {
+    return syncBusinessTripLogsFromTelemetry();
+  }
+
   const pool = getPool();
   let created = 0;
   let updated = 0;

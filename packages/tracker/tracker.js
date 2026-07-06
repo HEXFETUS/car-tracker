@@ -1019,6 +1019,21 @@ export async function syncFleetAndAlert(options = {}) {
       if (ignition && speeding && !prevSpeeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
       if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
       if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) {
+        const thresholdReached =
+          idle.idleAlertCount > 0
+            ? IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] ?? null
+            : null;
+
+        if (thresholdReached == null) {
+          console.warn('[idling-alert-skip] missing threshold', {
+            vehicleId: vid,
+            activeTripId: prev.activeTripId,
+            idleAlertCount: idle.idleAlertCount,
+            previousIdleAlertCount: idle.previousIdleAlertCount,
+            idleMinutes: idle.idleMinutes,
+          });
+        }
+
         idlingAlertEmitted = true;
         pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
       }
@@ -1142,7 +1157,12 @@ export async function syncFleetAndAlert(options = {}) {
         message: ea.message,
         // Include idling milestone info for deduplication
         idleAlertCount: ea.eventType === 'IDLING' ? idle.idleAlertCount : undefined,
-        idlingThresholdReached: ea.eventType === 'IDLING' ? IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] || null : undefined,
+        idlingThresholdReached:
+          ea.eventType === 'IDLING'
+            ? idle.idleAlertCount > 0
+              ? IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] ?? null
+              : null
+            : undefined,
         idlingStartedAt: ea.eventType === 'IDLING' ? idle.idleStartedAt : undefined,
       });
     }
