@@ -10,11 +10,16 @@
 
 import { randomUUID } from 'node:crypto';
 import { syncFleetAndAlert, sendTelegram, getVehicleEmoji, formatIgnitionAlert, formatVehicleHeader } from '@car-tracker/tracker';
-import { findVehicleByPlate } from './gpsLogService.js';
+import { findVehicleByPlate, syncGpsTripLogsFromTelemetry } from './gpsLogService.js';
 import { insertTelemetry, getLatestTelemetry, updateTelemetryTelegramDelivery, updateTelemetryTelegramMessage } from './gpsTelemetryService.js';
 import { getPool } from '../db/db.js';
 import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
 import { getFleetConfig } from './fleetConfigService.js';
+import {
+  getActiveTripTravelOrderOverrides,
+  syncApprovedTravelOrdersToActiveTrips,
+  syncUnlinkedGpsTripLogsToTravelOrders,
+} from './travelOrderSyncService.js';
 
 // ── Scheduler State ────────────────────────────────────────────
 
@@ -91,6 +96,15 @@ const EVENT_TYPE = {
   NO_APPROVED_TRAVEL_ORDER: 'NO_APPROVED_TRAVEL_ORDER',
 } as const;
 
+type PreviousMotionState = {
+  speedKmh: number;
+  eventType: string;
+} | null | undefined;
+
+type ActiveIdlingState = {
+  activeTripId: string;
+} | null | undefined;
+
 function canonicalEventType(sourceEventType: string): string | null {
   let result: string | null;
   switch (sourceEventType) {
@@ -136,6 +150,31 @@ function canonicalEventType(sourceEventType: string): string | null {
     console.log('[EVENT NORMALIZED]', { incoming: sourceEventType, saved: result });
   }
   return result;
+}
+
+export function shouldPersistMotionStartedFromPreviousState(
+  previous: PreviousMotionState,
+  activeIdlingSession: ActiveIdlingState,
+  currentSpeedKmh: number,
+  currentIgnition: boolean,
+): boolean {
+  if (!currentIgnition || currentSpeedKmh <= 0) return false;
+
+  const previousEventType = previous?.eventType ? canonicalEventType(previous.eventType) ?? previous.eventType : null;
+  const previousSpeed = Number(previous?.speedKmh ?? 0);
+
+  if (
+    previousEventType === EVENT_TYPE.MOTION_STARTED ||
+    (previousEventType === EVENT_TYPE.LOCATION_UPDATE && previousSpeed > 0)
+  ) {
+    return false;
+  }
+
+  return previousSpeed <= 0 ||
+    previousEventType === EVENT_TYPE.IDLING ||
+    previousEventType === 'IDLING' ||
+    previousEventType === EVENT_TYPE.IGNITION_ON ||
+    Boolean(activeIdlingSession?.activeTripId);
 }
 
 // ── Public API ─────────────────────────────────────────────────
@@ -571,6 +610,28 @@ async function getLatestCanonicalTripEventType(
   return result.rows[0]?.event_type ?? null;
 }
 
+async function getLatestTelemetryForTrip(
+  vehicleId: string,
+  activeTripId: string,
+): Promise<{ eventType: string; speedKmh: number } | null> {
+  const pool = getPool();
+  const result = await pool.query<{ event_type: string; speed_kmh: number }>(
+    `SELECT event_type, speed_kmh
+       FROM gps_telemetry
+      WHERE vehicle_id = $1
+        AND active_trip_id = $2
+      ORDER BY recorded_at DESC, created_at DESC
+      LIMIT 1`,
+    [vehicleId, activeTripId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    eventType: row.event_type,
+    speedKmh: Number(row.speed_kmh ?? 0),
+  };
+}
+
 // ── Helper: Get latest LOCATION_UPDATE for same vehicle_id + active_trip_id ──
 // Returns the location_name of the most recent LOCATION_UPDATE, or null.
 async function getLatestLocationUpdateLocation(vehicleId: string, activeTripId: string | null): Promise<string | null> {
@@ -813,6 +874,11 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
     const toTravelOrderIds = new Map<string, string>(); // vehicle_id → travel_order_id
     const noToVehicleIds = new Set<string>();
     try {
+      const activeTripSync = await syncApprovedTravelOrdersToActiveTrips();
+      if (activeTripSync.checked > 0 || activeTripSync.linked > 0) {
+        console.log(`[scheduler] Active-trip TO sync checked=${activeTripSync.checked} linked=${activeTripSync.linked}`);
+      }
+
       const allTOData = await pool.query<{ vehicle_id: string; driver_name: string | null; to_number: string; lat_long_destination: string | null; id: string }>(
         `SELECT DISTINCT ON (to_table.vehicle_id) 
            to_table.vehicle_id, 
@@ -852,6 +918,16 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           // travel_order_destinations table may not exist yet on older DBs
           console.log(`[scheduler] No destinations found for travel order ${row.id}: ${(destErr as Error).message}`);
         }
+      }
+      const activeTripOverrides = await getActiveTripTravelOrderOverrides();
+      for (const [vehicleId, driverName] of Object.entries(activeTripOverrides.driverOverrides)) {
+        driverOverrides.set(vehicleId, driverName);
+      }
+      for (const [vehicleId, toNumber] of Object.entries(activeTripOverrides.toNumberOverrides)) {
+        toNumberOverrides.set(vehicleId, toNumber);
+      }
+      for (const [vehicleId, destination] of Object.entries(activeTripOverrides.toDestinationOverrides)) {
+        toDestinationOverrides.set(vehicleId, destination);
       }
       // Track vehicles with NO approved TO for today (for warning suffix)
       const allVehicleResult = await pool.query<{ vehicle_id: string }>(
@@ -1211,11 +1287,13 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           const activeTripId = latestActiveTripId ?? activeIdlingSession?.activeTripId ?? null;
 
           if (isMoving) {
+            const latestTripTelemetry = activeTripId
+              ? await getLatestTelemetryForTrip(vehicleId, activeTripId)
+              : null;
             // ── MOTION_STARTED check (before LOCATION_UPDATE) ──
-            // If active idling session has last_alerted_duration_minutes >= 10:
-            // save/send MOTION_STARTED, close idling session, skip LOCATION_UPDATE
-            if (activeIdlingSession?.activeTripId && Number(activeIdlingSession.lastAlertedDurationMinutes ?? 0) >= 10) {
-              const motionTripId = activeIdlingSession.activeTripId;
+            // Save the first moving row when the DB's previous state was stopped/idling.
+            if (activeTripId && shouldPersistMotionStartedFromPreviousState(latestTripTelemetry, activeIdlingSession, speed, currentIgnition)) {
+              const motionTripId = activeTripId;
               const message = `🟢 MOTION STARTED - ${getVehicleEmoji(plateNumber)} ${formatVehicleHeader(plateNumber, toNumber)}\n\n👤 Driver: ${driverName || 'Unassigned'}\n📍 ${locationName || 'Unknown location'}\n🕘 ${new Date(recordedAt).toLocaleString('en-US', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} PHT`;
 
               const result = await saveAndSendTelemetryAlert({
@@ -1249,10 +1327,10 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
                 telemetrySkipped += 1;
                 console.log(`[motion-started] action=skipped reason=missing_telemetry_id vehicle=${vehicleId} trip=${motionTripId}`);
               }
-            } else if (activeIdlingSession?.activeTripId) {
-              console.log(`[motion-started] action=skipped reason=idling_duration_below_10min vehicle=${vehicleId} lastAlerted=${activeIdlingSession.lastAlertedDurationMinutes}`);
+            } else if (activeTripId) {
+              console.log(`[motion-started] action=skipped reason=already_moving vehicle=${vehicleId} trip=${activeTripId}`);
             } else {
-              console.log(`[motion-started] action=skipped reason=no_active_idling_session vehicle=${vehicleId}`);
+              console.log(`[motion-started] action=skipped reason=no_active_trip vehicle=${vehicleId}`);
             }
 
             if (!activeTripId) {
@@ -1348,7 +1426,7 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           }
 
           const eventType = alert.eventType;
-          const finalEventType = canonicalEventType(eventType);
+          let finalEventType = canonicalEventType(eventType);
           if (!eventType || !finalEventType) {
             telemetrySkipped += 1;
             continue;
@@ -1401,6 +1479,14 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               console.log(`[scheduler] SKIPPING ${finalEventType} for ${vehicleId} - no active trip found`);
               telemetrySkipped += 1;
               continue;
+            }
+          }
+
+          if (finalEventType === EVENT_TYPE.MOTION_STARTED && activeTripId) {
+            const latestTripTelemetry = await getLatestTelemetryForTrip(vehicleId, activeTripId);
+            if (!shouldPersistMotionStartedFromPreviousState(latestTripTelemetry, null, spd, effectiveIgnition)) {
+              finalEventType = EVENT_TYPE.LOCATION_UPDATE;
+              console.log(`[motion-started] downgraded to LOCATION_UPDATE vehicle=${vehicleId} trip=${activeTripId} reason=already_moving`);
             }
           }
 
@@ -1551,6 +1637,33 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
       }
     } else {
       console.log('[scheduler] No emitted alerts to persist');
+    }
+
+    try {
+      const tripLogSync = await syncGpsTripLogsFromTelemetry();
+      gpsLogsSaved = tripLogSync.created + tripLogSync.updated;
+      gpsLogsFailed = tripLogSync.failed;
+      const activeTripSync = await syncApprovedTravelOrdersToActiveTrips();
+      const unlinkedTripSync = await syncUnlinkedGpsTripLogsToTravelOrders();
+      if (activeTripSync.checked > 0 || activeTripSync.linked > 0) {
+        console.log(`[scheduler] Post-telemetry active-trip TO sync checked=${activeTripSync.checked} linked=${activeTripSync.linked}`);
+      }
+      if (unlinkedTripSync.checked > 0 || unlinkedTripSync.linked > 0) {
+        console.log(`[scheduler] Post-telemetry unlinked-trip TO sync checked=${unlinkedTripSync.checked} linked=${unlinkedTripSync.linked}`);
+      }
+      for (const syncResult of activeTripSync.results) {
+        if (syncResult.linked) {
+          toTravelOrderIds.set(syncResult.activeTripId ?? syncResult.travelOrderId ?? '', syncResult.travelOrderId ?? '');
+        }
+      }
+      for (const syncResult of unlinkedTripSync.results) {
+        if (syncResult.linked) {
+          toTravelOrderIds.set(syncResult.activeTripId ?? syncResult.travelOrderId ?? '', syncResult.travelOrderId ?? '');
+        }
+      }
+    } catch (err) {
+      gpsLogsFailed += 1;
+      console.error('[scheduler] Active-trip GPS log/TO sync failed:', errorMessage(err));
     }
 
     const duration = (Date.now() - cycleStart) / 1000;

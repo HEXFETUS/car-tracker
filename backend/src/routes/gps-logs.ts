@@ -25,6 +25,7 @@ import {
 import {
   syncSingleVehicleDate,
 } from '../services/trackingHistorySyncService.js';
+import { syncUnlinkedGpsTripLogsToTravelOrders } from '../services/travelOrderSyncService.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -679,6 +680,7 @@ router.get('/sync-history', async (req: Request, res: Response) => {
     //     using driving→idling→10min→arrival detection, return trip detection,
     //     coordinate-based destination verification, and smart TO matching). ──
     const syncResult = await syncSingleVehicleDate(vehicleId, plateNumber, dateStr);
+    const travelOrderSync = await syncUnlinkedGpsTripLogsToTravelOrders();
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
@@ -692,6 +694,9 @@ router.get('/sync-history', async (req: Request, res: Response) => {
           ? syncResult.debugLogs[syncResult.debugLogs.length - 1]
           : 'No GPS data found for this vehicle on the specified date. Sync skipped.',
         debug_logs: syncResult.debugLogs,
+        travel_order_sync_checked: travelOrderSync.checked,
+        travel_order_sync_linked: travelOrderSync.linked,
+        travel_order_sync_results: travelOrderSync.results,
         timestamp: new Date().toISOString(),
       });
       return;
@@ -706,6 +711,9 @@ router.get('/sync-history', async (req: Request, res: Response) => {
       gps_logs_saved: syncResult.tripsCreated,
       gps_logs_failed: syncResult.tripsFailed,
       matched_to_number: syncResult.matchedToNumber,
+      travel_order_sync_checked: travelOrderSync.checked,
+      travel_order_sync_linked: travelOrderSync.linked,
+      travel_order_sync_results: travelOrderSync.results,
       trips_created: syncResult.tripsCreated,
       trips_failed: syncResult.tripsFailed,
       debug_logs: syncResult.debugLogs,
@@ -1718,6 +1726,7 @@ router.get('/:id/stops', async (req: Request, res: Response) => {
 router.post('/sync-from-telemetry', async (req: Request, res: Response) => {
   try {
     const result = await syncGpsTripLogsFromTelemetry();
+    const travelOrderSync = await syncUnlinkedGpsTripLogsToTravelOrders();
     res.json({
       success: true,
       source: 'gps_telemetry',
@@ -1725,6 +1734,9 @@ router.post('/sync-from-telemetry', async (req: Request, res: Response) => {
       updated: result.updated,
       skipped: result.skipped,
       failed: result.failed,
+      travel_order_sync_checked: travelOrderSync.checked,
+      travel_order_sync_linked: travelOrderSync.linked,
+      travel_order_sync_results: travelOrderSync.results,
     });
   } catch (error) {
     const err = error as Error;

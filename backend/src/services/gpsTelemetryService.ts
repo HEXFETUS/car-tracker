@@ -17,6 +17,7 @@ export interface TelemetryInsert {
   ignition: boolean;
   locationName: string | null;
   driverId?: string | null;
+  travelOrderId?: string | null;
   toNumber: string | null;
   recordedAt: string;
   activeTripId?: string | null;
@@ -38,6 +39,7 @@ export interface TelemetryRow {
   ignition: boolean;
   locationName: string | null;
   driverId: string | null;
+  travelOrderId: string | null;
   toNumber: string | null;
   recordedAt: string;
   createdAt: string;
@@ -64,6 +66,7 @@ interface TelemetryDbRow {
   ignition: boolean;
   location_name: string | null;
   driver_id: string | null;
+  travel_order_id: string | null;
   to_number: string | null;
   recorded_at: string;
   created_at: string;
@@ -245,6 +248,29 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
     ignition: data.ignition
   });
   const recordedAtMinute = recordedAtMinuteIso(data.recordedAt);
+  let inheritedTravelOrderId = data.travelOrderId ?? null;
+  let inheritedToNumber = data.toNumber ?? null;
+  let inheritedDriverId = data.driverId ?? null;
+  if (data.activeTripId && !inheritedTravelOrderId) {
+    const inheritedResult = await pool.query<{
+      travel_order_id: string | null;
+      driver_id: string | null;
+    }>(
+      `SELECT g.travel_order_id,
+              COALESCE(g.driver_id, to_.driver_id) AS driver_id
+         FROM gps_trip_logs g
+         LEFT JOIN travel_orders to_ ON to_.id = g.travel_order_id
+        WHERE g.vehicle_id = $1
+          AND g.active_trip_id = $2
+          AND g.travel_order_id IS NOT NULL
+        ORDER BY g.departure_time_gps DESC
+        LIMIT 1`,
+      [data.vehicleId, data.activeTripId],
+    );
+    const inherited = inheritedResult.rows[0];
+    inheritedTravelOrderId = inheritedTravelOrderId ?? inherited?.travel_order_id ?? null;
+    inheritedDriverId = inheritedDriverId ?? inherited?.driver_id ?? null;
+  }
   console.log(
     `[telemetry] Before INSERT gps_telemetry vehicle=${data.vehicleId} plate=${data.plateNumber} event=${eventType} recorded_at=${data.recordedAt}`,
   );
@@ -353,30 +379,31 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
       `INSERT INTO gps_telemetry
        (vehicle_id, plate_number, event_type, latitude, longitude,
         speed_kmh, fuel_liters, ignition, location_name,
-        driver_id, to_number, recorded_at, active_trip_id, telegram_message,
+        driver_id, travel_order_id, to_number, recorded_at, active_trip_id, telegram_message,
         telegram_status, telegram_error, telegram_attempted_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
      ON CONFLICT DO NOTHING
      RETURNING id`,
-      [
-        data.vehicleId,
-        data.plateNumber,
-        eventType,
-        data.latitude,
-        data.longitude,
-        data.speedKmh,
-        data.fuelLiters,
-        data.ignition,
-        data.locationName,
-        data.driverId ?? null,
-        data.toNumber,
-        data.recordedAt,
-        data.activeTripId ?? null,
-        data.telegramMessage ?? null,
-        data.telegramStatus ?? null,
-        data.telegramError ?? null,
-        data.telegramAttemptedAt ?? null,
-      ],
+       [
+         data.vehicleId,
+         data.plateNumber,
+         eventType,
+         data.latitude,
+         data.longitude,
+         data.speedKmh,
+         data.fuelLiters,
+         data.ignition,
+         data.locationName,
+         inheritedDriverId,
+         inheritedTravelOrderId,
+         null,
+         data.recordedAt,
+         data.activeTripId ?? null,
+         data.telegramMessage ?? null,
+         data.telegramStatus ?? null,
+         data.telegramError ?? null,
+         data.telegramAttemptedAt ?? null,
+       ],
     );
     const id = result.rows[0]?.id ?? null;
     if (id) {
@@ -620,6 +647,7 @@ export async function fetchTelemetry(
     ignition: row.ignition,
     locationName: row.location_name,
     driverId: row.driver_id ?? null,
+    travelOrderId: row.travel_order_id ?? null,
     toNumber: row.to_number,
     recordedAt: row.recorded_at,
     createdAt: row.created_at,

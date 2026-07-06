@@ -47,6 +47,9 @@ function hashString(str: string): number {
 }
 
 function getPlateColor(plate: string) {
+  if (plate === 'KAR6412') {
+    return 'bg-teal-100 text-teal-700 border-teal-200';
+  }
   const index = Math.abs(hashString(plate)) % PLATE_COLORS.length;
   return PLATE_COLORS[index];
 }

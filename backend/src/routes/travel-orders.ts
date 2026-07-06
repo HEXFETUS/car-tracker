@@ -2,6 +2,7 @@ import express, { type Request, type Response, type Router as ExpressRouter } fr
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
 import { DEFAULT_ORIGIN_ADDRESS, DEFAULT_ORIGIN_LATLONG } from '../config/constants.js';
+import { syncTravelOrderToActiveTrip } from '../services/travelOrderSyncService.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -731,6 +732,15 @@ router.patch('/:id', async (req: Request, res: Response) => {
       LEFT JOIN users   u ON u.id = to_.approved_by
       WHERE to_.id = $1
     `, [req.params.id]);
+
+    if (['APPROVED', 'ACTIVE'].includes(String(fullResult.rows[0]?.status ?? '').toUpperCase())) {
+      try {
+        const syncResult = await syncTravelOrderToActiveTrip(req.params.id);
+        console.log('[TO Sync] status update active-trip sync', syncResult);
+      } catch (syncError) {
+        console.error('[TO Sync] status update active-trip sync failed:', (syncError as Error).message);
+      }
+    }
 
     res.json({ success: true, data: await mapRow(fullResult.rows[0]), message: 'Travel order updated' });
   } catch (error) {

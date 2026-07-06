@@ -506,8 +506,8 @@ export async function saveGpsTripLog(logData: GpsLogInsertData): Promise<{ id: s
               engine_hours = $9,
               max_speed_kph = $10,
               trip_status_gps = $11,
-              travel_order_id = $12,
-              to_status_auto = $13,
+              travel_order_id = COALESCE($12, travel_order_id),
+              to_status_auto = COALESCE($13, to_status_auto),
               anomaly_flag = $14,
               notes_remarks = COALESCE($15, notes_remarks),
               destination_verified = COALESCE($16, destination_verified),
@@ -1233,8 +1233,8 @@ async function upsertTelemetryTripLog(params: {
               engine_hours = $10,
               max_speed_kph = $11,
               trip_status_gps = $12,
-              travel_order_id = $13,
-              to_status_auto = $14,
+              travel_order_id = COALESCE($13, travel_order_id),
+              to_status_auto = COALESCE($14, to_status_auto),
               anomaly_flag = $15,
               notes_remarks = $16,
               active_trip_id = COALESCE($17, active_trip_id),
@@ -1561,10 +1561,14 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
           continue;
         }
 
+        // Inherit travel_order_id and driver_id from telemetry (telemetry-first)
+        const inheritedTravelOrderId = row.active_to_number ? (row as any).travel_order_id ?? null : null;
+        const inheritedDriverId = row.active_driver_id ?? row.driver_id ?? null;
+
         if (eventType === 'IGNITION_ON') {
           const result = await upsertTelemetryTripLog({
             vehicleId,
-            driverId: row.active_driver_id ?? row.driver_id ?? null,
+            driverId: inheritedDriverId,
             activeTripId,
             tripDate: tripDateFromTimestamp(row.recorded_at),
             originGpsStartPoint: row.location_name || '',
@@ -1577,9 +1581,9 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
             engineHours: 0,
             maxSpeedKph: Number(row.speed_kmh) || 0,
             tripStatusGps: 'EN ROUTE',
-            travelOrderId: null,
-            toStatusAuto: 'NO_APPROVED_TO',
-            anomalyFlag: true,
+            travelOrderId: inheritedTravelOrderId,
+            toStatusAuto: inheritedTravelOrderId ? 'MATCHED' : 'UNMATCHED',
+            anomalyFlag: !inheritedTravelOrderId,
             notesRemarks: null,
             tripType: 'OUTBOUND',
             destinationVerified: false,
@@ -1613,32 +1617,32 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
               Number.isFinite(distanceNow) &&
               distanceNow < distanceAtArrival - fleetConfig.trip.returnDirectionMarginMeters
             ) {
-              const result = await upsertTelemetryTripLog({
-                vehicleId,
-                driverId: outbound.driver_id,
-                activeTripId,
-                tripDate: tripDateFromTimestamp(outbound.motion_started_at),
-                originGpsStartPoint: outbound.destination_gps_end_point || '',
-                destinationGpsEndPoint: fleetConfig.base.address,
-                coordinatesOrigin: outbound.coordinates_destination,
-                coordinatesDestination: defaultOriginCoord,
-                departureTimeGps: timestampToIso(outbound.motion_started_at) ?? recordedAt,
-                arrivalTimeGps: recordedAt,
-                gpsDistanceKm: 0,
-                engineHours: 0,
-                maxSpeedKph: Number(row.speed_kmh) || 0,
-                tripStatusGps: 'EN ROUTE',
-                travelOrderId: null,
-                toStatusAuto: 'NO_APPROVED_TO',
-                anomalyFlag: true,
-                notesRemarks: null,
-                tripType: 'RETURN',
-                parentTripId: outbound.id,
-                destinationVerified: false,
-                pendingReturnDetection: false,
-                motionStartedAt: null,
-                returnDetectedAt: recordedAt,
-              });
+                const result = await upsertTelemetryTripLog({
+                  vehicleId,
+                  driverId: outbound.driver_id,
+                  activeTripId,
+                  tripDate: tripDateFromTimestamp(outbound.motion_started_at),
+                  originGpsStartPoint: outbound.destination_gps_end_point || '',
+                  destinationGpsEndPoint: fleetConfig.base.address,
+                  coordinatesOrigin: outbound.coordinates_destination,
+                  coordinatesDestination: defaultOriginCoord,
+                  departureTimeGps: timestampToIso(outbound.motion_started_at) ?? recordedAt,
+                  arrivalTimeGps: recordedAt,
+                  gpsDistanceKm: 0,
+                  engineHours: 0,
+                  maxSpeedKph: Number(row.speed_kmh) || 0,
+                  tripStatusGps: 'EN ROUTE',
+                  travelOrderId: outbound.travel_order_id,
+                  toStatusAuto: outbound.travel_order_id ? 'MATCHED' : 'UNMATCHED',
+                  anomalyFlag: !outbound.travel_order_id,
+                  notesRemarks: null,
+                  tripType: 'RETURN',
+                  parentTripId: outbound.id,
+                  destinationVerified: false,
+                  pendingReturnDetection: false,
+                  motionStartedAt: null,
+                  returnDetectedAt: recordedAt,
+                });
               countResult(result);
               await pool.query(
                 `UPDATE gps_trip_logs
@@ -1690,14 +1694,14 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
           await insertTripStop(outbound, row);
           await pool.query(
             `UPDATE gps_trip_logs
-                SET destination_gps_end_point = $2,
-                    coordinates_destination = $3,
-                    arrival_time_gps = $4,
-                    trip_status_gps = 'ARRIVED',
-                    destination_verified = FALSE,
-                    to_status_auto = COALESCE(to_status_auto, 'NO_APPROVED_TO'),
-                    pending_return_detection = TRUE,
-                    motion_started_at = NULL
+            SET destination_gps_end_point = $2,
+                coordinates_destination = $3,
+                arrival_time_gps = $4,
+                trip_status_gps = 'ARRIVED',
+                destination_verified = FALSE,
+                to_status_auto = COALESCE(to_status_auto, 'UNMATCHED'),
+                pending_return_detection = TRUE,
+                motion_started_at = NULL
               WHERE id = $1`,
             [outbound.id, row.location_name || outbound.destination_gps_end_point || '', currentCoord, recordedAt],
           );
