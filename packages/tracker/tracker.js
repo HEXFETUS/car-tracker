@@ -6,7 +6,7 @@
 //
 // Environment Variables (loaded automatically via process.env):
 //   CARTRACK_API_URL, CARTRACK_USERNAME, CARTRACK_PASSWORD
-//   SPEED_LIMIT_KMH (default 80)
+//   SPEED_LIMIT_KMH (default 90)
 //   LOW_FUEL_LITERS (default 5)
 //   ALERT_DEDUPE_SECONDS (default 300)
 //   CARTRACK_TIMEOUT_MS (default 15000)
@@ -30,7 +30,7 @@ import {
 
 // ── Configuration from Environment ────────────────────────────
 
-export const SPEED_LIMIT_KMH = Number(process.env.SPEED_LIMIT_KMH || 80);
+export const SPEED_LIMIT_KMH = Number(process.env.SPEED_LIMIT_KMH || 90);
 export const LOW_FUEL_LITERS = Number(process.env.LOW_FUEL_LITERS || 5);
 // Idling alert thresholds in minutes (cumulative total idle time).
 // First alert at 10 minutes, next at 25, then every additional 30 minutes.
@@ -254,7 +254,8 @@ export function formatSpeedingAlert(name, speed, location, eventTime, toNumber =
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
     `🚨 SPEEDING - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
-    `⚡ Speed: ${formatSpeed(speed)} km/h (Limit: ${SPEED_LIMIT_KMH} km/h)`,
+    `⚡ Speed: ${formatSpeed(speed)} km/h`,
+    `Limit: ${SPEED_LIMIT_KMH} km/h`,
     `📈 Excess: +${formatSpeed(excess)} km/h over limit`,
     ...extraLines,
     ...formatLocationTime(location, eventTime),

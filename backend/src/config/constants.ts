@@ -34,7 +34,7 @@ export const FLEET_CONFIG = {
   /** Speed thresholds */
   speed: {
     /** Default speed limit (km/h) for alerting */
-    defaultLimitKph: 80,
+    defaultLimitKph: 90,
   },
   /** Trip detection */
   trip: {

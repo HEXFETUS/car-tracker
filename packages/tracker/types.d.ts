@@ -16,6 +16,7 @@ export interface AlertSummary {
 }
 
 export const IDLE_ALERT_THRESHOLDS_MINUTES: number[];
+export const SPEED_LIMIT_KMH: number;
 
 /** Per-vehicle status object returned in the sync result data array. */
 export interface VehicleStatus {
@@ -112,6 +113,7 @@ export function getVehicleEmoji(plateNumber: string): string;
 export function formatVehicleHeader(name: string, toNumber?: string | null): string;
 
 export function formatIgnitionAlert(name: string, ignition: boolean, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
+export function formatSpeedingAlert(name: string, speed: number, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
 export function formatIdlingTooLongAlert(name: string, idleMinutes: number, fuel: number | null | undefined, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
 
 // ── Trip Log Transformer ──────────────────────────────────────

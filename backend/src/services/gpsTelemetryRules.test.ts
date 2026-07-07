@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import type pg from 'pg';
-import { IDLE_ALERT_THRESHOLDS_MINUTES } from '@car-tracker/tracker';
+import { formatSpeedingAlert, IDLE_ALERT_THRESHOLDS_MINUTES, SPEED_LIMIT_KMH } from '@car-tracker/tracker';
 import { setPoolForTest } from '../db/db.js';
 import { insertTelemetry } from './gpsTelemetryService.js';
-import { closeIdlingDedupDb, idlingMilestoneForMinutes, shouldPersistIdlingAlertDb, shouldPersistMotionStartedFromPreviousState } from './scheduler.js';
+import {
+  closeIdlingDedupDb,
+  hasHigherPriorityTelemetryEventForSnapshot,
+  idlingMilestoneForMinutes,
+  shouldPersistIdlingAlertDb,
+  shouldPersistMotionStartedFromPreviousState,
+} from './scheduler.js';
 import {
   scoreTravelOrderTripCandidate,
   syncUnlinkedGpsTripLogsToTravelOrders,
@@ -312,6 +318,86 @@ describe('DB-backed telemetry event sequence', () => {
       'MOTION_STARTED',
       'LOCATION_UPDATE',
     ]);
+  });
+});
+
+describe('speeding telemetry rules', () => {
+  async function insertSpeedSnapshot(speedKmh: number) {
+    let insertedEventType: string | undefined;
+    const { pool, calls } = makePool((sql, params) => {
+      if (sql.includes('SELECT id, location_name')) {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT id') && sql.includes('date_trunc')) {
+        return { rows: [] };
+      }
+      if (sql.includes('INSERT INTO gps_telemetry')) {
+        insertedEventType = String(params?.[2]);
+        return { rows: [{ id: `${insertedEventType?.toLowerCase()}-${speedKmh}` }] };
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    const eventType = speedKmh >= SPEED_LIMIT_KMH ? 'SPEEDING' : 'LOCATION_UPDATE';
+    const result = await insertTelemetry({
+      ...baseTelemetry,
+      eventType,
+      speedKmh,
+      locationName: `Road ${speedKmh}`,
+      recordedAt: `2026-07-06T04:${String(speedKmh - 80).padStart(2, '0')}:00.000Z`,
+    });
+
+    return { result, insertedEventType, calls };
+  }
+
+  it('speed 89 saves LOCATION_UPDATE only', async () => {
+    const { result, insertedEventType, calls } = await insertSpeedSnapshot(89);
+
+    assert.equal(SPEED_LIMIT_KMH, 90);
+    assert.equal(result.inserted, true);
+    assert.equal(insertedEventType, 'LOCATION_UPDATE');
+    assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO gps_telemetry')).length, 1);
+  });
+
+  it('speed 90 saves SPEEDING only', async () => {
+    const { result, insertedEventType, calls } = await insertSpeedSnapshot(90);
+
+    assert.equal(result.inserted, true);
+    assert.equal(insertedEventType, 'SPEEDING');
+    assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO gps_telemetry')).length, 1);
+  });
+
+  it('speed 92 saves SPEEDING only', async () => {
+    const { result, insertedEventType, calls } = await insertSpeedSnapshot(92);
+
+    assert.equal(result.inserted, true);
+    assert.equal(insertedEventType, 'SPEEDING');
+    assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO gps_telemetry')).length, 1);
+  });
+
+  it('does not allow LOCATION_UPDATE for the same snapshot when SPEEDING is emitted', () => {
+    const alerts = [
+      { vehicleId: baseTelemetry.vehicleId, eventType: 'SPEEDING' },
+      { vehicleId: baseTelemetry.vehicleId, eventType: 'LOCATION_UPDATE' },
+    ];
+
+    assert.equal(
+      hasHigherPriorityTelemetryEventForSnapshot(alerts, baseTelemetry.vehicleId, 'LOCATION_UPDATE'),
+      true,
+    );
+    assert.equal(
+      hasHigherPriorityTelemetryEventForSnapshot(alerts, baseTelemetry.vehicleId, 'SPEEDING'),
+      false,
+    );
+  });
+
+  it('formats speeding Telegram message with speed, limit, and excess', () => {
+    const message = formatSpeedingAlert('KAR6412', 92, 'CM Recto Avenue', '2026-07-06T04:00:00.000Z');
+
+    assert.match(message, /Speed: 92 km\/h/);
+    assert.match(message, /Limit: 90 km\/h/);
+    assert.match(message, /Excess: \+2 km\/h over limit/);
   });
 });
 

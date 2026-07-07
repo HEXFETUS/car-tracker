@@ -191,6 +191,27 @@ export function shouldPersistMotionStartedFromPreviousState(
     Boolean(activeIdlingSession?.activeTripId);
 }
 
+export function hasHigherPriorityTelemetryEventForSnapshot(
+  alerts: Array<{ vehicleId?: string | null; eventType?: string | null }>,
+  vehicleId: string,
+  currentEventType: string,
+): boolean {
+  return alerts.some((alert) => {
+    if (alert.vehicleId !== vehicleId) return false;
+    const candidateEventType = alert.eventType ? canonicalEventType(alert.eventType) : null;
+    if (currentEventType === EVENT_TYPE.IDLING) {
+      return candidateEventType === EVENT_TYPE.IGNITION_ON ||
+        candidateEventType === EVENT_TYPE.MOTION_STARTED;
+    }
+    if (currentEventType === EVENT_TYPE.LOCATION_UPDATE) {
+      return candidateEventType === EVENT_TYPE.IGNITION_ON ||
+        candidateEventType === EVENT_TYPE.MOTION_STARTED ||
+        candidateEventType === EVENT_TYPE.SPEEDING;
+    }
+    return false;
+  });
+}
+
 // ── Public API ─────────────────────────────────────────────────
 
 /**
@@ -1618,12 +1639,11 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             }
             // Event priority: skip IDLING if MOTION_STARTED or IGNITION_ON exists for this vehicle
             // Only check same vehicle, same polling cycle (this emittedAlerts array)
-            const hasHigherPriorityEvent = emittedAlerts.some((ea) => {
-              if (ea.vehicleId !== vehicleId) return false;
-              const candidateEventType = canonicalEventType(ea.eventType);
-              return candidateEventType === EVENT_TYPE.IGNITION_ON ||
-                candidateEventType === EVENT_TYPE.MOTION_STARTED;
-            });
+            const hasHigherPriorityEvent = hasHigherPriorityTelemetryEventForSnapshot(
+              emittedAlerts,
+              vehicleId,
+              finalEventType,
+            );
             if (hasHigherPriorityEvent) {
               telemetrySkipped += 1;
               console.log(`[idling-alert] Skipping IDLING vehicle=${vehicleId} trip=${activeTripId} reason=higher_priority_event`);
@@ -1636,12 +1656,11 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               continue;
             }
           } else if (finalEventType === EVENT_TYPE.LOCATION_UPDATE) {
-            const hasHigherPriorityEvent = emittedAlerts.some((ea) => {
-              if (ea.vehicleId !== vehicleId) return false;
-              const candidateEventType = canonicalEventType(ea.eventType);
-              return candidateEventType === EVENT_TYPE.IGNITION_ON ||
-                candidateEventType === EVENT_TYPE.MOTION_STARTED;
-            });
+            const hasHigherPriorityEvent = hasHigherPriorityTelemetryEventForSnapshot(
+              emittedAlerts,
+              vehicleId,
+              finalEventType,
+            );
             if (!effectiveIgnition || spd <= 0 || hasHigherPriorityEvent) {
               telemetrySkipped += 1;
               console.log(`[scheduler] SKIPPING LOCATION_UPDATE for ${vehicleId} reason=${!effectiveIgnition ? 'ignition_off' : spd <= 0 ? 'not_moving' : 'higher_priority_event'}`);
