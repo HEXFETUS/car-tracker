@@ -112,6 +112,7 @@ export function getVehicleEmoji(plateNumber: string): string;
 export function formatVehicleHeader(name: string, toNumber?: string | null): string;
 
 export function formatIgnitionAlert(name: string, ignition: boolean, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
+export function formatIdlingTooLongAlert(name: string, idleMinutes: number, fuel: number | null | undefined, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
 
 // ── Trip Log Transformer ──────────────────────────────────────
 

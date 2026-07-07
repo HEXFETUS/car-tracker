@@ -4,7 +4,7 @@ import type pg from 'pg';
 import { IDLE_ALERT_THRESHOLDS_MINUTES } from '@car-tracker/tracker';
 import { setPoolForTest } from '../db/db.js';
 import { insertTelemetry } from './gpsTelemetryService.js';
-import { closeIdlingDedupDb, shouldPersistIdlingAlertDb, shouldPersistMotionStartedFromPreviousState } from './scheduler.js';
+import { closeIdlingDedupDb, idlingMilestoneForMinutes, shouldPersistIdlingAlertDb, shouldPersistMotionStartedFromPreviousState } from './scheduler.js';
 import {
   scoreTravelOrderTripCandidate,
   syncUnlinkedGpsTripLogsToTravelOrders,
@@ -58,8 +58,7 @@ const baseTelemetry = {
 };
 
 function trackerMilestoneForMinutes(minutes: number): number | null {
-  const reached = IDLE_ALERT_THRESHOLDS_MINUTES.filter((threshold) => minutes >= threshold);
-  return reached.length ? reached[reached.length - 1] : null;
+  return idlingMilestoneForMinutes(minutes);
 }
 
 afterEach(() => {
@@ -247,7 +246,7 @@ describe('MOTION_STARTED transition persistence', () => {
 
     assert.deepEqual(result, { inserted: true, updated: false, id: 'motion-started-id' });
     assert.equal(insertedParams?.[2], 'MOTION_STARTED');
-    assert.equal(insertedParams?.[13], baseTelemetry.activeTripId);
+    assert.equal(insertedParams?.[12], baseTelemetry.activeTripId);
   });
 
   it('tracker-emitted MOTION_STARTED stays MOTION_STARTED, not LOCATION_UPDATE', async () => {
@@ -273,6 +272,46 @@ describe('MOTION_STARTED transition persistence', () => {
     });
 
     assert.equal(insertedEventType, 'MOTION_STARTED');
+  });
+});
+
+describe('DB-backed telemetry event sequence', () => {
+  it('saves moving, idling, motion started, then moving location update in order', async () => {
+    const insertedEventTypes: string[] = [];
+    const { pool } = makePool((sql, params) => {
+      if (sql.includes('SELECT id') && sql.includes('date_trunc')) {
+        return { rows: [] };
+      }
+      if (sql.includes('INSERT INTO gps_telemetry')) {
+        insertedEventTypes.push(String(params?.[2]));
+        return { rows: [{ id: `telemetry-${insertedEventTypes.length}` }] };
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    const sequence = [
+      { eventType: 'LOCATION_UPDATE', speedKmh: 44, locationName: 'CM Recto Avenue', recordedAt: '2026-07-06T03:50:00.000Z' },
+      { eventType: 'IDLING_TOO_LONG', speedKmh: 0, locationName: 'CM Recto Avenue', recordedAt: '2026-07-06T04:01:00.000Z' },
+      { eventType: 'MOTION_STARTED', speedKmh: 32, locationName: 'CM Recto Avenue', recordedAt: '2026-07-06T04:20:00.000Z' },
+      { eventType: 'LOCATION_UPDATE', speedKmh: 35, locationName: 'Osmena Street', recordedAt: '2026-07-06T04:22:00.000Z' },
+    ];
+
+    for (const step of sequence) {
+      const result = await insertTelemetry({
+        ...baseTelemetry,
+        ...step,
+        ignition: true,
+      });
+      assert.equal(result.inserted, true);
+    }
+
+    assert.deepEqual(insertedEventTypes, [
+      'LOCATION_UPDATE',
+      'IDLING_TOO_LONG',
+      'MOTION_STARTED',
+      'LOCATION_UPDATE',
+    ]);
   });
 });
 

@@ -9,7 +9,15 @@
 // The interval can be changed at runtime via updateInterval().
 
 import { randomUUID } from 'node:crypto';
-import { syncFleetAndAlert, sendTelegram, getVehicleEmoji, formatIgnitionAlert, formatVehicleHeader } from '@car-tracker/tracker';
+import {
+  syncFleetAndAlert,
+  sendTelegram,
+  getVehicleEmoji,
+  formatIgnitionAlert,
+  formatVehicleHeader,
+  formatIdlingTooLongAlert,
+  IDLE_ALERT_THRESHOLDS_MINUTES,
+} from '@car-tracker/tracker';
 import { findVehicleByPlate, syncGpsTripLogsFromTelemetry } from './gpsLogService.js';
 import { syncNoToLogsFromTelemetry } from './noToLifecycleService.js';
 import { insertTelemetry, getLatestTelemetry, updateTelemetryTelegramDelivery, updateTelemetryTelegramMessage } from './gpsTelemetryService.js';
@@ -105,6 +113,11 @@ type PreviousMotionState = {
 type ActiveIdlingState = {
   activeTripId: string;
 } | null | undefined;
+
+export function idlingMilestoneForMinutes(idleMinutes: number): number | null {
+  const reached = IDLE_ALERT_THRESHOLDS_MINUTES.filter((threshold) => idleMinutes >= threshold);
+  return reached.length ? reached[reached.length - 1] : null;
+}
 
 function canonicalEventType(sourceEventType: string): string | null {
   let result: string | null;
@@ -631,6 +644,22 @@ async function getLatestTelemetryForTrip(
     eventType: row.event_type,
     speedKmh: Number(row.speed_kmh ?? 0),
   };
+}
+
+async function getLatestMovingTelemetryTimestamp(vehicleId: string, activeTripId: string): Promise<string | null> {
+  const pool = getPool();
+  const result = await pool.query<{ recorded_at: string }>(
+    `SELECT recorded_at
+       FROM gps_telemetry
+      WHERE vehicle_id = $1
+        AND active_trip_id = $2
+        AND ignition = true
+        AND speed_kmh > 0
+      ORDER BY recorded_at DESC, created_at DESC
+      LIMIT 1`,
+    [vehicleId, activeTripId],
+  );
+  return result.rows[0]?.recorded_at ?? null;
 }
 
 // ── Helper: Get latest LOCATION_UPDATE for same vehicle_id + active_trip_id ──
@@ -1405,7 +1434,74 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           }
 
           if (currentIgnition && speed <= 0) {
-            console.log(`[scheduler] IDLING telemetry is tracker-owned; polling persistence skipped vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
+            if (!activeTripId) {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] action=skipped reason=no_active_trip vehicle=${vehicleId}`);
+              continue;
+            }
+
+            const movingTelemetryAt = activeIdlingSession?.idlingStartedAt
+              ? null
+              : await getLatestMovingTelemetryTimestamp(vehicleId, activeTripId);
+            const idlingStartedAt = activeIdlingSession?.idlingStartedAt ?? movingTelemetryAt ?? recordedAt;
+            const idlingStartedMs = new Date(idlingStartedAt).getTime();
+            const recordedAtMs = new Date(recordedAt).getTime();
+            const idleMinutes = Number.isFinite(idlingStartedMs) && Number.isFinite(recordedAtMs)
+              ? Math.max(0, (recordedAtMs - idlingStartedMs) / 60000)
+              : 0;
+            const thresholdMinutes = idlingMilestoneForMinutes(idleMinutes);
+
+            if (thresholdMinutes === null) {
+              console.log(`[idling-alert] action=skipped reason=below_threshold idle=${idleMinutes.toFixed(1)}min vehicle=${vehicleId} trip=${activeTripId}`);
+              continue;
+            }
+
+            const shouldPersistIdling = await shouldPersistIdlingAlertDb(vehicleId, activeTripId, thresholdMinutes);
+            if (!shouldPersistIdling) {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] action=skipped reason=already_alerted threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
+              continue;
+            }
+
+            const message = formatIdlingTooLongAlert(
+              plateNumber,
+              Math.floor(idleMinutes),
+              fuelLiters,
+              locationName || 'Unknown location',
+              recordedAt,
+              toNumber,
+              driverName,
+            );
+
+            const result = await saveAndSendTelemetryAlert({
+              eventType: EVENT_TYPE.IDLING,
+              vehicleId,
+              plateNumber,
+              activeTripId,
+              latitude,
+              longitude,
+              speedKmh: speed,
+              fuelLiters,
+              ignition: currentIgnition,
+              locationName,
+              recordedAt,
+              telegramMessage: message,
+            });
+            trackTelegramResult(result);
+
+            if (result.savedTelemetry.id) {
+              if (result.savedTelemetry.inserted) {
+                telemetrySaved += 1;
+                console.log(`[idling-alert] action=saved threshold=${thresholdMinutes}min idle=${idleMinutes.toFixed(1)}min vehicle=${vehicleId} trip=${activeTripId}`);
+              } else {
+                telemetrySkipped += 1;
+                console.log(`[idling-alert] action=skipped reason=${result.savedTelemetry.updated ? 'updated' : 'duplicate'} threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
+              }
+              await markIdlingAlertDb(vehicleId, activeTripId, idlingStartedAt, thresholdMinutes);
+            } else {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] action=skipped reason=missing_telemetry_id threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
+            }
             continue;
           }
         } catch (err) {
