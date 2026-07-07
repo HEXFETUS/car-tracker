@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { FileSpreadsheet, BarChart3, CalendarDays, Calendar, Filter, RotateCcw } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { ReconciliationPage } from '@/modules/reports/pages/ReconciliationPage';
@@ -18,15 +18,22 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const CURRENT_YEAR = new Date().getFullYear();
+const now = new Date();
+const CURRENT_MONTH = MONTHS[now.getMonth()];
+const CURRENT_YEAR = now.getFullYear();
 
 export function ReportsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('reconciliation');
-  const [selectedMonth, setSelectedMonth] = useState('June');
+  const [selectedMonth, setSelectedMonth] = useState(CURRENT_MONTH);
   const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Reconciliation filter state
   const [reconStatusFilter, setReconStatusFilter] = useState('');
+
+  const handleRefresh = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   return (
     <div className="space-y-3">
@@ -71,6 +78,7 @@ export function ReportsPage() {
                 <option value="MISSING TO DISTANCE">Missing TO Distance</option>
               </select>
               <button
+                onClick={handleRefresh}
                 className="inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 hover:bg-zinc-100 transition-colors disabled:opacity-50"
               >
                 <RotateCcw className="size-4" />
@@ -79,7 +87,7 @@ export function ReportsPage() {
             </div>
           )}
 
-          {/* ── Monthly: period filter (right side) ── */}
+          {/* ── Monthly: period filter + refresh (right side) ── */}
           {activeTab === 'monthly' && (
             <div className="flex items-center gap-2">
               <Calendar className="size-4 text-zinc-400 shrink-0" />
@@ -105,10 +113,16 @@ export function ReportsPage() {
                   </option>
                 ))}
               </select>
+              <button
+                onClick={handleRefresh}
+                className="inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 hover:bg-zinc-100 transition-colors"
+              >
+                <RotateCcw className="size-4" />
+              </button>
             </div>
           )}
 
-          {/* ── Yearly: year filter (right side) ── */}
+          {/* ── Yearly: year filter + refresh (right side) ── */}
           {activeTab === 'yearly' && (
             <div className="flex items-center gap-2">
               <Calendar className="size-4 text-zinc-400 shrink-0" />
@@ -123,15 +137,40 @@ export function ReportsPage() {
                   </option>
                 ))}
               </select>
+              <button
+                onClick={handleRefresh}
+                className="inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 hover:bg-zinc-100 transition-colors"
+              >
+                <RotateCcw className="size-4" />
+              </button>
             </div>
           )}
         </div>
       </div>
 
       {/* ── Page content ── */}
-      {activeTab === 'reconciliation' && <ReconciliationPage statusFilter={reconStatusFilter} onStatusFilterChange={setReconStatusFilter} />}
-      {activeTab === 'monthly' && <MonthlyReportPage selectedMonth={MONTHS.indexOf(selectedMonth) + 1} selectedYear={selectedYear} onMonthChange={(month) => setSelectedMonth(MONTHS[month - 1])} onYearChange={setSelectedYear} />}
-      {activeTab === 'yearly' && <YearlyReportPage selectedYear={selectedYear} />}
+      {activeTab === 'reconciliation' && (
+        <ReconciliationPage
+          key={refreshKey}
+          statusFilter={reconStatusFilter}
+          onStatusFilterChange={setReconStatusFilter}
+        />
+      )}
+      {activeTab === 'monthly' && (
+        <MonthlyReportPage
+          key={refreshKey}
+          selectedMonth={MONTHS.indexOf(selectedMonth) + 1}
+          selectedYear={selectedYear}
+          onMonthChange={(month) => setSelectedMonth(MONTHS[month - 1])}
+          onYearChange={setSelectedYear}
+        />
+      )}
+      {activeTab === 'yearly' && (
+        <YearlyReportPage
+          key={refreshKey}
+          selectedYear={selectedYear}
+        />
+      )}
     </div>
   );
 }

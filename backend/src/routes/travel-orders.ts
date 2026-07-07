@@ -77,6 +77,8 @@ interface TravelOrderResponse {
   latLongDestination?: string | null;
   locationName?: string | null;
   destinations: DestinationResponse[];
+  vehicleMake?: string | null;
+  vehicleModel?: string | null;
 }
 
 interface DestinationResponse {
@@ -146,6 +148,8 @@ async function mapRow(row: TravelOrderRow): Promise<TravelOrderResponse> {
     latLongDestination: row.lat_long_destination ?? null,
     locationName: row.location_name ?? null,
     destinations,
+    vehicleMake: (row as any).vehicle_make ?? null,
+    vehicleModel: (row as any).vehicle_model ?? null,
   };
 }
 
@@ -156,6 +160,8 @@ router.get('/pending', async (_req: Request, res: Response) => {
       SELECT
         to_.*,
         v.plate_number,
+        v.make AS vehicle_make,
+        v.model AS vehicle_model,
         d.full_name AS driver_name,
         u.name AS approver_name
       FROM travel_orders to_
@@ -182,6 +188,8 @@ router.get('/approved', async (_req: Request, res: Response) => {
       SELECT
         to_.*,
         v.plate_number,
+        v.make AS vehicle_make,
+        v.model AS vehicle_model,
         d.full_name AS driver_name,
         u.name AS approver_name
       FROM travel_orders to_
@@ -206,6 +214,8 @@ router.get('/for-approval', async (_req: Request, res: Response) => {
       SELECT
         to_.*,
         v.plate_number,
+        v.make AS vehicle_make,
+        v.model AS vehicle_model,
         d.full_name AS driver_name,
         u.name AS approver_name
       FROM travel_orders to_
@@ -232,6 +242,8 @@ router.get('/cancelled', async (_req: Request, res: Response) => {
       SELECT
         to_.*,
         v.plate_number,
+        v.make AS vehicle_make,
+        v.model AS vehicle_model,
         d.full_name AS driver_name,
         u.name AS approver_name
       FROM travel_orders to_
@@ -256,6 +268,8 @@ router.get('/for-request', async (_req: Request, res: Response) => {
       SELECT
         to_.*,
         v.plate_number,
+        v.make AS vehicle_make,
+        v.model AS vehicle_model,
         d.full_name AS driver_name,
         u.name AS approver_name
       FROM travel_orders to_
@@ -502,13 +516,13 @@ router.post('/', async (req: Request, res: Response) => {
 
     const destList = destinations && destinations.length > 0
       ? destinations.map((d: any, i: number) => ({
-          locationName: d.locationName || d.location_name || '',
-          address: d.address || null,
-          latLong: d.latLong || d.lat_long || null,
-          notes: d.notes || null,
-          estimatedArrival: d.estimatedArrival || d.estimated_arrival || null,
-          stopOrder: d.stopOrder ?? d.stop_order ?? i + 1,
-        }))
+        locationName: d.locationName || d.location_name || '',
+        address: d.address || null,
+        latLong: d.latLong || d.lat_long || null,
+        notes: d.notes || null,
+        estimatedArrival: d.estimatedArrival || d.estimated_arrival || null,
+        stopOrder: d.stopOrder ?? d.stop_order ?? i + 1,
+      }))
       : destinationLocation
         ? [{ locationName: destinationLocation, address: null, latLong: latLongDestination || null, notes: null, estimatedArrival: null, stopOrder: 1 }]
         : [];

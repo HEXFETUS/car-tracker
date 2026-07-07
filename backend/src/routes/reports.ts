@@ -2,6 +2,7 @@ import express, { type Request, type Response, type Router as ExpressRouter } fr
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
 import { haversineDistance } from '../services/gpsLogService.js';
+import { mapGpsTripLogRow } from './gps-trip-log-serializer.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -21,44 +22,60 @@ router.get('/monthly', async (req: Request, res: Response) => {
     }
 
     const sql = `
-      WITH gps AS (
+      WITH trip_data AS (
+        -- GPS trip logs (trips linked to Travel Orders)
         SELECT
           vehicle_id::text AS vehicle_id,
-          COUNT(*) AS total_gps_trips,
-          COALESCE(SUM(gps_distance_km), 0) AS total_gps_distance_km,
-          COUNT(*) FILTER (
-            WHERE travel_order_id IS NULL
-               OR to_status_auto = 'NO_APPROVED_TO'
-          ) AS unauthorized_trips,
-          COUNT(*) FILTER (
-            WHERE travel_order_id IS NOT NULL
-          ) AS linked_trips
+          gps_distance_km AS distance_km,
+          travel_order_id,
+          trip_date
         FROM gps_trip_logs
-        WHERE EXTRACT(MONTH FROM COALESCE(departure_time_gps, created_at)) = $1
-          AND EXTRACT(YEAR FROM COALESCE(departure_time_gps, created_at)) = $2
-        GROUP BY vehicle_id::text
-      ),
-      tos AS (
+        WHERE EXTRACT(MONTH FROM trip_date) = $1
+          AND EXTRACT(YEAR FROM trip_date) = $2
+
+        UNION ALL
+
+        -- GPS no-TO logs (trips without Travel Orders)
         SELECT
           vehicle_id::text AS vehicle_id,
-          COUNT(*) FILTER (
-            WHERE status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
-          ) AS total_approved_tos
-        FROM travel_orders
-        WHERE EXTRACT(MONTH FROM COALESCE(scheduled_departure, created_at)) = $1
-          AND EXTRACT(YEAR FROM COALESCE(scheduled_departure, created_at)) = $2
-        GROUP BY vehicle_id::text
+          distance_km,
+          NULL::uuid AS travel_order_id,
+          trip_date
+        FROM gps_no_to_logs
+        WHERE EXTRACT(MONTH FROM trip_date) = $1
+          AND EXTRACT(YEAR FROM trip_date) = $2
+      ),
+      vehicle_agg AS (
+        SELECT
+          vehicle_id,
+          COUNT(*) AS total_gps_trips,
+          COALESCE(SUM(distance_km), 0) AS total_gps_distance_km,
+          COUNT(*) FILTER (WHERE travel_order_id IS NULL) AS unauthorized_trips,
+          COUNT(DISTINCT travel_order_id) FILTER (WHERE travel_order_id IS NOT NULL) AS linked_trips
+        FROM trip_data
+        GROUP BY vehicle_id
+      ),
+      approved_tos AS (
+        SELECT
+          gtl.vehicle_id::text AS vehicle_id,
+          COUNT(DISTINCT gtl.travel_order_id) AS total_approved_tos
+        FROM gps_trip_logs gtl
+        INNER JOIN travel_orders to_ ON to_.id = gtl.travel_order_id
+        WHERE to_.status = 'APPROVED'
+          AND EXTRACT(MONTH FROM gtl.trip_date) = $1
+          AND EXTRACT(YEAR FROM gtl.trip_date) = $2
+        GROUP BY gtl.vehicle_id::text
       )
       SELECT
         v.plate_number AS vehicle_plate_no,
-        COALESCE(g.total_gps_trips, 0) AS total_gps_trips,
-        COALESCE(g.total_gps_distance_km, 0) AS total_gps_distance_km,
-        COALESCE(t.total_approved_tos, 0) AS total_approved_tos,
-        COALESCE(g.unauthorized_trips, 0) AS unauthorized_trips,
-        COALESCE(g.linked_trips, 0) AS linked_trips
+        COALESCE(va.total_gps_trips, 0) AS total_gps_trips,
+        COALESCE(va.total_gps_distance_km, 0) AS total_gps_distance_km,
+        COALESCE(at.total_approved_tos, 0) AS total_approved_tos,
+        COALESCE(va.unauthorized_trips, 0) AS unauthorized_trips,
+        COALESCE(va.linked_trips, 0) AS linked_trips
       FROM vehicles v
-      LEFT JOIN gps g ON g.vehicle_id = v.id::text
-      LEFT JOIN tos t ON t.vehicle_id = v.id::text
+      LEFT JOIN vehicle_agg va ON va.vehicle_id = v.id::text
+      LEFT JOIN approved_tos at ON at.vehicle_id = v.id::text
       ORDER BY v.plate_number;
     `;
 
@@ -113,39 +130,53 @@ router.get('/yearly', async (req: Request, res: Response) => {
       WITH months AS (
         SELECT generate_series(1, 12) AS month
       ),
+      trip_data AS (
+        -- GPS trip logs (trips linked to Travel Orders)
+        SELECT
+          EXTRACT(MONTH FROM trip_date)::int AS month,
+          gps_distance_km AS distance_km,
+          travel_order_id,
+          trip_date
+        FROM gps_trip_logs
+        WHERE EXTRACT(YEAR FROM trip_date) = $1
+
+        UNION ALL
+
+        -- GPS no-TO logs (trips without Travel Orders)
+        SELECT
+          EXTRACT(MONTH FROM trip_date)::int AS month,
+          distance_km,
+          NULL::uuid AS travel_order_id,
+          trip_date
+        FROM gps_no_to_logs
+        WHERE EXTRACT(YEAR FROM trip_date) = $1
+      ),
       gps AS (
         SELECT
-          EXTRACT(MONTH FROM COALESCE(departure_time_gps, created_at))::int AS month,
+          month,
           COUNT(*) AS total_gps_trips,
-          COALESCE(SUM(gps_distance_km), 0) AS total_gps_distance_km,
-          COUNT(*) FILTER (
-            WHERE travel_order_id IS NULL
-               OR to_status_auto = 'NO_APPROVED_TO'
-          ) AS unauthorized_trips,
-          COUNT(*) FILTER (
-            WHERE travel_order_id IS NOT NULL
-          ) AS linked_trips
-        FROM gps_trip_logs
-        WHERE EXTRACT(YEAR FROM COALESCE(departure_time_gps, created_at)) = $1
-        GROUP BY EXTRACT(MONTH FROM COALESCE(departure_time_gps, created_at))
+          COALESCE(SUM(distance_km), 0) AS total_gps_distance_km,
+          COUNT(*) FILTER (WHERE travel_order_id IS NULL) AS unauthorized_trips,
+          COUNT(DISTINCT travel_order_id) FILTER (WHERE travel_order_id IS NOT NULL) AS linked_trips
+        FROM trip_data
+        GROUP BY month
       ),
       tos AS (
         SELECT
-          EXTRACT(MONTH FROM COALESCE(scheduled_departure, created_at))::int AS month,
-          COUNT(*) FILTER (
-            WHERE status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
-          ) AS total_approved_tos
-        FROM travel_orders
-        WHERE EXTRACT(YEAR FROM COALESCE(scheduled_departure, created_at)) = $1
-        GROUP BY EXTRACT(MONTH FROM COALESCE(scheduled_departure, created_at))
+          EXTRACT(MONTH FROM gtl.trip_date)::int AS month,
+          COUNT(DISTINCT gtl.travel_order_id) FILTER (WHERE to_.status = 'APPROVED') AS total_approved_tos
+        FROM gps_trip_logs gtl
+        INNER JOIN travel_orders to_ ON to_.id = gtl.travel_order_id
+        WHERE EXTRACT(YEAR FROM gtl.trip_date) = $1
+        GROUP BY EXTRACT(MONTH FROM gtl.trip_date)
       ),
       prev AS (
         SELECT
-          EXTRACT(MONTH FROM COALESCE(departure_time_gps, created_at))::int AS month,
+          EXTRACT(MONTH FROM trip_date)::int AS month,
           COALESCE(SUM(gps_distance_km), 0) AS prev_distance
         FROM gps_trip_logs
-        WHERE EXTRACT(YEAR FROM COALESCE(departure_time_gps, created_at)) = $1 - 1
-        GROUP BY EXTRACT(MONTH FROM COALESCE(departure_time_gps, created_at))
+        WHERE EXTRACT(YEAR FROM trip_date) = $1 - 1
+        GROUP BY EXTRACT(MONTH FROM trip_date)
       )
       SELECT
         m.month,
@@ -246,17 +277,35 @@ router.get('/reconciliation', async (req: Request, res: Response) => {
         to_.lat_long_origin,
         to_.lat_long_destination,
         v.plate_number,
-        g.id                                                         AS gps_log_id,
+        g.id,
         g.gps_record_no,
         g.trip_date,
-        g.origin_gps_start_point                                     AS gps_origin,
-        g.destination_gps_end_point                                  AS gps_destination,
+        g.origin_gps_start_point,
+        g.destination_gps_end_point,
+        g.coordinates_origin,
+        g.coordinates_destination,
+        g.actual_route_road_taken,
         g.gps_distance_km,
+        g.engine_hours,
+        g.max_speed_kph,
+        g.trip_status_gps,
+        g.to_status_auto,
+        g.anomaly_flag,
+        g.notes_remarks,
+        g.destination_verified,
+        g.trip_type,
+        g.parent_trip_id,
         g.departure_time_gps,
-        g.arrival_time_gps
+        g.arrival_time_gps,
+        g.destination_reached_at,
+        d.full_name AS driver_full_name,
+        to_.to_number AS travel_order_to_number,
+        to_.origin_location AS to_origin,
+        to_.destination_target AS to_destination
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN gps_trip_logs g ON g.travel_order_id = to_.id
+      LEFT JOIN drivers d ON d.id = COALESCE(g.driver_id, to_.driver_id)
       WHERE to_.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
       ORDER BY to_.updated_at DESC, g.trip_date DESC NULLS LAST
     `;
@@ -265,20 +314,24 @@ router.get('/reconciliation', async (req: Request, res: Response) => {
 
     // ── Transform rows with variance calculation ──────────────────
     const data = result.rows.map((row: any) => {
-      // TO estimated mileage: from origin/destination coordinates via haversine
-      let toEstMileageKm = 0;
+      const gpsLog = row.id ? mapGpsTripLogRow(row) : null;
+      // TO estimated mileage: from origin/destination coordinates via haversine.
+      // This is one-way distance; multiply by 2 for round-trip (origin → destination → origin).
+      let toEstOneWayKm = 0;
       if (row.lat_long_origin && row.lat_long_destination) {
         const distMeters = haversineDistance(row.lat_long_origin, row.lat_long_destination);
-        toEstMileageKm = parseFloat((distMeters / 1000).toFixed(1));
+        toEstOneWayKm = parseFloat((distMeters / 1000).toFixed(1));
       }
+      const toEstMileageKm = parseFloat((toEstOneWayKm * 2).toFixed(1));
 
       const gpsActualMileageKm = row.gps_distance_km != null
         ? parseFloat(String(row.gps_distance_km))
         : 0;
 
+      // Variance uses round-trip TO estimate
       const varianceKm = parseFloat((gpsActualMileageKm - toEstMileageKm).toFixed(1));
       const variancePct = toEstMileageKm > 0
-        ? parseFloat(((Math.abs(varianceKm) / toEstMileageKm) * 100).toFixed(1))
+        ? parseFloat(((varianceKm / toEstMileageKm) * 100).toFixed(1))
         : 0;
 
       // Determine match status per specification rules
@@ -286,7 +339,7 @@ router.get('/reconciliation', async (req: Request, res: Response) => {
       let status: 'Matched' | 'Flagged' | 'NO GPS RECORD' | 'MISSING TO DISTANCE';
       if (toEstMileageKm === 0) {
         status = 'MISSING TO DISTANCE';
-      } else if (row.gps_log_id == null) {
+      } else if (row.id == null) {
         status = 'NO GPS RECORD';
       } else if (variancePct <= 20) {
         status = 'Matched';
@@ -297,13 +350,13 @@ router.get('/reconciliation', async (req: Request, res: Response) => {
       return {
         id: row.travel_order_id,
         toNo: row.to_number || '—',
-        gpsRecordNo: row.gps_record_no || (row.gps_log_id ? `GPS-${row.to_number ?? 'UNKNOWN'}` : '—'),
+        gpsRecordNo: gpsLog?.gpsRecordNo || (row.id ? `GPS-${row.to_number ?? 'UNKNOWN'}` : '—'),
         vehiclePlate: row.plate_number || 'Unknown',
-        tripDate: row.trip_date
-          ? new Date(row.trip_date).toISOString().split('T')[0]
-          : '—',
-        origin: row.gps_origin || row.origin_location || '—',
-        destination: row.gps_destination || row.destination_target || '—',
+        tripDate: row.departure_time_gps ?? null,
+        origin: gpsLog?.originGpsStartPoint || '—',
+        destination: row.destination_target || '—',
+        gpsActualDestination: gpsLog?.destinationGpsEndPoint || null,
+        departureTime: gpsLog?.departureTimeGps ?? null,
         toEstMileageKm,
         gpsActualMileageKm,
         varianceKm,
@@ -311,14 +364,9 @@ router.get('/reconciliation', async (req: Request, res: Response) => {
         status,
         explanationRemarks: '',
         toStatus: row.to_status || '',
-        arrivalTime: row.arrival_time_gps
-          ? new Date(row.arrival_time_gps).toLocaleString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            })
-          : null,
+        // Use destination_reached_at (GPS actual destination arrival time) as primary,
+        // fall back to arrival_time_gps (which may be the return/end time).
+        arrivalTime: row.destination_reached_at ?? gpsLog?.arrivalTimeGps ?? null,
       };
     });
 

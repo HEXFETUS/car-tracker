@@ -360,10 +360,6 @@ export interface TelemetryRow {
   toNumber: string | null;
   recordedAt: string;
   createdAt: string;
-  // Active travel order info
-  activeToNumber?: string | null;
-  activeToStatus?: string | null;
-  activeDriverName?: string | null;
 }
 
 export interface TelemetryResult {
@@ -529,6 +525,14 @@ export interface TripDetails {
   endAddress?: string | null;
   endCoordinates?: string | null;
   returnedToBaseAt?: string | null;
+  // No-TO specific arrival/end mapping fields
+  destinationReachedAt?: string | null;
+  arrivalTime?: string | null;
+  departureTime?: string | null;
+  pausedAt?: string | null;
+  // Backend-computed arrival time (validated: rejects arrival == departure
+  // unless destination_reached_at proves actual arrival; falls back to pausedAt)
+  arrivalDisplayTime?: string | null;
   matchedOriginDistanceM?: number | null;
   travelOrderStatus?: string | null;
   anomalyFlag: boolean;

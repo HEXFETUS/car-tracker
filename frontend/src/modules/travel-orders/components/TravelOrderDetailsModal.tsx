@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send } from 'lucide-react';
+import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, Printer } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { formatDateManila, formatTimeManila, formatDateTimeManila } from '@/shared/lib/date-utils';
 import { useNotification } from '@/shared/context/NotificationContext';
@@ -12,6 +12,7 @@ import {
   fetchDrivers,
   type TravelOrderData,
 } from '../api/travel-orders-api';
+import { TravelOrderPrintModal } from './TravelOrderPrintModal';
 
 interface TravelOrderDetailsModalProps {
   isOpen: boolean;
@@ -87,6 +88,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
 
   // Form state
   const [department, setDepartment] = useState('');
@@ -871,6 +873,16 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                 {saving ? 'Resetting...' : 'Reset to Pending'}
               </button>
             )}
+            {order.status === 'APPROVED' && (
+              <button
+                type="button"
+                onClick={() => setPrintPreviewOpen(true)}
+                className="rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors inline-flex items-center gap-2"
+              >
+                <Printer className="size-4" />
+                Print
+              </button>
+            )}
             <button
               type="button"
               onClick={handleClose}
@@ -881,6 +893,14 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
           </div>
         </div>
       </div>
+
+      {order && (
+        <TravelOrderPrintModal
+          isOpen={printPreviewOpen}
+          onClose={() => setPrintPreviewOpen(false)}
+          order={order}
+        />
+      )}
     </div>
   );
 }

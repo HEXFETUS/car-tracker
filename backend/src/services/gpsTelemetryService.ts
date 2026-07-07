@@ -21,6 +21,7 @@ export interface TelemetryInsert {
   toNumber?: string | null;
   recordedAt: string;
   activeTripId?: string | null;
+  idlingThresholdMinutes?: number | null;
   telegramMessage?: string | null;
   telegramStatus?: string | null;
   telegramError?: string | null;
@@ -47,10 +48,8 @@ export interface TelemetryRow {
   telegramStatus: string | null;
   telegramError: string | null;
   telegramAttemptedAt: string | null;
-  // Active travel order info
-  activeToNumber?: string | null;
-  activeToStatus?: string | null;
-  activeDriverName?: string | null;
+  toNumber: string | null;
+  driverName: string | null;
 }
 
 interface TelemetryDbRow {
@@ -73,9 +72,8 @@ interface TelemetryDbRow {
   telegram_status: string | null;
   telegram_error: string | null;
   telegram_attempted_at: string | null;
-  active_to_number: string | null;
-  active_to_status: string | null;
-  active_driver_name: string | null;
+  to_number: string | null;
+  driver_full_name: string | null;
 }
 
 function canonicalTelemetryEventType(eventType: string): string {
@@ -378,9 +376,9 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
       `INSERT INTO gps_telemetry
        (vehicle_id, plate_number, event_type, latitude, longitude,
         speed_kmh, fuel_liters, ignition, location_name,
-        driver_id, travel_order_id, recorded_at, active_trip_id, telegram_message,
+        driver_id, travel_order_id, recorded_at, active_trip_id, idling_threshold_minutes, telegram_message,
         telegram_status, telegram_error, telegram_attempted_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
      ON CONFLICT DO NOTHING
      RETURNING id`,
        [
@@ -397,6 +395,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
          inheritedTravelOrderId,
          data.recordedAt,
          data.activeTripId ?? null,
+         data.idlingThresholdMinutes ?? null,
          data.telegramMessage ?? null,
          data.telegramStatus ?? null,
          data.telegramError ?? null,
@@ -520,7 +519,7 @@ export interface TelemetryResult {
 
 /**
  * Fetch telemetry data with pagination and optional filters.
- * Includes active travel order and driver information via LEFT JOIN.
+ * Includes travel order and driver display fields from the IDs stored on each telemetry row.
  */
 export async function fetchTelemetry(
   params: FetchTelemetryParams = {},
@@ -572,15 +571,6 @@ export async function fetchTelemetry(
         LAG(gt.fuel_liters) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_fuel,
         LAG(gt.location_name) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_location
       FROM gps_telemetry gt
-      LEFT JOIN LATERAL (
-        SELECT to_number, status, driver_id FROM travel_orders
-        WHERE vehicle_id = gt.vehicle_id
-        AND status IN ('APPROVED', 'ACTIVE')
-        AND DATE(scheduled_departure) = DATE(gt.recorded_at)
-        ORDER BY created_at DESC
-        LIMIT 1
-      ) to_data ON true
-      LEFT JOIN drivers d ON d.id = to_data.driver_id
       ${whereClause}
     )
     SELECT COUNT(*) AS total FROM ranked_telemetry
@@ -599,25 +589,16 @@ export async function fetchTelemetry(
     `WITH ranked_telemetry AS (
       SELECT 
         gt.*,
-        to_data.to_number as active_to_number,
-        to_data.status as active_to_status,
-        d.full_name as active_driver_name,
+        t_order.to_number,
+        d.full_name as driver_full_name,
         LAG(gt.event_type) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_event_type,
         LAG(gt.speed_kmh) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_speed,
         LAG(gt.ignition) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_ignition,
         LAG(gt.fuel_liters) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_fuel,
         LAG(gt.location_name) OVER (PARTITION BY gt.vehicle_id ORDER BY gt.recorded_at) as prev_location
       FROM gps_telemetry gt
-      LEFT JOIN LATERAL (
-        SELECT to_number, status, driver_id
-        FROM travel_orders
-        WHERE vehicle_id = gt.vehicle_id
-        AND status IN ('APPROVED', 'ACTIVE')
-        AND DATE(scheduled_departure) = DATE(gt.recorded_at)
-        ORDER BY created_at DESC
-        LIMIT 1
-      ) to_data ON true
-      LEFT JOIN drivers d ON d.id = to_data.driver_id
+      LEFT JOIN travel_orders t_order ON t_order.id = gt.travel_order_id
+      LEFT JOIN drivers d ON d.id = gt.driver_id
       ${whereClause}
     )
     SELECT *
@@ -653,9 +634,8 @@ export async function fetchTelemetry(
     telegramStatus: row.telegram_status ?? null,
     telegramError: row.telegram_error ?? null,
     telegramAttemptedAt: row.telegram_attempted_at ?? null,
-    activeToNumber: row.active_to_number ?? null,
-    activeToStatus: row.active_to_status ?? null,
-    activeDriverName: row.active_driver_name ?? null,
+    toNumber: row.to_number ?? null,
+    driverName: row.driver_full_name ?? null,
   }));
 
   return {

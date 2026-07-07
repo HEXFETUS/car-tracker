@@ -23,3 +23,184 @@
 .leaflet-top, .leaflet-bottom { z-index: 2 !important; }
 .leaflet-control { z-index: 2 !important; }
 .leaflet-popup { z-index: 3 !important; }
+
+/* ── Print styles for Travel Order form ── */
+@media print {
+  @page {
+    size: 8.5in 13in;
+    margin: 8mm;
+  }
+
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  #travel-order-print,
+  #travel-order-print * {
+    visibility: visible;
+  }
+
+  #travel-order-print {
+    display: block !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    transform: none !important;
+  }
+
+  #travel-order-print > * {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  .to-print-sheet {
+    display: block !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    transform: none !important;
+  }
+
+  .to-print-logo-wrap {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  .print-preview-content {
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* ── Travel Order Print Preview Layout ── */
+.to-print-sheet {
+  width: 100%;
+  max-width: 1050px;
+  background: white;
+  color: #111;
+  padding: 24px 36px;
+  font-family: Arial, sans-serif;
+  box-shadow: none;
+  border-radius: 0;
+  margin: 0;
+  display: block;
+}
+
+.to-print-logo-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
+
+.to-print-logo {
+  display: block;
+  height: 22px;
+  width: auto;
+  object-fit: contain;
+  margin: 0 auto;
+}
+
+.to-top-rule,
+.to-bottom-rule {
+  border-top: 1.5px solid #111;
+  margin: 10px 0;
+}
+
+.to-print-sheet h1 {
+  text-align: center;
+  font-size: 18px;
+  letter-spacing: 1px;
+  margin: 10px 0;
+  font-weight: 700;
+}
+
+.to-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 24px;
+  row-gap: 4px;
+}
+
+.to-field {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  align-items: end;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.to-field strong {
+  min-height: 16px;
+  border-bottom: 1.5px solid #111;
+  font-weight: 500;
+  padding-left: 6px;
+}
+
+.to-time-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 8px;
+}
+
+.to-time-row .to-field {
+  grid-template-columns: 200px 1fr;
+}
+
+.to-purpose-box {
+  display: grid;
+  grid-template-columns: 28% 72%;
+  min-height: 50px;
+  border: 1.5px solid #111;
+  margin-top: 8px;
+}
+
+.to-purpose-label {
+  border-right: 1.5px solid #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.to-purpose-content {
+  padding: 8px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.to-signatures {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 36px;
+  margin-top: 24px;
+  text-align: center;
+}
+
+.sig-line {
+  border-bottom: 1.5px solid #111;
+  min-height: 18px;
+  font-weight: 500;
+  padding-bottom: 3px;
+}
+
+.sig-label {
+  margin-top: 6px;
+  font-size: 9px;
+  font-style: italic;
+  font-weight: 700;
+}
+
+.to-number {
+  color: #b91c1c;
+}
+

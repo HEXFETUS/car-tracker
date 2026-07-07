@@ -7,6 +7,10 @@ export interface ReconciliationRecord {
   tripDate: string;
   origin: string;
   destination: string;
+  /** GPS actual endpoint from gps_trip_logs.destination_gps_end_point */
+  gpsActualDestination?: string | null;
+  /** GPS-based departure time from gps_trip_logs.departure_time_gps */
+  departureTime?: string | null;
   toEstMileageKm: number;
   gpsActualMileageKm: number;
   /** Derived: gpsActualMileageKm - toEstMileageKm */

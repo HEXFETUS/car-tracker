@@ -497,20 +497,24 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
   const engineHours = Math.max(0, (new Date(endTime).getTime() - new Date(trip.startedAt).getTime()) / 3600000);
   const anomalyReason = 'Vehicle completed trip without matching approved travel order.';
 
-  // ── Find existing no-TO log by active_trip_ids ──
+  // ── Find existing no-TO log by active_trip_id directly ──
+  // Uses the new active_trip_id column for direct lookup (faster, more reliable)
+  // rather than joining through gps_no_to_log_active_trips.
+  // This prevents duplicates when PAUSED/RESUMED introduces new active_trip_ids
+  // that don't yet exist in the junction table.
   const activeTripIdArray = Array.from(trip.activeTripIds);
   let noToLogId: string | null = null;
   let status: 'created' | 'updated' = 'created';
 
   if (activeTripIdArray.length > 0) {
+    // Primary lookup: use gps_no_to_logs.active_trip_id column directly
     const existing = await pool.query<{ id: string }>(
       `SELECT n.id
          FROM gps_no_to_logs n
-         JOIN gps_no_to_log_active_trips nat ON nat.gps_no_to_log_id = n.id
         WHERE n.vehicle_id = $1
           AND n.trip_date = $2::date
-          AND nat.active_trip_id = ANY($3::uuid[])
-        ORDER BY n.created_at DESC
+          AND n.active_trip_id = ANY($3::uuid[])
+        ORDER BY n.created_at ASC
         LIMIT 1`,
       [trip.vehicleId, tripDateFromTimestamp(trip.startedAt), activeTripIdArray],
     );
@@ -520,6 +524,9 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
 
   if (noToLogId) {
     // ── UPDATE existing log ──
+    // Determine primary active_trip_id (prefer first/earliest)
+    const primaryActiveTripId = activeTripIdArray.length > 0 ? activeTripIdArray[0] : null;
+
     await pool.query(
       `UPDATE gps_no_to_logs
           SET driver_id = COALESCE($2, driver_id),
@@ -548,7 +555,9 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
               end_time = $23::timestamptz AT TIME ZONE 'UTC',
               farthest_distance_m = $24,
               candidate_destination_address = $25,
-              candidate_destination_coordinates = $26
+              candidate_destination_coordinates = $26,
+              active_trip_id = COALESCE(active_trip_id, $27),
+              updated_at = current_timestamp
         WHERE id = $1`,
       [
         noToLogId,
@@ -577,11 +586,13 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
         Number(trip.farthestDistanceM.toFixed(2)),
         trip.candidateDestinationAddress,
         trip.candidateDestinationCoordinates,
+        primaryActiveTripId,
       ],
     );
   } else {
     // ── INSERT new log ──
     const noToRecordNo = await generateNoToRecordNo(trip.startedAt);
+    const primaryActiveTripId = activeTripIdArray.length > 0 ? activeTripIdArray[0] : null;
     const insertColumns = [
       'no_to_record_no',
       'vehicle_id',
@@ -613,6 +624,7 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
       'farthest_distance_m',
       'candidate_destination_address',
       'candidate_destination_coordinates',
+      'active_trip_id',
     ];
     const insertValues = [
       noToRecordNo,
@@ -645,6 +657,7 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
       Number(trip.farthestDistanceM.toFixed(2)),
       trip.candidateDestinationAddress,
       trip.candidateDestinationCoordinates,
+      primaryActiveTripId,
     ];
     const columnPlaceholders = insertValues.map((_, i) => `$${i + 1}`);
     const insertSql = `INSERT INTO gps_no_to_logs

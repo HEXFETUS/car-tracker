@@ -53,6 +53,8 @@ export interface TravelOrderData {
   latLongDestination?: string | null;
   locationName?: string | null;
   destinations: DestinationData[];
+  vehicleMake?: string | null;
+  vehicleModel?: string | null;
 }
 
 export async function fetchTravelOrders(): Promise<TravelOrderData[]> {

@@ -370,8 +370,10 @@ async function ensureIdlingDedupSchema(): Promise<void> {
         OR last_alerted_duration_minutes IS NULL
         OR last_alerted_at IS NULL;
 
+    DROP INDEX IF EXISTS idx_gps_idling_dedup_active_trip;
     CREATE INDEX IF NOT EXISTS idx_gps_idling_dedup_active_trip
-      ON gps_idling_dedup (vehicle_id, active_trip_id, is_active);
+      ON gps_idling_dedup (vehicle_id, active_trip_id, COALESCE(last_alerted_duration_minutes, threshold_minutes, 0) DESC)
+      WHERE is_active = true;
   `);
   idlingSchemaReady = true;
 }
@@ -399,9 +401,233 @@ async function getActiveIdlingDedupDb(vehicleId: string, activeTripId: string): 
   } : null;
 }
 
+/**
+ * Atomic idling persistence using SELECT ... FOR UPDATE inside a transaction.
+ * 1. Lock the active dedup row for this vehicle+trip
+ * 2. Re-read last_alerted_duration_minutes inside the lock
+ * 3. If threshold is new, UPSERT the dedup row
+ * 4. Return whether the alert should be persisted (concurrently safe)
+ */
+export async function persistIdlingAlertIfNewThreshold(
+  vehicleId: string,
+  activeTripId: string,
+  thresholdMinutes: number,
+): Promise<boolean> {
+  await ensureIdlingDedupSchema();
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Lock the active dedup row for this vehicle+trip
+    const lockResult = await client.query<{ last_alerted_duration_minutes: number | null }>(
+      `SELECT last_alerted_duration_minutes
+         FROM gps_idling_dedup
+        WHERE vehicle_id = $1
+          AND active_trip_id = $2
+          AND is_active = true
+        ORDER BY COALESCE(last_alerted_duration_minutes, threshold_minutes, 0) DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [vehicleId, activeTripId],
+    );
+    const lockedRow = lockResult.rows[0];
+    const currentAlerted = Number(lockedRow?.last_alerted_duration_minutes ?? 0);
+
+    if (currentAlerted >= thresholdMinutes) {
+      await client.query('COMMIT');
+      return false;
+    }
+
+    // UPSERT the dedup row under lock
+    await client.query(
+      `INSERT INTO gps_idling_dedup
+         (vehicle_id, active_trip_id, threshold_minutes, last_alerted_duration_minutes, last_alerted_at, is_active)
+       VALUES ($1, $2, $3, $3, now(), true)
+       ON CONFLICT (vehicle_id, active_trip_id) WHERE is_active = true
+       DO UPDATE SET
+         last_alerted_duration_minutes = EXCLUDED.last_alerted_duration_minutes,
+         last_alerted_at = now(),
+         threshold_minutes = EXCLUDED.threshold_minutes`,
+      [vehicleId, activeTripId, thresholdMinutes],
+    );
+
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(`[idling-dedup] Atomic persist failed vehicle=${vehicleId} trip=${activeTripId}:`, (err as Error).message);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function shouldPersistIdlingAlertDb(vehicleId: string, activeTripId: string, thresholdMinutes: number): Promise<boolean> {
   const stateRow = await getActiveIdlingDedupDb(vehicleId, activeTripId);
   return Number(stateRow?.lastAlertedDurationMinutes ?? 0) < thresholdMinutes;
+}
+
+// ── Atomic idling alert: dedup + telemetry + telegram in ONE transaction ──
+// This closes the idling dedup race where telemetry was inserted BEFORE the
+// gps_idling_dedup row was persisted, allowing two concurrent scheduler
+// cycles to both believe the threshold was new.
+//
+// Order (all inside a single transaction):
+//   BEGIN
+//   SELECT ... FOR UPDATE gps_idling_dedup        (lock the active row)
+//   compute threshold (passed in)
+//   if threshold already alerted:  COMMIT; return skipped
+//   final dup guard: telemetry row exists for trip+threshold? COMMIT; return skipped
+//   UPSERT gps_idling_dedup                       (MUST happen before telemetry)
+//   INSERT gps_telemetry (with idling_threshold_minutes)
+//   send Telegram
+//   COMMIT
+//
+// Telemetry always uses the threshold value, never the raw elapsed minutes.
+export interface HandleIdlingAlertTxParams {
+  vehicleId: string;
+  plateNumber: string;
+  activeTripId: string;
+  latitude: number | null;
+  longitude: number | null;
+  speedKmh: number;
+  fuelLiters: number | null;
+  ignition: boolean;
+  locationName: string | null;
+  recordedAt: string;
+  idlingStartedAt: string;
+  thresholdMinutes: number;
+  telegramMessage: string;
+}
+
+export interface HandleIdlingAlertTxResult {
+  skipped: boolean;
+  reason?: 'already_alerted' | 'telemetry_exists';
+  telemetryId: string | null;
+  telegramSent: boolean;
+  telegramError: string | null;
+}
+
+export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTxParams): Promise<HandleIdlingAlertTxResult> {
+  await ensureIdlingDedupSchema();
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Lock the active dedup row for this vehicle + trip
+    const lockResult = await client.query<{ last_alerted_duration_minutes: number | null }>(
+      `SELECT last_alerted_duration_minutes
+         FROM gps_idling_dedup
+        WHERE vehicle_id = $1
+          AND active_trip_id = $2
+          AND is_active = true
+        ORDER BY COALESCE(last_alerted_duration_minutes, threshold_minutes, 0) DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [params.vehicleId, params.activeTripId],
+    );
+    const currentAlerted = Number(lockResult.rows[0]?.last_alerted_duration_minutes ?? 0);
+
+    // 2. If this threshold was already alerted, stop — do NOT insert telemetry.
+    if (currentAlerted >= params.thresholdMinutes) {
+      await client.query('COMMIT');
+      return { skipped: true, reason: 'already_alerted', telemetryId: null, telegramSent: false, telegramError: null };
+    }
+
+    // 3. Final duplicate guard: has an IDLING_TOO_LONG telemetry row already been
+    //    persisted for this exact trip + threshold? (checks the column, not the message)
+    const dupResult = await client.query<{ id: string }>(
+      `SELECT id
+         FROM gps_telemetry
+        WHERE vehicle_id = $1
+          AND active_trip_id = $2
+          AND event_type = 'IDLING_TOO_LONG'
+          AND idling_threshold_minutes = $3
+        LIMIT 1`,
+      [params.vehicleId, params.activeTripId, params.thresholdMinutes],
+    );
+    if (dupResult.rows.length > 0) {
+      await client.query('COMMIT');
+      return { skipped: true, reason: 'telemetry_exists', telemetryId: dupResult.rows[0].id, telegramSent: false, telegramError: null };
+    }
+
+    // 4. UPSERT the dedup row (must happen before telemetry insert)
+    await client.query(
+      `INSERT INTO gps_idling_dedup
+         (vehicle_id, active_trip_id, threshold_minutes, last_alerted_duration_minutes, last_alerted_at, is_active)
+       VALUES ($1, $2, $3, $3, now(), true)
+       ON CONFLICT (vehicle_id, active_trip_id) WHERE is_active = true
+       DO UPDATE SET
+         last_alerted_duration_minutes = EXCLUDED.last_alerted_duration_minutes,
+         last_alerted_at = now(),
+         threshold_minutes = EXCLUDED.threshold_minutes`,
+      [params.vehicleId, params.activeTripId, params.thresholdMinutes],
+    );
+
+    // 5. Insert telemetry with the threshold value
+    const telemResult = await client.query<{ id: string }>(
+      `INSERT INTO gps_telemetry
+         (vehicle_id, plate_number, event_type, latitude, longitude, speed_kmh, fuel_liters,
+          ignition, location_name, recorded_at, active_trip_id, idling_threshold_minutes, telegram_message)
+       VALUES ($1, $2, 'IDLING_TOO_LONG', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id`,
+      [
+        params.vehicleId,
+        params.plateNumber,
+        params.latitude,
+        params.longitude,
+        params.speedKmh,
+        params.fuelLiters,
+        params.ignition,
+        params.locationName,
+        params.recordedAt,
+        params.activeTripId,
+        params.thresholdMinutes,
+        params.telegramMessage,
+      ],
+    );
+    const telemetryId = telemResult.rows[0]?.id ?? null;
+
+    // 6. Send Telegram (within the transaction so the dedup + telemetry + notify are atomic)
+    let telegramSent = false;
+    let telegramError: string | null = null;
+    const attemptedAt = new Date().toISOString();
+    if (telemetryId && params.telegramMessage) {
+      try {
+        const tg = await sendTelegram(params.telegramMessage);
+        if (tg?.ok) {
+          telegramSent = true;
+        } else {
+          telegramError = tg?.error ?? 'telegram_not_ok';
+        }
+      } catch (err) {
+        telegramError = errorMessage(err);
+      }
+    }
+
+    // 7. Commit
+    await client.query('COMMIT');
+
+    // Record telegram delivery status after commit
+    if (telemetryId) {
+      await updateTelemetryTelegramDelivery(
+        telemetryId,
+        telegramSent ? 'sent' : telegramError ? 'failed' : 'skipped',
+        telegramError,
+        attemptedAt,
+      );
+    }
+
+    return { skipped: false, telemetryId, telegramSent, telegramError };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(`[idling-dedup] handleIdlingAlertInTransaction failed vehicle=${params.vehicleId} trip=${params.activeTripId}:`, errorMessage(err));
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function getActiveIdlingSessionForVehicle(vehicleId: string): Promise<{
@@ -428,35 +654,28 @@ async function getActiveIdlingSessionForVehicle(vehicleId: string): Promise<{
   } : null;
 }
 
-async function markIdlingAlertDb(vehicleId: string, activeTripId: string, idlingStartedAt: string, thresholdMinutes: number): Promise<void> {
+export async function markIdlingAlertDb(vehicleId: string, activeTripId: string, idlingStartedAt: string, thresholdMinutes: number): Promise<void> {
   await ensureIdlingDedupSchema();
   const pool = getPool();
-  // Only update the alert timestamp and threshold, NEVER update idling_started_at
-  // The idling_started_at marks when idling began and should persist until the trip ends
-  const updated = await pool.query(
-    `UPDATE gps_idling_dedup
-        SET last_alerted_duration_minutes = $4,
-            last_alerted_at = now(),
-            is_active = true
-      WHERE vehicle_id = $1
-        AND active_trip_id = $2
-        AND is_active = true`,
-    [vehicleId, activeTripId, idlingStartedAt, thresholdMinutes],
-  );
-  if ((updated.rowCount ?? 0) > 0) {
-    console.log(`[idling-dedup] Updated existing record vehicle=${vehicleId} trip=${activeTripId} threshold=${thresholdMinutes}min`);
-    return;
-  }
-
-  // Insert new record preserving the original idling_started_at
+  // UPSERT: Insert a new active row, or update the existing active row.
+  // The partial unique index uq_gps_idling_dedup_active ensures at most one
+  // active row per (vehicle_id, active_trip_id). When a new idling session
+  // starts (after MOTION_STARTED), the old row is inactive so a new row is
+  // inserted. When the same session continues, the existing active row is
+  // updated with the new threshold.
   await pool.query(
     `INSERT INTO gps_idling_dedup
        (vehicle_id, active_trip_id, threshold_minutes, idling_started_at, last_alerted_duration_minutes, last_alerted_at, is_active)
      VALUES ($1, $2, $3, $4, $3, now(), true)
-     ON CONFLICT DO NOTHING`,
+     ON CONFLICT (vehicle_id, active_trip_id) WHERE is_active = true
+     DO UPDATE SET
+       last_alerted_duration_minutes = EXCLUDED.last_alerted_duration_minutes,
+       last_alerted_at = now(),
+       threshold_minutes = EXCLUDED.threshold_minutes
+       -- idling_started_at is NEVER updated; it preserves the original start time`,
     [vehicleId, activeTripId, thresholdMinutes, idlingStartedAt],
   );
-  console.log(`[idling-dedup] Inserted new record vehicle=${vehicleId} trip=${activeTripId} threshold=${thresholdMinutes}min`);
+  console.log(`[idling-dedup] Upserted record vehicle=${vehicleId} trip=${activeTripId} threshold=${thresholdMinutes}min`);
 }
 
 export async function closeIdlingDedupDb(vehicleId: string, activeTripId?: string | null): Promise<void> {
@@ -1251,8 +1470,12 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           // Log ignition check for every vehicle
           console.log(`[scheduler] DB-backed ignition check prev=${prevIgnition} current=${currentIgnition} vehicle=${vehicleId} plate=${plateNumber}`);
 
+          // Track whether this cycle handled ignition transitions for this vehicle
+          let ignitionTransitionHandled = false;
+
           // ── IGNITION_OFF detection: prev ON → current OFF ──────
           if (prevIgnition === true && currentIgnition === false) {
+            ignitionTransitionHandled = true;
             const eventTripId = latestActiveTripId;
             if (!eventTripId) {
               telemetrySkipped += 1;
@@ -1300,6 +1523,7 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
 
           // ── IGNITION_ON detection: prev OFF → current ON ───────
           if (prevIgnition === false && currentIgnition === true) {
+            ignitionTransitionHandled = true;
             const eventTripId = randomUUID();
             const message = formatIgnitionAlert(plateNumber, true, locationName || 'Unknown location', recordedAt, toNumber, driverName);
             console.log(`[scheduler] DB-backed IGNITION_ON detected vehicle=${vehicleId} plate=${plateNumber} prevIgnition=${prevIgnition} currentIgnition=${currentIgnition}`);
@@ -1477,16 +1701,13 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               continue;
             }
 
-            const shouldPersistIdling = await shouldPersistIdlingAlertDb(vehicleId, activeTripId, thresholdMinutes);
-            if (!shouldPersistIdling) {
-              telemetrySkipped += 1;
-              console.log(`[idling-alert] action=skipped reason=already_alerted threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
-              continue;
-            }
-
+            // Atomic idling handling: dedup + telemetry + telegram in ONE transaction.
+            // This guarantees the gps_idling_dedup row is persisted BEFORE any
+            // IDLING_TOO_LONG telemetry row is written, closing the race where two
+            // concurrent scheduler cycles could both alert.
             const message = formatIdlingTooLongAlert(
               plateNumber,
-              Math.floor(idleMinutes),
+              thresholdMinutes, // Always use the threshold value, never raw idle minutes
               fuelLiters,
               locationName || 'Unknown location',
               recordedAt,
@@ -1494,8 +1715,7 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               driverName,
             );
 
-            const result = await saveAndSendTelemetryAlert({
-              eventType: EVENT_TYPE.IDLING,
+            const idlingResult = await handleIdlingAlertInTransaction({
               vehicleId,
               plateNumber,
               activeTripId,
@@ -1506,19 +1726,19 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               ignition: currentIgnition,
               locationName,
               recordedAt,
+              idlingStartedAt,
+              thresholdMinutes,
               telegramMessage: message,
             });
-            trackTelegramResult(result);
 
-            if (result.savedTelemetry.id) {
-              if (result.savedTelemetry.inserted) {
-                telemetrySaved += 1;
-                console.log(`[idling-alert] action=saved threshold=${thresholdMinutes}min idle=${idleMinutes.toFixed(1)}min vehicle=${vehicleId} trip=${activeTripId}`);
-              } else {
-                telemetrySkipped += 1;
-                console.log(`[idling-alert] action=skipped reason=${result.savedTelemetry.updated ? 'updated' : 'duplicate'} threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
-              }
-              await markIdlingAlertDb(vehicleId, activeTripId, idlingStartedAt, thresholdMinutes);
+            if (idlingResult.skipped) {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] action=skipped reason=${idlingResult.reason} threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
+            } else if (idlingResult.telemetryId) {
+              telemetrySaved += 1;
+              if (idlingResult.telegramSent) telegramSent += 1;
+              else if (idlingResult.telegramError) telegramFailed += 1;
+              console.log(`[idling-alert] action=saved threshold=${thresholdMinutes}min idle=${idleMinutes.toFixed(1)}min vehicle=${vehicleId} trip=${activeTripId} telemetry_id=${idlingResult.telemetryId}`);
             } else {
               telemetrySkipped += 1;
               console.log(`[idling-alert] action=skipped reason=missing_telemetry_id threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
@@ -1706,6 +1926,51 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             vehicleId
           });
 
+          // IDLING alerts use the atomic transaction path so the dedup row is
+          // persisted before the telemetry row, and the message is built from
+          // the threshold (never the raw elapsed idle minutes).
+          if (finalEventType === EVENT_TYPE.IDLING && activeTripId) {
+            const thresholdMinutes = Number(alert.idlingThresholdReached ?? 0);
+            const idlingStartedAt = alert.idlingStartedAt || new Date(Date.now() - thresholdMinutes * 60 * 1000).toISOString();
+            const message = formatIdlingTooLongAlert(
+              plateNumber,
+              thresholdMinutes, // threshold value, never raw idle minutes
+              fuelLiters,
+              locationName || 'Unknown location',
+              recordedAt,
+              toNumber,
+              driverName,
+            );
+            const idlingResult = await handleIdlingAlertInTransaction({
+              vehicleId,
+              plateNumber,
+              activeTripId,
+              latitude,
+              longitude,
+              speedKmh: spd,
+              fuelLiters,
+              ignition: effectiveIgnition,
+              locationName,
+              recordedAt,
+              idlingStartedAt,
+              thresholdMinutes,
+              telegramMessage: message,
+            });
+            if (idlingResult.skipped) {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] action=skipped reason=${idlingResult.reason} threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
+            } else if (idlingResult.telemetryId) {
+              telemetrySaved += 1;
+              if (idlingResult.telegramSent) telegramSent += 1;
+              else if (idlingResult.telegramError) telegramFailed += 1;
+              console.log(`[idling-alert] action=saved threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId} telemetry_id=${idlingResult.telemetryId}`);
+            } else {
+              telemetrySkipped += 1;
+              console.log(`[idling-alert] action=skipped reason=missing_telemetry_id threshold=${thresholdMinutes}min vehicle=${vehicleId} trip=${activeTripId}`);
+            }
+            continue;
+          }
+
           const telegramMessage = alert.message || null;
           const result = await saveAndSendTelemetryAlert({
             eventType: finalEventType,
@@ -1739,16 +2004,6 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           } else {
             telemetrySkipped += 1;
             console.log(`[idling-alert] ${finalEventType} telemetry duplicate existing_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId ?? 'null'}`);
-          }
-
-          if (finalEventType === EVENT_TYPE.IDLING && activeTripId) {
-            const thresholdMinutes = alert.idlingThresholdReached;
-            if (thresholdMinutes !== undefined && thresholdMinutes !== null) {
-              // Use the actual idling start time from tracker state (preserves original timer)
-              const idlingStartedAt = alert.idlingStartedAt || new Date(Date.now() - thresholdMinutes * 60 * 1000).toISOString();
-              await markIdlingAlertDb(vehicleId, activeTripId, idlingStartedAt, thresholdMinutes);
-              console.log(`[idling-alert] IDLING dedup marked threshold=${thresholdMinutes}min telemetry_id=${result.savedTelemetry.id} vehicle=${vehicleId} trip=${activeTripId}`);
-            }
           }
 
           if (finalEventType === EVENT_TYPE.MOTION_STARTED || finalEventType === EVENT_TYPE.IGNITION_OFF) {

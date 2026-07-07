@@ -335,7 +335,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 
                   <InfoSection title="Arrival" icon={<Flag className="size-4 text-red-600" />}>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                       <InfoField label="Destination Address" value={trip.plannedDestinationAddress || trip.toDestination || trip.destination || '—'} />
-                      <InfoField label="Arrived Time" value={formatDateTimeManila(trip.arrivedTime)} />
+                      <InfoField label="Arrived Time" value={source === 'no-to' ? formatDateTimeManila(trip.arrivalDisplayTime ?? null) : formatDateTimeManila(trip.arrivedTime)} />
                       <InfoField label="Destination Coordinates" value={trip.plannedDestinationCoordinates || '—'} />
                       {source !== 'no-to' && (
                         <>
@@ -350,7 +350,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 
                   <InfoSection title="End" icon={<MapPin className="size-4 text-brand-teal" />}>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                       <InfoField label="End Address" value={trip.endAddress || trip.destination || '—'} />
-                      <InfoField label="End Time" value={formatDateTimeManila(trip.returnedToBaseAt || trip.endTime)} />
+                      <InfoField label="End Time" value={source === 'no-to' ? formatDateTimeManila(trip.endTime ?? trip.returnedToBaseAt) : formatDateTimeManila(trip.returnedToBaseAt || trip.endTime)} />
                       <InfoField label="End Coordinates" value={trip.endCoordinates || trip.coordinatesDestination || '—'} />
                       {source !== 'no-to' && (
                         <InfoField label="Returned to Base Distance" value={trip.matchedOriginDistanceM != null ? `${formatNumber(trip.matchedOriginDistanceM, 0)} m` : '—'} />

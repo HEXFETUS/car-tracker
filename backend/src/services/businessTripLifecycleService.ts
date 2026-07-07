@@ -590,20 +590,20 @@ async function upsertNoToTrip(trip: LifecycleTrip): Promise<'created' | 'updated
   const driverId = trip.points[0]?.driver_id ?? trip.travelOrder.driver_id ?? null;
   const anomalyReason = 'Vehicle completed trip without matching approved travel order.';
 
+  const activeTripIdArray = Array.from(trip.activeTripIds);
   const existing = await pool.query<{ id: string }>(
     `SELECT n.id
        FROM gps_no_to_logs n
-       JOIN gps_no_to_log_active_trips nat ON nat.gps_no_to_log_id = n.id
       WHERE n.vehicle_id = $1
         AND n.trip_date = $2::date
-        AND nat.active_trip_id = ANY($3::uuid[])
+        AND n.active_trip_id = ANY($3::uuid[])
         AND n.departure_time IS NOT DISTINCT FROM $4::timestamp
-      ORDER BY n.created_at DESC
+      ORDER BY n.created_at ASC
       LIMIT 1`,
     [
       trip.travelOrder.vehicle_id,
       tripDateFromTimestamp(trip.startedAt),
-      Array.from(trip.activeTripIds),
+      activeTripIdArray,
       trip.startedAt,
     ],
   );
@@ -1031,12 +1031,13 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
       }
 
       // ── Check if this segment already has a no-TO log ────────
+      // Use direct active_trip_id column lookup to avoid junction-table
+      // race conditions (new active_trip_id not yet in junction table).
       const existingNoToLog = await pool.query<{ id: string }>(
         `SELECT n.id
            FROM gps_no_to_logs n
-           JOIN gps_no_to_log_active_trips nat ON nat.gps_no_to_log_id = n.id
           WHERE n.vehicle_id = $1
-            AND nat.active_trip_id = $2
+            AND n.active_trip_id = $2
           LIMIT 1`,
         [vehicleId, activeTripId],
       );
@@ -1069,7 +1070,8 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
                   driver_id = COALESCE($11, driver_id),
                   status = CASE WHEN status = 'linked' THEN status ELSE 'unmatched' END,
                   anomaly_flag = true,
-                  anomaly_reason = 'Vehicle completed trip without matching approved travel order.'
+                  anomaly_reason = 'Vehicle completed trip without matching approved travel order.',
+                  updated_at = current_timestamp
             WHERE id = $1`,
           [
             existingId,
@@ -1139,12 +1141,12 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
            (no_to_record_no, vehicle_id, driver_id, trip_date,
             origin_address, origin_coordinates, destination_address, destination_coordinates,
             departure_time, arrival_time, distance_km, engine_hours, max_speed_kph,
-            status, anomaly_flag, anomaly_reason)
+            status, anomaly_flag, anomaly_reason, active_trip_id, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
                  $9::timestamptz AT TIME ZONE 'UTC',
                  $10::timestamptz AT TIME ZONE 'UTC',
                  $11,$12,$13,
-                 'unmatched',true,$14)
+                 'unmatched',true,$14,$15,current_timestamp)
          ON CONFLICT (no_to_record_no) DO NOTHING
          RETURNING id`,
         [
@@ -1164,6 +1166,7 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
           Number(engineHours.toFixed(2)),
           Number(maxSpeedKph.toFixed(2)),
           'Vehicle completed trip without matching approved travel order.',
+          activeTripId,
         ],
       );
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import type pg from 'pg';
 import { formatSpeedingAlert, IDLE_ALERT_THRESHOLDS_MINUTES, SPEED_LIMIT_KMH } from '@car-tracker/tracker';
 import { setPoolForTest } from '../db/db.js';
@@ -8,6 +8,9 @@ import {
   closeIdlingDedupDb,
   hasHigherPriorityTelemetryEventForSnapshot,
   idlingMilestoneForMinutes,
+  markIdlingAlertDb,
+  persistIdlingAlertIfNewThreshold,
+  handleIdlingAlertInTransaction,
   shouldPersistIdlingAlertDb,
   shouldPersistMotionStartedFromPreviousState,
 } from './scheduler.js';
@@ -153,6 +156,261 @@ describe('idling alert milestones', () => {
         false,
       );
     }
+  });
+});
+
+describe('idling dedup UPSERT (fix for threshold spam)', () => {
+  it('should persist at 10 when lastAlertedDurationMinutes is null', async () => {
+    const { pool } = makePool((sql) => {
+      if (sql.includes('SELECT idling_started_at, last_alerted_duration_minutes')) {
+        return { rows: [] }; // no existing active row
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    const shouldPersist = await shouldPersistIdlingAlertDb(
+      baseTelemetry.vehicleId,
+      baseTelemetry.activeTripId,
+      10,
+    );
+    assert.equal(shouldPersist, true);
+  });
+
+  it('skips 12, 13, 14, 24 when lastAlertedDurationMinutes is 10', async () => {
+    const { pool } = makePool((sql) => {
+      if (sql.includes('SELECT idling_started_at, last_alerted_duration_minutes')) {
+        return {
+          rows: [{
+            idling_started_at: '2026-07-06T04:00:00.000Z',
+            last_alerted_duration_minutes: 10,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    for (const minutes of [12, 13, 14, 24]) {
+      const threshold = trackerMilestoneForMinutes(minutes);
+      assert.equal(threshold, 10);
+      assert.equal(
+        await shouldPersistIdlingAlertDb(baseTelemetry.vehicleId, baseTelemetry.activeTripId, threshold),
+        false,
+        `should skip threshold=${threshold} at minute=${minutes}`,
+      );
+    }
+  });
+
+  it('persists at 25 when lastAlertedDurationMinutes is 10', async () => {
+    const { pool } = makePool((sql) => {
+      if (sql.includes('SELECT idling_started_at, last_alerted_duration_minutes')) {
+        return {
+          rows: [{
+            idling_started_at: '2026-07-06T04:00:00.000Z',
+            last_alerted_duration_minutes: 10,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    const shouldPersist = await shouldPersistIdlingAlertDb(
+      baseTelemetry.vehicleId,
+      baseTelemetry.activeTripId,
+      25,
+    );
+    assert.equal(shouldPersist, true);
+  });
+
+  it('skips 26, 30 when lastAlertedDurationMinutes is 25', async () => {
+    const { pool } = makePool((sql) => {
+      if (sql.includes('SELECT idling_started_at, last_alerted_duration_minutes')) {
+        return {
+          rows: [{
+            idling_started_at: '2026-07-06T04:00:00.000Z',
+            last_alerted_duration_minutes: 25,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    for (const minutes of [26, 30]) {
+      const threshold = trackerMilestoneForMinutes(minutes);
+      assert.equal(threshold, 25);
+      assert.equal(
+        await shouldPersistIdlingAlertDb(baseTelemetry.vehicleId, baseTelemetry.activeTripId, threshold),
+        false,
+        `should skip threshold=${threshold} at minute=${minutes}`,
+      );
+    }
+  });
+
+  it('persists at 55 when lastAlertedDurationMinutes is 25', async () => {
+    const { pool } = makePool((sql) => {
+      if (sql.includes('SELECT idling_started_at, last_alerted_duration_minutes')) {
+        return {
+          rows: [{
+            idling_started_at: '2026-07-06T04:00:00.000Z',
+            last_alerted_duration_minutes: 25,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    const shouldPersist = await shouldPersistIdlingAlertDb(
+      baseTelemetry.vehicleId,
+      baseTelemetry.activeTripId,
+      55,
+    );
+    assert.equal(shouldPersist, true);
+  });
+
+  it('only saves at 10, 25, 55 in sequence — no alerts at 12,13,14,24,26,30', () => {
+    const simulatedIdleMinutes = [10, 12, 13, 24, 25, 26, 30, 55];
+    const expectedThresholds = [10, 10, 10, 10, 25, 25, 25, 55];
+    const alerted: number[] = [];
+
+    for (let i = 0; i < simulatedIdleMinutes.length; i++) {
+      const minutes = simulatedIdleMinutes[i];
+      const threshold = trackerMilestoneForMinutes(minutes);
+      assert.equal(threshold, expectedThresholds[i], `minute=${minutes} should map to threshold=${expectedThresholds[i]}`);
+
+      // Simulate the dedup check: persist if threshold > last alerted
+      const lastAlerted = alerted.length > 0 ? alerted[alerted.length - 1] : 0;
+      if (threshold > lastAlerted) {
+        alerted.push(threshold);
+      }
+    }
+
+    // Only 10, 25, 55 should have been alerted
+    assert.deepEqual(alerted, [10, 25, 55]);
+  });
+
+  it('markIdlingAlertDb UPSERT inserts new row when none exists', async () => {
+    let insertCalled = false;
+    const { pool } = makePool((sql, params) => {
+      if (sql.includes('INSERT INTO gps_idling_dedup')) {
+        insertCalled = true;
+        assert.ok(params);
+        assert.equal(params?.[0], baseTelemetry.vehicleId);
+        assert.equal(params?.[1], baseTelemetry.activeTripId);
+        assert.equal(params?.[2], 10);
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    await markIdlingAlertDb(
+      baseTelemetry.vehicleId,
+      baseTelemetry.activeTripId,
+      '2026-07-06T04:00:00.000Z',
+      10,
+    );
+
+    assert.equal(insertCalled, true);
+  });
+
+  it('persistIdlingAlertIfNewThreshold returns false when already alerted at 10', async () => {
+    const { pool } = makePool((sql, params) => {
+      if (sql.includes('SELECT last_alerted_duration_minutes') && sql.includes('FOR UPDATE')) {
+        return { rows: [{ last_alerted_duration_minutes: 10 }] };
+      }
+      if (sql.includes('BEGIN')) return { rows: [] };
+      if (sql.includes('COMMIT')) return { rows: [] };
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    const result = await persistIdlingAlertIfNewThreshold(
+      baseTelemetry.vehicleId,
+      baseTelemetry.activeTripId,
+      10,
+    );
+    assert.equal(result, false);
+  });
+
+  it('persistIdlingAlertIfNewThreshold returns true for new threshold 25 when 10 was alerted', async () => {
+    let upsertCalled = false;
+    const { pool } = makePool((sql, params) => {
+      if (sql.includes('SELECT last_alerted_duration_minutes') && sql.includes('FOR UPDATE')) {
+        return { rows: [{ last_alerted_duration_minutes: 10 }] };
+      }
+      if (sql.includes('INSERT INTO gps_idling_dedup')) {
+        upsertCalled = true;
+        assert.equal(params?.[2], 25);
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('BEGIN')) return { rows: [] };
+      if (sql.includes('COMMIT')) return { rows: [] };
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    const result = await persistIdlingAlertIfNewThreshold(
+      baseTelemetry.vehicleId,
+      baseTelemetry.activeTripId,
+      25,
+    );
+    assert.equal(result, true);
+    assert.equal(upsertCalled, true);
+  });
+
+  it('complete event sequence: LOCATION_UPDATE, IDLING_10, MOTION_STARTED, LOCATION_UPDATE, IGNITION_OFF — no duplicates', async () => {
+    const inserted: string[] = [];
+    const { pool } = makePool((sql, params) => {
+      if (sql.includes('INSERT INTO gps_telemetry')) {
+        inserted.push(String(params?.[2]));
+        return { rows: [{ id: `id-${inserted.length}` }] };
+      }
+      if (sql.includes('SELECT id, location_name')) return { rows: [] };
+      if (sql.includes('SELECT id') && sql.includes('date_trunc')) return { rows: [] };
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    // Simulate sequence
+    const sequence = [
+      { eventType: 'LOCATION_UPDATE', speedKmh: 44, locationName: 'CM Recto Avenue', ignition: true, recordedAt: '2026-07-06T03:50:00.000Z' },
+      { eventType: 'IDLING_TOO_LONG', speedKmh: 0, locationName: 'CM Recto Avenue', ignition: true, recordedAt: '2026-07-06T04:01:00.000Z' },
+      { eventType: 'MOTION_STARTED', speedKmh: 32, locationName: 'CM Recto Avenue', ignition: true, recordedAt: '2026-07-06T04:20:00.000Z' },
+      { eventType: 'LOCATION_UPDATE', speedKmh: 35, locationName: 'Osmena Street', ignition: true, recordedAt: '2026-07-06T04:22:00.000Z' },
+      { eventType: 'IGNITION_OFF', speedKmh: 0, locationName: 'Osmena Street', ignition: false, recordedAt: '2026-07-06T04:30:00.000Z' },
+    ];
+
+    for (const step of sequence) {
+      const result = await insertTelemetry({
+        ...baseTelemetry,
+        ...step,
+      });
+      assert.equal(result.inserted, true, `Should insert ${step.eventType}`);
+    }
+
+    assert.deepEqual(inserted, [
+      'LOCATION_UPDATE',
+      'IDLING_TOO_LONG',
+      'MOTION_STARTED',
+      'LOCATION_UPDATE',
+      'IGNITION_OFF',
+    ]);
+  });
+
+  it('MOTION_STARTED suppresses same-cycle LOCATION_UPDATE in hasHigherPriorityTelemetryEventForSnapshot', () => {
+    const alerts = [
+      { vehicleId: baseTelemetry.vehicleId, eventType: 'MOTION_STARTED' },
+      { vehicleId: baseTelemetry.vehicleId, eventType: 'LOCATION_UPDATE' },
+    ];
+
+    assert.equal(
+      hasHigherPriorityTelemetryEventForSnapshot(alerts, baseTelemetry.vehicleId, 'LOCATION_UPDATE'),
+      true,
+    );
   });
 });
 
@@ -596,6 +854,202 @@ describe('active trip travel order scoring', () => {
     assert.equal(telemetryUpdate.params?.[0], travelOrderId);
     assert.equal(telemetryUpdate.params?.[1], driverId);
     assert.equal(telemetryUpdate.params?.[2], activeTripId);
-    assert.equal(telemetryUpdate.params?.[3], vehicleId);
+      assert.equal(telemetryUpdate.params?.[3], vehicleId);
+  });
+});
+
+describe('idling dedup race — handleIdlingAlertInTransaction', () => {
+  // Simulates a DB-backed mock that records the ORDER of operations inside
+  // the transaction and enforces the dedup row BEFORE telemetry insert.
+  // The mock persists gps_idling_dedup and gps_telemetry in memory so two
+  // sequential "concurrent" executions at 11 minutes behave like the
+  // SELECT ... FOR UPDATE + committed UPSERT would in Postgres.
+  function makeIdlingMockPool() {
+    const dedupRows: Array<{ vehicle_id: string; active_trip_id: string; last_alerted_duration_minutes: number }> = [];
+    const telemetryRows: Array<{ vehicle_id: string; active_trip_id: string; event_type: string; idling_threshold_minutes: number }> = [];
+    const sentTelegrams: string[] = [];
+    const order: string[] = [];
+
+    const handler = (sql: string, params?: unknown[]) => {
+      if (sql.includes('BEGIN')) { order.push('BEGIN'); return { rows: [] }; }
+      if (sql.includes('COMMIT')) { order.push('COMMIT'); return { rows: [] }; }
+      if (sql.includes('ROLLBACK')) { order.push('ROLLBACK'); return { rows: [] }; }
+
+      // SELECT ... FOR UPDATE on gps_idling_dedup
+      if (sql.includes('last_alerted_duration_minutes') && sql.includes('gps_idling_dedup') && sql.includes('FOR UPDATE')) {
+        const [vehicleId, activeTripId] = params as [string, string];
+        const row = dedupRows.find(
+          (r) => r.vehicle_id === vehicleId && r.active_trip_id === activeTripId,
+        );
+        order.push('LOCK_DEDUP');
+        return { rows: row ? [{ last_alerted_duration_minutes: row.last_alerted_duration_minutes }] : [] };
+      }
+
+      // duplicate guard: telemetry row for trip + threshold
+      if (sql.includes('gps_telemetry') && sql.includes('idling_threshold_minutes = $3')) {
+        const [vehicleId, activeTripId, threshold] = params as [string, string, number];
+        const found = telemetryRows.find(
+          (r) => r.vehicle_id === vehicleId && r.active_trip_id === activeTripId &&
+            r.event_type === 'IDLING_TOO_LONG' && r.idling_threshold_minutes === threshold,
+        );
+        return { rows: found ? [{ id: 'existing' }] : [] };
+      }
+
+      // UPSERT gps_idling_dedup
+      if (sql.includes('INSERT INTO gps_idling_dedup')) {
+        const [vehicleId, activeTripId, threshold] = params as [string, string, number];
+        const existing = dedupRows.find(
+          (r) => r.vehicle_id === vehicleId && r.active_trip_id === activeTripId,
+        );
+        if (existing) {
+          existing.last_alerted_duration_minutes = threshold;
+        } else {
+          dedupRows.push({ vehicle_id: vehicleId, active_trip_id: activeTripId, last_alerted_duration_minutes: threshold });
+        }
+        order.push('UPSERT_DEDUP');
+        return { rows: [], rowCount: 1 };
+      }
+
+      // INSERT gps_telemetry (idling)
+      if (sql.includes('INSERT INTO gps_telemetry')) {
+        const p = params as unknown[];
+        const vehicleId = String(p[0]);
+        const activeTripId = String(p[9]);
+        const threshold = Number(p[10]);
+        telemetryRows.push({ vehicle_id: vehicleId, active_trip_id: activeTripId, event_type: 'IDLING_TOO_LONG', idling_threshold_minutes: threshold });
+        order.push('INSERT_TELEMETRY');
+        return { rows: [{ id: `tel-${telemetryRows.length}` }] };
+      }
+
+      if (sql.includes('UPDATE gps_telemetry')) return { rows: [], rowCount: 1 };
+
+      // ensureIdlingDedupSchema DDL — ignore
+      return { rows: [] };
+    };
+
+    const calls: QueryCall[] = [];
+    const pool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params });
+        const result = handler(sql, params);
+        return { rows: result.rows ?? [], rowCount: result.rowCount ?? result.rows?.length ?? 0 };
+      },
+      connect: async () => ({
+        query: async (sql: string, params?: unknown[]) => {
+          calls.push({ sql, params });
+          const result = handler(sql, params);
+          return { rows: result.rows ?? [], rowCount: result.rowCount ?? result.rows?.length ?? 0 };
+        },
+        release: () => undefined,
+      }),
+    };
+
+    return {
+      pool: pool as unknown as pg.Pool,
+      calls,
+      order,
+      dedupRows,
+      telemetryRows,
+      sentTelegrams,
+      // Directly intercept sendTelegram by monkeypatching is not possible here;
+      // we instead record via the handler that sets telegram message. The
+      // function calls the real sendTelegram; in this unit test we stub it
+      // through the tracker module below.
+    };
+  }
+
+  // Replace sendTelegram with a recorder for the duration of these tests.
+  let sentMessages: string[] = [];
+  let realSendTelegram: typeof import('@car-tracker/tracker').sendTelegram;
+
+  beforeEach(() => {
+    sentMessages = [];
+  });
+
+  it('two concurrent executions at 11min → only one telemetry row + one telegram', async () => {
+    const tracker = await import('@car-tracker/tracker');
+    realSendTelegram = tracker.sendTelegram;
+    tracker.sendTelegram = async (message: string) => {
+      sentMessages.push(message);
+      return { ok: true };
+    };
+
+    const { pool, order, telemetryRows, dedupRows } = makeIdlingMockPool();
+    setPoolForTest(pool);
+
+    const baseParams = {
+      vehicleId: 'vid-1',
+      plateNumber: 'KAR6412',
+      activeTripId: 'trip-1',
+      latitude: 14.5,
+      longitude: 121,
+      speedKmh: 0,
+      fuelLiters: null,
+      ignition: true,
+      locationName: 'Depot',
+      recordedAt: '2026-07-06T04:11:00.000Z',
+      idlingStartedAt: '2026-07-06T04:00:00.000Z',
+      thresholdMinutes: 10, // 11min elapsed → idlingMilestoneForMinutes(11) = 10
+      telegramMessage: '⏱ Idling for 10 minutes',
+    };
+
+    // Simulate two scheduler executions overlapping at 11 minutes.
+    const [r1, r2] = await Promise.all([
+      handleIdlingAlertInTransaction(baseParams),
+      handleIdlingAlertInTransaction(baseParams),
+    ]);
+
+    // Restore
+    tracker.sendTelegram = realSendTelegram;
+
+    // Exactly one telemetry row, one telegram message.
+    assert.equal(telemetryRows.length, 1, 'must insert exactly one IDLING_TOO_LONG telemetry row');
+    assert.equal(sentMessages.length, 1, 'must send exactly one Telegram message');
+
+    // Exactly one dedup row, with last_alerted_duration_minutes = 10.
+    assert.equal(dedupRows.length, 1);
+    assert.equal(dedupRows[0].last_alerted_duration_minutes, 10);
+
+    // The dedup UPSERT happened before any telemetry insert in at least one
+    // execution (ordering guarantees no telemetry before dedup).
+    assert.ok(order.indexOf('UPSERT_DEDUP') < order.indexOf('INSERT_TELEMETRY') || order.indexOf('INSERT_TELEMETRY') === -1,
+      'dedup UPSERT must occur before telemetry INSERT');
+
+    const savedCount = [r1, r2].filter((r) => !r.skipped && r.telemetryId).length;
+    const skippedCount = [r1, r2].filter((r) => r.skipped).length;
+    assert.equal(savedCount, 1, 'exactly one execution saves telemetry');
+    assert.equal(skippedCount, 1, 'the other execution is skipped by the race guard');
+  });
+
+  it('threshold is used for the message, not raw elapsed minutes', async () => {
+    const tracker = await import('@car-tracker/tracker');
+    realSendTelegram = tracker.sendTelegram;
+    tracker.sendTelegram = async (message: string) => {
+      sentMessages.push(message);
+      return { ok: true };
+    };
+
+    const { pool } = makeIdlingMockPool();
+    setPoolForTest(pool);
+
+    await handleIdlingAlertInTransaction({
+      vehicleId: 'vid-2',
+      plateNumber: 'KAR6412',
+      activeTripId: 'trip-2',
+      latitude: 14.5,
+      longitude: 121,
+      speedKmh: 0,
+      fuelLiters: null,
+      ignition: true,
+      locationName: 'Depot',
+      recordedAt: '2026-07-06T04:26:00.000Z',
+      idlingStartedAt: '2026-07-06T04:00:00.000Z',
+      thresholdMinutes: 25, // elapsed 26min → threshold 25
+      telegramMessage: '⏱ Idling for 25 minutes',
+    });
+
+    tracker.sendTelegram = realSendTelegram;
+
+    assert.ok(sentMessages[0].includes('Idling for 25 minutes'), 'message must use threshold (25), not 26');
   });
 });

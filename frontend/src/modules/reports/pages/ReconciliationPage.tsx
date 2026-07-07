@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Loader2, AlertTriangle, CheckCircle2, Pencil, Save, X, SatelliteDish, MapPinOff, Search, RotateCcw } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useNotification } from '@/shared/context/NotificationContext';
+import { formatDateTimeManila, formatDateManilaFull } from '@/shared/lib/date-utils';
 import {
   tableContainerClass,
   tableClass,
@@ -49,6 +50,14 @@ function MatchStatusBadge({ status }: { status: ReconciliationRecord['status'] }
         </span>
       );
   }
+}
+
+function AddressCell({ value }: { value: string }) {
+  return (
+    <td className={cn(tableCellClass, 'max-w-48 truncate')} title={value === '—' ? '' : value}>
+      {value}
+    </td>
+  );
 }
 
 export function ReconciliationPage({ statusFilter }: ReconciliationPageProps) {
@@ -183,10 +192,10 @@ export function ReconciliationPage({ statusFilter }: ReconciliationPageProps) {
                       <td className={tableCellClass}>{rec.toNo}</td>
                       <td className={tableCellClass}>{rec.gpsRecordNo}</td>
                       <td className={tableCellClass}>{rec.vehiclePlate}</td>
-                      <td className={tableCellClass}>{rec.tripDate}</td>
-                      <td className={tableCellClass}>{rec.origin}</td>
-                      <td className={tableCellClass}>{rec.destination}</td>
-                      <td className={tableCellClass}>{rec.arrivalTime || '—'}</td>
+                      <td className={tableCellClass}>{formatDateManilaFull(rec.tripDate)}</td>
+                      <AddressCell value={rec.origin} />
+                      <AddressCell value={rec.destination} />
+                      <td className={tableCellClass}>{formatDateTimeManila(rec.arrivalTime)}</td>
                       <td className={cn(tableCellClass, 'text-right font-mono')}>{rec.toEstMileageKm.toFixed(1)}</td>
                       <td className={cn(tableCellClass, 'text-right font-mono')}>{rec.gpsActualMileageKm.toFixed(1)}</td>
                       <td className={cn(tableCellClass, 'text-right font-mono font-medium')}>
@@ -268,7 +277,7 @@ export function ReconciliationPage({ statusFilter }: ReconciliationPageProps) {
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-zinc-900">{rec.toNo}</p>
-                  <p className="text-xs text-zinc-400">{rec.vehiclePlate} - {rec.tripDate}</p>
+                  <p className="text-xs text-zinc-400">{rec.vehiclePlate} - {formatDateManilaFull(rec.tripDate)}</p>
                 </div>
                 <div className="flex gap-2">
                   <span className={cn(
@@ -290,11 +299,13 @@ export function ReconciliationPage({ statusFilter }: ReconciliationPageProps) {
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">Route</p>
-                    <p className="truncate text-zinc-700">{rec.origin} to {rec.destination}</p>
+                    <p className="truncate text-zinc-700" title={`${rec.origin} to ${rec.destination}`}>
+                      {rec.origin} to {rec.destination}
+                    </p>
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">Arrival Time</p>
-                  <p className="text-zinc-500">{rec.arrivalTime || '—'}</p>
+                  <p className="text-zinc-500">{formatDateTimeManila(rec.arrivalTime)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">TO Est.</p>

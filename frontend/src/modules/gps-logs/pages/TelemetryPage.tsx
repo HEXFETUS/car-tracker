@@ -383,7 +383,7 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                         <td className={cn(tableCellClass, 'max-w-28 truncate')} title={row.driverName ?? ''}>
                           <div className="flex items-center gap-1">
                             <User className="size-3 text-zinc-400 shrink-0" />
-                            <span className="truncate">{row.driverName || '—'}</span>
+                            <span className="truncate">{row.driverName || 'Unassigned'}</span>
                           </div>
                         </td>
                       </tr>
@@ -442,12 +442,10 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
                         <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">TO No.</p>
                         <p className="text-xs font-mono text-brand-teal">{row.toNumber || '—'}</p>
                       </div>
-                      {row.driverName && (
-                        <div className="col-span-2">
-                          <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Driver</p>
-                          <p className="text-xs text-zinc-700">{row.driverName}</p>
-                        </div>
-                      )}
+                      <div className="col-span-2">
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Driver</p>
+                        <p className="text-xs text-zinc-700">{row.driverName || 'Unassigned'}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
