@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router';
 import { Plus, Loader2, Eye, MapPin, Calendar, User, Truck, UserCircle, Search, RotateCcw } from 'lucide-react';
 import { formatDateTimeManila } from '@/shared/lib/date-utils';
 import { useNotification } from '@/shared/context/NotificationContext';
@@ -39,7 +40,14 @@ const TABS: { key: TabKey; label: string }[] = [
 export function TravelOrdersPage() {
   const { toast, confirm } = useNotification();
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabKey>('pending');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'pending' || tab === 'for-approval' || tab === 'approved' || tab === 'cancelled') {
+      return tab as TabKey;
+    }
+    return 'pending';
+  });
   const [orders, setOrders] = useState<TravelOrderData[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -199,6 +207,7 @@ export function TravelOrdersPage() {
         onTabChange={(tab) => {
           setActiveTab(tab);
           setOrders([]);
+          setSearchParams({ tab }, { replace: true });
         }}
         visibleTabs={visibleTabs}
         searchQuery={searchQuery}
