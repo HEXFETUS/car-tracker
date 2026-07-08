@@ -35,6 +35,7 @@ interface TravelOrderRow {
   plate_number?: string;
   driver_name?: string;
   approver_name?: string | null;
+  requester_name?: string | null;
 }
 
 interface DestinationRow {
@@ -86,6 +87,7 @@ interface TravelOrderResponse {
   travelerSignature?: string | null;
   requestedBySignature?: string | null;
   approvedBySignature?: string | null;
+  requestedBy?: { fullName?: string | null; position?: string | null } | null;
 }
 
 interface DestinationResponse {
@@ -160,6 +162,7 @@ async function mapRow(row: TravelOrderRow): Promise<TravelOrderResponse> {
     travelerSignature: row.traveler_signature ?? null,
     requestedBySignature: row.requested_by_signature ?? null,
     approvedBySignature: row.approved_by_signature ?? null,
+    requestedBy: row.requester_name ? { fullName: row.requester_name } : null,
   };
 }
 
@@ -173,11 +176,13 @@ router.get('/pending', async (_req: Request, res: Response) => {
         v.make AS vehicle_make,
         v.model AS vehicle_model,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       WHERE to_.status = 'PENDING'
         AND to_.vehicle_id IS NULL
         AND to_.driver_id IS NULL
@@ -201,11 +206,13 @@ router.get('/approved', async (_req: Request, res: Response) => {
         v.make AS vehicle_make,
         v.model AS vehicle_model,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       WHERE to_.status = 'APPROVED'
       ORDER BY to_.created_at DESC
     `);
@@ -227,11 +234,13 @@ router.get('/for-approval', async (_req: Request, res: Response) => {
         v.make AS vehicle_make,
         v.model AS vehicle_model,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       WHERE to_.status = 'FOR_APPROVAL'
         AND to_.vehicle_id IS NOT NULL
         AND to_.driver_id IS NOT NULL
@@ -255,11 +264,13 @@ router.get('/cancelled', async (_req: Request, res: Response) => {
         v.make AS vehicle_make,
         v.model AS vehicle_model,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       WHERE to_.status = 'CANCELLED'
       ORDER BY to_.created_at DESC
     `);
@@ -281,11 +292,13 @@ router.get('/for-request', async (_req: Request, res: Response) => {
         v.make AS vehicle_make,
         v.model AS vehicle_model,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       WHERE to_.status = 'FOR_REQUEST'
       ORDER BY to_.created_at DESC
     `);
@@ -305,11 +318,13 @@ router.get('/scheduled', async (_req: Request, res: Response) => {
         to_.*,
         v.plate_number,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       WHERE to_.status IN ('FOR_APPROVAL','APPROVED','ACTIVE')
         AND to_.scheduled_departure IS NOT NULL
       ORDER BY to_.scheduled_departure ASC
@@ -422,11 +437,13 @@ router.get('/', async (_req: Request, res: Response) => {
         to_.*,
         v.plate_number,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       ORDER BY to_.created_at DESC
     `);
     const data = await Promise.all(result.rows.map(mapRow));
@@ -463,11 +480,13 @@ router.get('/:id', async (req: Request, res: Response) => {
         to_.*,
         v.plate_number,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       WHERE to_.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) {
@@ -781,11 +800,13 @@ router.patch('/:id', async (req: Request, res: Response) => {
         to_.*,
         v.plate_number,
         d.full_name AS driver_name,
-        u.name AS approver_name
+        u.name AS approver_name,
+        r.name AS requester_name
       FROM travel_orders to_
       LEFT JOIN vehicles v ON v.id = to_.vehicle_id
       LEFT JOIN drivers  d ON d.id = to_.driver_id
       LEFT JOIN users   u ON u.id = to_.approved_by
+      LEFT JOIN users   r ON r.id = to_.requested_by
       WHERE to_.id = $1
     `, [req.params.id]);
 

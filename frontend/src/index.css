@@ -2,16 +2,21 @@
 @import "tw-animate-css";
 
 @theme {
-  --color-brand-teal: #35858E;    /* Deep Blue-Teal — primary accent */
-  --color-brand-sage: #7DA78C;    /* Sage Green — borders, secondary */
-  --color-brand-moss: #C2D099;    /* Light Moss Green — subtle bg, hover */
-  --color-brand-cream: #E6EEC9;   /* Pale Cream-Ivory — light bg, alt rows */
-  --color-brand-pastel: #C8E3E6;  /* Pastel Teal — system bg inspired by login overlay */
+  --color-brand-teal: #35858E;
+  /* Deep Blue-Teal — primary accent */
+  --color-brand-sage: #7DA78C;
+  /* Sage Green — borders, secondary */
+  --color-brand-moss: #C2D099;
+  /* Light Moss Green — subtle bg, hover */
+  --color-brand-cream: #E6EEC9;
+  /* Pale Cream-Ivory — light bg, alt rows */
+  --color-brand-pastel: #C8E3E6;
+  /* Pastel Teal — system bg inspired by login overlay */
 
   /* Soft ambient shadow tinted with brand teal — use in place of border-heavy cards */
-  --shadow-brand: 0 4px 24px -4px rgba(53, 133, 142, 0.16), 0 0 0 rgba(0,0,0,0);
-  --shadow-brand-lg: 0 8px 40px -8px rgba(53, 133, 142, 0.18), 0 0 0 rgba(0,0,0,0);
-  --shadow-brand-xl: 0 12px 56px -12px rgba(53, 133, 142, 0.20), 0 0 0 rgba(0,0,0,0);
+  --shadow-brand: 0 4px 24px -4px rgba(53, 133, 142, 0.16), 0 0 0 rgba(0, 0, 0, 0);
+  --shadow-brand-lg: 0 8px 40px -8px rgba(53, 133, 142, 0.18), 0 0 0 rgba(0, 0, 0, 0);
+  --shadow-brand-xl: 0 12px 56px -12px rgba(53, 133, 142, 0.20), 0 0 0 rgba(0, 0, 0, 0);
 }
 
 /* Leaflet map container must be behind overlays */
@@ -19,10 +24,22 @@
   z-index: 0 !important;
 }
 
-.leaflet-pane { z-index: 1 !important; }
-.leaflet-top, .leaflet-bottom { z-index: 2 !important; }
-.leaflet-control { z-index: 2 !important; }
-.leaflet-popup { z-index: 3 !important; }
+.leaflet-pane {
+  z-index: 1 !important;
+}
+
+.leaflet-top,
+.leaflet-bottom {
+  z-index: 2 !important;
+}
+
+.leaflet-control {
+  z-index: 2 !important;
+}
+
+.leaflet-popup {
+  z-index: 3 !important;
+}
 
 /* ── Print styles for Travel Order form ── */
 @media print {
@@ -66,7 +83,7 @@
     overflow: visible !important;
   }
 
-  #travel-order-print > * {
+  #travel-order-print>* {
     margin-top: 0 !important;
     padding-top: 0 !important;
   }
@@ -169,7 +186,7 @@
   font-size: 12px;
   font-weight: 500;
   line-height: 1.2;
-  padding: 2px 8px 4px;
+  padding: 2px 8px 8px;
   white-space: nowrap;
 }
 
@@ -187,7 +204,7 @@
 .to-purpose-box {
   display: grid;
   grid-template-columns: 28% 72%;
-  min-height: 62px;
+  min-height: 100px;
   border: 1.5px solid #111;
   margin-top: 8px;
 }
@@ -241,7 +258,7 @@
   font-size: 18px;
   font-weight: 500;
   line-height: 1.2;
-  padding: 0 8px 5px;
+  padding: 0 8px 10px;
   min-height: 34px;
   display: flex;
   align-items: flex-end;
@@ -272,4 +289,3 @@
 .to-number {
   color: #b91c1c;
 }
-
