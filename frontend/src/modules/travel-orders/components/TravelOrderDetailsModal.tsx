@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, Printer, Pen } from 'lucide-react';
+import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, Printer } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { formatDateManila, formatTimeManila, formatDateTimeManila } from '@/shared/lib/date-utils';
 import { useNotification } from '@/shared/context/NotificationContext';
@@ -94,9 +94,6 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     isOpen: boolean;
     mode: 'request' | 'approve';
   }>({ isOpen: false, mode: 'request' });
-  const [requestedBySignature, setRequestedBySignature] = useState<string | null>(null);
-  const [approvedBySignature, setApprovedBySignature] = useState<string | null>(null);
-
   // Reset scroll position when modal opens
   useEffect(() => {
     if (isOpen) {
