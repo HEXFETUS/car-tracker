@@ -186,6 +186,41 @@
   text-align: center;
 }
 
+.signature-block {
+  text-align: center;
+  position: relative;
+  min-height: 90px;
+}
+
+.signature-image {
+  display: block;
+  margin: 0 auto -18px auto;
+  max-width: 170px;
+  max-height: 55px;
+  object-fit: contain;
+  position: relative;
+  z-index: 2;
+}
+
+.signature-name {
+  border-bottom: 1.5px solid #111;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 0 8px 5px;
+  min-height: 34px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.signature-label {
+  margin-top: 6px;
+  font-size: 9px;
+  font-style: italic;
+  font-weight: 700;
+}
+
 .sig-line {
   border-bottom: 1.5px solid #111;
   min-height: 18px;
