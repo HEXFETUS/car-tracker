@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { useNotification } from '@/shared/context/NotificationContext';
 import { VehiclesPage } from '@/modules/list/pages/VehiclesPage';
 import { DriversPage } from '@/modules/list/pages/DriversPage';
@@ -28,17 +28,13 @@ export function ListPage() {
     }
   }, [activeTab]);
 
-  const handleRefresh = useCallback(() => {
-    setRefreshKey((k) => k + 1);
-  }, []);
-
-  const handleNewItem = useCallback(() => {
+  function handleNewItem() {
     switch (activeTab) {
       case 'vehicles': setIsVehicleModalOpen(true); break;
       case 'drivers': setIsDriverModalOpen(true); break;
       case 'maintenance': setIsMaintenanceModalOpen(true); break;
     }
-  }, [activeTab]);
+  }
 
   async function handleAddVehicle(payload: {
     plateNumber: string;
@@ -120,7 +116,6 @@ export function ListPage() {
         }}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        onRefresh={handleRefresh}
         onNewItem={handleNewItem}
         newItemLabel={newItemLabel}
       />

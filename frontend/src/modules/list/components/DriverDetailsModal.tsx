@@ -62,7 +62,16 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
   const [editAddress, setEditAddress] = useState('');
   const [editLicenseNumber, setEditLicenseNumber] = useState('');
   const [editExpiryDate, setEditExpiryDate] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('');
+
+  // Track original values to detect changes
+  const [originalValues, setOriginalValues] = useState<{
+    fullName: string;
+    phone: string;
+    email: string;
+    address: string;
+    licenseNumber: string;
+    expiryDate: string;
+  } | null>(null);
 
   // Reset scroll position when modal opens
   if (isOpen && driver) {
@@ -88,7 +97,6 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
         address: editAddress.trim() || undefined,
         licenseNumber: editLicenseNumber.trim(),
         expiryDate: editExpiryDate,
-        status: selectedStatus || driver.status,
       });
       toast('Driver updated successfully!', 'success');
       setSaving(false);
@@ -121,21 +129,6 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
     }
   }
 
-  async function handleStatusChange(newStatus: string) {
-    if (!driver) return;
-    try {
-      setSaving(true);
-      await updateDriver(driver.id, { status: newStatus });
-      toast(`Driver status updated to "${newStatus}"`, 'success');
-      setSaving(false);
-      onSuccess();
-      onClose();
-    } catch (err: any) {
-      toast(err.message || 'Failed to update driver status', 'error');
-      setSaving(false);
-    }
-  }
-
   const handleStartEditing = () => {
     if (!driver) return;
     setEditFullName(driver.fullName);
@@ -144,16 +137,35 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
     setEditAddress(driver.address ?? '');
     setEditLicenseNumber(driver.licenseNumber);
     setEditExpiryDate(driver.expiryDate);
-    setSelectedStatus(driver.status ?? 'active');
+    setOriginalValues({
+      fullName: driver.fullName,
+      phone: driver.phone,
+      email: driver.email,
+      address: driver.address ?? '',
+      licenseNumber: driver.licenseNumber,
+      expiryDate: driver.expiryDate,
+    });
     setEditing(true);
   };
+
+  // Detect if any field was changed from its original value
+  const hasChanges =
+    originalValues !== null &&
+    (editFullName !== originalValues.fullName ||
+      editPhone !== originalValues.phone ||
+      editEmail !== originalValues.email ||
+      editAddress !== originalValues.address ||
+      editLicenseNumber !== originalValues.licenseNumber ||
+      editExpiryDate !== originalValues.expiryDate);
+
+  // Required fields validation
+  const requiredFieldsEmpty = !editFullName.trim() || !editPhone.trim() || !editEmail.trim() || !editLicenseNumber.trim() || !editExpiryDate.trim();
 
   // ── Edit Mode ──
   if (editing) {
     return (
       <div
         className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
-        onClick={(e) => { if (e.target === e.currentTarget) cancelEditing(); }}
       >
         <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
           <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
@@ -165,21 +177,27 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
               <X className="size-5" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth space-y-4">
             <SectionCard title="Personal Information" icon={<User className="size-4" />}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Full Name</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    Full Name <span className="text-red-500">*</span>
+                  </label>
                   <input type="text" value={editFullName} onChange={(e) => setEditFullName(e.target.value)} className={inputClass()} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Phone</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    Phone <span className="text-red-500">*</span>
+                  </label>
                   <input type="text" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} className={inputClass()} />
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Email</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    Email <span className="text-red-500">*</span>
+                  </label>
                   <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className={inputClass()} />
                 </div>
                 <div>
@@ -191,26 +209,22 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
             <SectionCard title="License Information" icon={<FileText className="size-4" />}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">License Number</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    License Number <span className="text-red-500">*</span>
+                  </label>
                   <input type="text" value={editLicenseNumber} onChange={(e) => setEditLicenseNumber(e.target.value)} className={inputClass()} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Expiry Date</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    Expiry Date <span className="text-red-500">*</span>
+                  </label>
                   <input type="date" value={editExpiryDate} onChange={(e) => setEditExpiryDate(e.target.value)} className={inputClass()} />
                 </div>
-              </div>
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-zinc-700 mb-1.5">Status</label>
-                <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} className={inputClass()}>
-                  {STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-                  ))}
-                </select>
               </div>
             </SectionCard>
             <div className="flex items-center justify-end gap-3 pt-2">
               <button type="button" onClick={cancelEditing} className="rounded-lg ring-1 ring-brand-sage px-5 py-2.5 text-sm font-medium text-zinc-600 hover:bg-brand-cream transition-colors">Cancel</button>
-              <button type="button" onClick={handleSaveEdit} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors">
+              <button type="button" onClick={handleSaveEdit} disabled={saving || !hasChanges || requiredFieldsEmpty} className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 {saving ? <Loader2 className="size-4 animate-spin" /> : null}
                 Save Changes
               </button>
@@ -225,7 +239,6 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
         {/* Header */}
@@ -253,33 +266,7 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
-          {/* Status */}
-          <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-4 py-3">
-            <span className="text-sm font-medium text-zinc-700">Status</span>
-            <select
-              value={driver.status ?? 'active'}
-              onChange={(e) => handleStatusChange(e.target.value)}
-              disabled={saving}
-              className={`rounded-lg border-0 ring-1 px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-brand-teal/20 ${
-                driver.status === 'active'
-                  ? 'ring-green-200 bg-green-50 text-green-700'
-                  : driver.status === 'inactive'
-                  ? 'ring-zinc-200 bg-zinc-50 text-zinc-600'
-                  : driver.status === 'on-leave'
-                  ? 'ring-amber-200 bg-amber-50 text-amber-700'
-                  : driver.status === 'suspended'
-                  ? 'ring-red-200 bg-red-50 text-red-700'
-                  : 'ring-brand-sage text-zinc-600'
-              }`}
-            >
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="on-leave">On Leave</option>
-              <option value="suspended">Suspended</option>
-            </select>
-          </div>
-
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth space-y-4">
           <SectionCard title="Personal Information" icon={<User className="size-4" />}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <DetailRow icon={<Phone className="size-4" />} label="Phone" value={driver.phone} />

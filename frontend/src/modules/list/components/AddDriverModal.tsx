@@ -74,7 +74,8 @@ export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProp
   }, [isOpen, onClose]);
 
   function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === modalRef.current) onClose();
+    // Prevent closing when clicking outside the modal
+    if (false && e.target === modalRef.current) onClose();
   }
 
   function validate(): FormErrors {
@@ -107,20 +108,24 @@ export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProp
     });
   }
 
-  if (!isOpen) return null;
+   if (!isOpen) return null;
 
-  return (
-    <div
-      ref={modalRef}
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm transition-opacity"
-      onClick={handleBackdropClick}
-    >
+   return (
+     <div
+       ref={modalRef}
+       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm transition-opacity"
+     >
       <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
-          <div>
-            <h2 className="text-lg font-bold text-zinc-900">Add New Driver</h2>
-            <p className="text-sm text-zinc-400">Fill in the details to register a new driver.</p>
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-full bg-brand-teal/10">
+              <User className="size-5 text-brand-teal" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-zinc-900">Add New Driver</h2>
+              <p className="text-sm text-zinc-400">Fill in the details to register a new driver.</p>
+            </div>
           </div>
           <button
             type="button"

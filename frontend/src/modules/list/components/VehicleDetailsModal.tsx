@@ -56,6 +56,17 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
   const [editVehicleType, setEditVehicleType] = useState('');
   const [editFuelType, setEditFuelType] = useState('');
 
+  // Track original values to detect changes
+  const [originalValues, setOriginalValues] = useState<{
+    plateNumber: string;
+    make: string;
+    model: string;
+    year: number;
+    color: string;
+    vehicleType: string;
+    fuelType: string;
+  } | null>(null);
+
   // Reset scroll position when modal opens
   if (isOpen && vehicle) {
     window.scrollTo(0, 0);
@@ -114,7 +125,15 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
     }
   }
 
-  function openRepairNoteModal() {
+  async function handleOpenRepairNoteModal() {
+    if (!vehicle) return;
+    const confirmed = await confirm({
+      title: 'Mark Under Repair?',
+      message: `Are you sure you want to mark "${vehicle.plateNumber}" as under repair?`,
+      type: 'warning',
+    });
+    if (!confirmed) return;
+
     setRepairNote('');
     setShowRepairNote(true);
   }
@@ -140,8 +159,8 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
   async function handleDoneRepair() {
     if (!vehicle) return;
     const confirmed = await confirm({
-      title: 'Done Repair?',
-      message: `Mark "${vehicle.plateNumber}" as active and clear the repair notes?`,
+      title: 'Mark Repair as Done?',
+      message: `Are you sure you want to mark "${vehicle.plateNumber}" as repaired and active? The repair notes will be cleared.`,
       type: 'info',
     });
     if (!confirmed) return;
@@ -167,6 +186,15 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
     setEditColor(vehicle.color ?? '');
     setEditVehicleType(vehicle.vehicleType ?? '');
     setEditFuelType(vehicle.fuelType ?? '');
+    setOriginalValues({
+      plateNumber: vehicle.plateNumber,
+      make: vehicle.make,
+      model: vehicle.model,
+      year: vehicle.year,
+      color: vehicle.color ?? '',
+      vehicleType: vehicle.vehicleType ?? '',
+      fuelType: vehicle.fuelType ?? '',
+    });
     setEditing(true);
   };
 
@@ -175,7 +203,6 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
     return (
       <div
         className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
-        onClick={(e) => { if (e.target === e.currentTarget) setShowRepairNote(false); }}
       >
         <div className="relative w-full max-w-lg max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
           <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
@@ -222,11 +249,10 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
               type="button"
               onClick={handleSubmitRepairNote}
               disabled={repairing || !repairNote.trim()}
-              className={`inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.97] ${
-                repairing || !repairNote.trim()
+              className={`inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.97] ${repairing || !repairNote.trim()
                   ? 'bg-amber-400/50 cursor-not-allowed'
                   : 'bg-amber-500 hover:bg-amber-600'
-              }`}
+                }`}
             >
               {repairing ? (
                 <><Loader2 className="size-4 animate-spin" /> Saving…</>
@@ -240,12 +266,25 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
     );
   }
 
+  // Detect if any field was changed from its original value
+  const hasChanges =
+    originalValues !== null &&
+    (editPlateNumber !== originalValues.plateNumber ||
+      editMake !== originalValues.make ||
+      editModel !== originalValues.model ||
+      Number(editYear) !== originalValues.year ||
+      editColor !== originalValues.color ||
+      editVehicleType !== originalValues.vehicleType ||
+      editFuelType !== originalValues.fuelType);
+
+  // Required fields validation
+  const requiredFieldsEmpty = !editPlateNumber.trim() || !editMake.trim() || !editModel.trim() || !editYear.trim();
+
   // ── Edit Mode ──
   if (editing) {
     return (
       <div
         className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
-        onClick={(e) => { if (e.target === e.currentTarget) cancelEditing(); }}
       >
         <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
           <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
@@ -257,25 +296,33 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
               <X className="size-5" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth space-y-4">
             <SectionCard title="Basic Information" icon={<Car className="size-4" />}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Plate Number</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    Plate Number <span className="text-red-500">*</span>
+                  </label>
                   <input type="text" value={editPlateNumber} onChange={(e) => setEditPlateNumber(e.target.value)} className={inputClass()} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Year</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    Year <span className="text-red-500">*</span>
+                  </label>
                   <input type="number" value={editYear} onChange={(e) => setEditYear(e.target.value)} className={inputClass()} />
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Make</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    Make <span className="text-red-500">*</span>
+                  </label>
                   <input type="text" value={editMake} onChange={(e) => setEditMake(e.target.value)} className={inputClass()} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">Model</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1.5">
+                    Model <span className="text-red-500">*</span>
+                  </label>
                   <input type="text" value={editModel} onChange={(e) => setEditModel(e.target.value)} className={inputClass()} />
                 </div>
               </div>
@@ -312,7 +359,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
             </SectionCard>
             <div className="flex items-center justify-end gap-3 pt-2">
               <button type="button" onClick={cancelEditing} className="rounded-lg ring-1 ring-brand-sage px-5 py-2.5 text-sm font-medium text-zinc-600 hover:bg-brand-cream transition-colors">Cancel</button>
-              <button type="button" onClick={handleSaveEdit} disabled={repairing} className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors">
+              <button type="button" onClick={handleSaveEdit} disabled={repairing || !hasChanges || requiredFieldsEmpty} className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 {repairing ? <Loader2 className="size-4 animate-spin" /> : null}
                 Save Changes
               </button>
@@ -327,7 +374,6 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
         {/* Header */}
@@ -367,7 +413,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth space-y-4">
           {/* Repair note banner */}
           {vehicle.notes && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
@@ -428,7 +474,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
               </button>
             ) : (
               <button
-                onClick={openRepairNoteModal}
+                onClick={handleOpenRepairNoteModal}
                 disabled={repairing}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-medium text-white shadow-sm transition-all hover:bg-amber-600 active:scale-[0.97]"
               >

@@ -140,7 +140,8 @@ export function NewMaintenanceModal({ isOpen, onClose, onSubmit, initialRecord }
   }, [isOpen, onClose]);
 
   function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === e.currentTarget) onClose();
+    // Prevent closing when clicking outside the modal
+    if (false && e.target === e.currentTarget) onClose();
   }
 
   function handleVehicleSelect(vehicle: Vehicle) {
@@ -210,11 +211,10 @@ export function NewMaintenanceModal({ isOpen, onClose, onSubmit, initialRecord }
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm"
-      onClick={handleBackdropClick}
     >
       <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between rounded-t-2xl bg-brand-cream px-6 py-5">
+        <div className="flex items-center justify-between rounded-t-2xl px-6 py-5">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-full bg-brand-teal/20">
               <Wrench className="size-5 text-brand-teal" />
@@ -388,16 +388,16 @@ export function NewMaintenanceModal({ isOpen, onClose, onSubmit, initialRecord }
                   alt={attachedPictureName || 'Uploaded preview'}
                   className="h-32 w-full object-cover"
                 />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAttachedPicture(null);
-                      setAttachedPictureName('');
-                      pictureError && setPictureError(null);
-                      if (fileInputRef.current) fileInputRef.current.value = '';
-                    }}
-                    className="absolute right-2 top-2 z-10 rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 transition-colors"
-                  >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttachedPicture(null);
+                    setAttachedPictureName('');
+                    pictureError && setPictureError(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
+                  className="absolute right-2 top-2 z-10 rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 transition-colors"
+                >
                   <X className="size-4" />
                 </button>
                 <p className="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-0.5 text-xs text-white">

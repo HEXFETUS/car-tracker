@@ -1,4 +1,4 @@
-import { Search, RotateCcw, RefreshCw, Plus, Car, Users, Wrench } from 'lucide-react';
+import { Search, RotateCcw, Plus, Car, Users, Wrench } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
 export type TabKey = 'vehicles' | 'drivers' | 'maintenance';
@@ -8,9 +8,7 @@ interface ListToolbarProps {
   onTabChange: (tab: TabKey) => void;
   searchQuery: string;
   onSearchChange: (value: string) => void;
-  onRefresh: () => void;
   onNewItem: () => void;
-  loading?: boolean;
   newItemLabel?: string;
 }
 
@@ -25,9 +23,7 @@ export function ListToolbar({
   onTabChange,
   searchQuery,
   onSearchChange,
-  onRefresh,
   onNewItem,
-  loading = false,
   newItemLabel = 'New Item',
 }: ListToolbarProps) {
   return (
@@ -80,17 +76,7 @@ export function ListToolbar({
             />
           </div>
 
-          {/* Refresh */}
-          <button
-            onClick={onRefresh}
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-1.5 h-10 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 hover:bg-zinc-100 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
-            <span className="hidden sm:inline">Refresh</span>
-          </button>
-
-          {/* New Item */}
+           {/* New Item */}
           <button
             onClick={onNewItem}
             className="inline-flex items-center justify-center gap-1.5 h-10 rounded-lg bg-brand-teal px-4 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
