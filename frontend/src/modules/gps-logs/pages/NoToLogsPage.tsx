@@ -111,15 +111,25 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
   const filters = (
     <>
       <div className="relative">
-        <Car className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-brand-teal" />
-        <select value={vehicleFilter} onChange={(e) => { onVehicleFilterChange(e.target.value); setPage(1); }} className="h-10 w-[170px] rounded-lg border-0 bg-white pl-8 pr-7 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage">
+        <Car className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-brand-teal" />
+        <select value={vehicleFilter} onChange={(e) => { onVehicleFilterChange(e.target.value); setPage(1); }} className="h-10 w-[170px] appearance-none rounded-lg border-0 bg-white pl-8 pr-7 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage">
           <option value="">All Vehicles</option>
           {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plateNumber}</option>)}
         </select>
+        {vehicleFilter && (
+          <button onClick={() => { onVehicleFilterChange(''); setPage(1); }} className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-600" title="Clear">
+            <X className="size-3" />
+          </button>
+        )}
       </div>
       <div className="relative">
-        <Calendar className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-brand-teal" />
-        <input type="date" value={dateFilter} max={today} onChange={(e) => { onDateFilterChange(e.target.value); setPage(1); }} className="h-10 w-[145px] rounded-lg border-0 bg-white pl-8 pr-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage" />
+        <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-brand-teal" />
+        <input type="date" value={dateFilter} max={today} onChange={(e) => { onDateFilterChange(e.target.value); setPage(1); }} className="gps-log-date-filter h-10 w-[168px] rounded-lg border-0 bg-white pl-8 pr-7 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage" />
+        {dateFilter && (
+          <button onClick={() => { onDateFilterChange(''); setPage(1); }} className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-600" title="Clear">
+            <X className="size-3" />
+          </button>
+        )}
       </div>
       <button onClick={loadLogs} className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-brand-teal/30 px-3 text-sm font-medium text-brand-teal hover:bg-brand-teal/5">
         <RefreshCw className={cn('size-4', loading && 'animate-spin')} />

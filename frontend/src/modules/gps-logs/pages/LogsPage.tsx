@@ -206,7 +206,7 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
           value={dateFilter}
           max={today}
           onChange={(e) => { onDateFilterChange(e.target.value); setPage(1); }}
-          className="w-[145px] rounded-lg border-0 bg-white pl-8 pr-2 py-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm"
+          className="gps-log-date-filter w-[168px] rounded-lg border-0 bg-white pl-8 pr-7 py-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm"
         />
         {dateFilter && (
           <button onClick={() => { onDateFilterChange(''); setPage(1); }} className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-600" title="Clear">

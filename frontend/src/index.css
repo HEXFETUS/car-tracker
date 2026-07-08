@@ -41,6 +41,11 @@
   z-index: 3 !important;
 }
 
+.gps-log-date-filter::-webkit-calendar-picker-indicator {
+  margin-right: 0;
+  cursor: pointer;
+}
+
 /* ── Print styles for Travel Order form ── */
 @media print {
   @page {

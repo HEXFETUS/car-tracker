@@ -59,9 +59,6 @@ export function GpsLogsToolbar({
         ))}
       </div>
 
-      {/* ── Divider ── */}
-      <div className="hidden sm:block w-px h-6 bg-zinc-200 shrink-0" />
-
       {/* ── Filters ── */}
       {filters && <div className="flex items-center gap-2 flex-wrap">{filters}</div>}
 
