@@ -329,6 +329,11 @@ export async function saveVehicleStateWithRetry(
 
     // Re-process the ignition reading with the latest DB state
     const { newState } = processIgnitionReading(freshState, currentIgnition, now);
+    newState.lastSpeed = state.lastSpeed;
+    newState.lastLatitude = state.lastLatitude;
+    newState.lastLongitude = state.lastLongitude;
+    newState.lastLocationName = state.lastLocationName;
+    newState.lastEventType = state.lastEventType;
     currentState = newState;
   }
 
@@ -417,14 +422,14 @@ export function processIgnitionReading(
   const newState = { ...state };
   newState.lastPacketTime = now;
 
-  // ── No change: same as last confirmed ignition ──────────────
-  if (currentIgnition === state.lastConfirmedIgnition) {
-    // If we were in a pending state and the reading matches the pending direction,
-    // increment the poll counter and check if we've reached confirmation threshold
-    if (state.ignitionState === 'PENDING_ON' && currentIgnition === true) {
+  // ── Pending confirmation/glitch handling comes first ───────
+  // Pending states compare against the pending direction, not the
+  // last confirmed ignition value. Otherwise PENDING_ON/PENDING_OFF
+  // can never reach the confirmation threshold.
+  if (state.ignitionState === 'PENDING_ON') {
+    if (currentIgnition === true) {
       newState.pendingPollCount = state.pendingPollCount + 1;
       if (newState.pendingPollCount >= IGNITION_CONFIRMATION_POLLS) {
-        // Confirmed ON after N consecutive polls
         newState.ignitionState = 'ON';
         newState.lastConfirmedIgnition = true;
         newState.lastConfirmedIgnitionAt = now;
@@ -444,7 +449,6 @@ export function processIgnitionReading(
           },
         };
       }
-      // Still debouncing - need more polls
       console.log(`[vehicle-state] Still debouncing IGNITION ON vehicle=${state.vehicleId} poll=${newState.pendingPollCount}/${IGNITION_CONFIRMATION_POLLS}`);
       return {
         newState,
@@ -452,10 +456,24 @@ export function processIgnitionReading(
       };
     }
 
-    if (state.ignitionState === 'PENDING_OFF' && currentIgnition === false) {
+    newState.ignitionState = 'OFF';
+    newState.lastConfirmedIgnition = false;
+    newState.lastConfirmedIgnitionAt = now;
+    newState.pendingIgnition = null;
+    newState.pendingSince = null;
+    newState.pendingPollCount = 0;
+    newState.activeTripId = null;
+    console.log(`[vehicle-state] Glitch suppressed: PENDING_ON→OFF vehicle=${state.vehicleId}`);
+    return {
+      newState,
+      result: { transition: 'glitch_suppressed', previousState: state.ignitionState, newState: 'OFF' },
+    };
+  }
+
+  if (state.ignitionState === 'PENDING_OFF') {
+    if (currentIgnition === false) {
       newState.pendingPollCount = state.pendingPollCount + 1;
       if (newState.pendingPollCount >= IGNITION_CONFIRMATION_POLLS) {
-        // Confirmed OFF after N consecutive polls
         newState.ignitionState = 'OFF';
         newState.lastConfirmedIgnition = false;
         newState.lastConfirmedIgnitionAt = now;
@@ -475,7 +493,6 @@ export function processIgnitionReading(
           },
         };
       }
-      // Still debouncing - need more polls
       console.log(`[vehicle-state] Still debouncing IGNITION OFF vehicle=${state.vehicleId} poll=${newState.pendingPollCount}/${IGNITION_CONFIRMATION_POLLS}`);
       return {
         newState,
@@ -483,6 +500,21 @@ export function processIgnitionReading(
       };
     }
 
+    newState.ignitionState = 'ON';
+    newState.lastConfirmedIgnition = true;
+    newState.lastConfirmedIgnitionAt = now;
+    newState.pendingIgnition = null;
+    newState.pendingSince = null;
+    newState.pendingPollCount = 0;
+    console.log(`[vehicle-state] Glitch suppressed: PENDING_OFF→ON vehicle=${state.vehicleId} tripId=${state.activeTripId}`);
+    return {
+      newState,
+      result: { transition: 'glitch_suppressed', previousState: state.ignitionState, newState: 'ON' },
+    };
+  }
+
+  // ── No change: same as last confirmed ignition ──────────────
+  if (currentIgnition === state.lastConfirmedIgnition) {
     // Stable state, no transition
     return { newState, result: { transition: 'none' } };
   }
@@ -491,22 +523,6 @@ export function processIgnitionReading(
 
   if (currentIgnition === true && state.lastConfirmedIgnition === false) {
     // OFF → ON transition detected
-    if (state.ignitionState === 'PENDING_OFF') {
-      // Was debouncing OFF but now back ON - suppress the glitch
-      newState.ignitionState = 'ON';
-      newState.lastConfirmedIgnition = true;
-      newState.lastConfirmedIgnitionAt = now;
-      newState.pendingIgnition = null;
-      newState.pendingSince = null;
-      newState.pendingPollCount = 0;
-      // Reuse existing trip ID since we never actually turned off
-      console.log(`[vehicle-state] Glitch suppressed: PENDING_OFF→ON vehicle=${state.vehicleId} tripId=${state.activeTripId}`);
-      return {
-        newState,
-        result: { transition: 'glitch_suppressed', previousState: state.ignitionState, newState: 'ON' },
-      };
-    }
-
     // Start debouncing ON (poll 1/2)
     newState.ignitionState = 'PENDING_ON';
     newState.pendingIgnition = true;
@@ -521,22 +537,6 @@ export function processIgnitionReading(
 
   if (currentIgnition === false && state.lastConfirmedIgnition === true) {
     // ON → OFF transition detected
-    if (state.ignitionState === 'PENDING_ON') {
-      // Was debouncing ON but now back OFF - suppress the glitch
-      newState.ignitionState = 'OFF';
-      newState.lastConfirmedIgnition = false;
-      newState.lastConfirmedIgnitionAt = now;
-      newState.pendingIgnition = null;
-      newState.pendingSince = null;
-      newState.pendingPollCount = 0;
-      newState.activeTripId = null;
-      console.log(`[vehicle-state] Glitch suppressed: PENDING_ON→OFF vehicle=${state.vehicleId}`);
-      return {
-        newState,
-        result: { transition: 'glitch_suppressed', previousState: state.ignitionState, newState: 'OFF' },
-      };
-    }
-
     // Start debouncing OFF (poll 1/2)
     newState.ignitionState = 'PENDING_OFF';
     newState.pendingIgnition = false;
@@ -600,34 +600,6 @@ export function isStalePacket(
   // than the last processed packet.
   const tolerance = Number(process.env.GPS_STALE_PACKET_TOLERANCE_SECONDS || 5);
   return packetTime < lastTime - tolerance * 1000;
-}
-
-// ── Per-Vehicle Processing Lock ───────────────────────────────
-//
-// Uses PostgreSQL advisory locks to prevent two scheduler instances
-// from processing the same vehicle concurrently. This enables safe
-// horizontal scaling across multiple Node.js processes.
-
-export async function tryAcquireVehicleLock(vehicleId: string): Promise<boolean> {
-  const pool = getPool();
-  // Generate a stable 64-bit lock ID from the UUID
-  const hash = vehicleId.split('-').reduce((acc, part) => acc + parseInt(part, 16), 0);
-  const lockId = Math.abs(hash) % 2147483647; // pg_try_advisory_lock takes int4
-  const result = await pool.query(
-    `SELECT pg_try_advisory_lock($1) AS locked`,
-    [lockId],
-  );
-  return result.rows[0]?.locked === true;
-}
-
-export async function releaseVehicleLock(vehicleId: string): Promise<void> {
-  const pool = getPool();
-  const hash = vehicleId.split('-').reduce((acc, part) => acc + parseInt(part, 16), 0);
-  const lockId = Math.abs(hash) % 2147483647;
-  await pool.query(
-    `SELECT pg_advisory_unlock($1)`,
-    [lockId],
-  );
 }
 
 // ── Active Trip Check ──────────────────────────────────────────

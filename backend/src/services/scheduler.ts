@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   syncFleetAndAlert,
-  sendTelegram,
+  sendTelegram as trackerSendTelegram,
   getVehicleEmoji,
   formatIgnitionAlert,
   formatVehicleHeader,
@@ -26,14 +26,12 @@ import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
 import { getFleetConfig } from './fleetConfigService.js';
 import {
   loadVehicleState,
-  saveVehicleState,
+  saveVehicleStateWithRetry,
   processIgnitionReading,
   hasRecentIgnitionEvent,
   findExistingActiveTrip,
   ensureVehicleStateSchema,
   isStalePacket,
-  tryAcquireVehicleLock,
-  releaseVehicleLock,
   type VehicleState,
 } from './gpsVehicleStateService.js';
 import {
@@ -41,6 +39,13 @@ import {
   syncApprovedTravelOrdersToActiveTrips,
   syncUnlinkedGpsTripLogsToTravelOrders,
 } from './travelOrderSyncService.js';
+
+type SendTelegramFn = typeof trackerSendTelegram;
+let sendTelegram: SendTelegramFn = trackerSendTelegram;
+
+export function setSendTelegramForTest(fn: SendTelegramFn | null): void {
+  sendTelegram = fn ?? trackerSendTelegram;
+}
 
 // ── Scheduler State ────────────────────────────────────────────
 
@@ -1476,17 +1481,6 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           const toNumber = typeof vehicle.to_number === 'string' ? vehicle.to_number : null;
           const recordedAt = new Date().toISOString();
 
-          // ── Acquire per-vehicle lock ─────────────────────────
-          const locked = await tryAcquireVehicleLock(vehicleId);
-          if (!locked) {
-            telemetrySkipped += 1;
-            console.log(`[state-machine] SKIPPING vehicle=${vehicleId} - locked by another process`);
-            continue;
-          }
-
-          // ── Process vehicle under lock with guaranteed release ──
-          let lockReleased = false;
-          try {
           // ── Load state machine state ─────────────────────────
           const vs = await loadVehicleState(vehicleId);
           console.log(`[state-machine] vehicle=${vehicleId} state=${vs.ignitionState} lastConfirmed=${vs.lastConfirmedIgnition} current=${currentIgnition} speed=${speed}`);
@@ -1497,8 +1491,6 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           if (isStalePacket(vs, recordedAt)) {
             telemetrySkipped += 1;
             console.log(`[state-machine] STALE PACKET SKIPPED vehicle=${vehicleId} packet=${recordedAt} last=${vs.lastPacketTime}`);
-            lockReleased = true;
-            await releaseVehicleLock(vehicleId);
             continue;
           }
 
@@ -1597,16 +1589,22 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           newState.lastLatitude = latitude;
           newState.lastLongitude = longitude;
           newState.lastLocationName = locationName;
-          await saveVehicleState(newState);
+          const stateSaveResult = await saveVehicleStateWithRetry(newState, currentIgnition, recordedAt);
+          if (!stateSaveResult.saved) {
+            telemetrySkipped += 1;
+            console.warn(`[state-machine] STATE SAVE FAILED vehicle=${vehicleId} retries=${stateSaveResult.retriesUsed}`);
+            continue;
+          }
+          const savedState = stateSaveResult.latestState;
 
           // ── If ignition is off, skip NON-ignition events ─────
           if (!currentIgnition) {
-            await closeIdlingDedupDb(vehicleId, newState.activeTripId);
+            await closeIdlingDedupDb(vehicleId, savedState.activeTripId);
             continue;
           }
 
           // ── Vehicle is ON: process motion/idling/location ────
-          const activeTripId = newState.activeTripId;
+          const activeTripId = savedState.activeTripId;
           const isMoving = speed > 0;
           const activeIdlingSession = await getActiveIdlingSessionForVehicle(vehicleId);
 
@@ -1716,12 +1714,6 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             telemetrySkipped += 1;
             console.log(`[idling-alert] SKIPPED reason=no_active_trip vehicle=${vehicleId}`);
           }
-        } finally {
-          // Always release the per-vehicle lock, even on exceptions
-          if (!lockReleased) {
-            await releaseVehicleLock(vehicleId);
-          }
-        }
         } catch (err) {
           console.error(`[scheduler] Failed state-machine processing for ${String(vehicle.id)}:`, errorMessage(err));
         }

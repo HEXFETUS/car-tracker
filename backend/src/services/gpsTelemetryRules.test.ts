@@ -11,9 +11,14 @@ import {
   markIdlingAlertDb,
   persistIdlingAlertIfNewThreshold,
   handleIdlingAlertInTransaction,
+  setSendTelegramForTest,
   shouldPersistIdlingAlertDb,
   shouldPersistMotionStartedFromPreviousState,
 } from './scheduler.js';
+import {
+  processIgnitionReading,
+  type VehicleState,
+} from './gpsVehicleStateService.js';
 import {
   scoreTravelOrderTripCandidate,
   syncUnlinkedGpsTripLogsToTravelOrders,
@@ -66,12 +71,73 @@ const baseTelemetry = {
   telegramMessage: null,
 };
 
+function baseVehicleState(overrides: Partial<VehicleState> = {}): VehicleState {
+  return {
+    vehicleId: '11111111-1111-1111-1111-111111111111',
+    ignitionState: 'OFF',
+    lastConfirmedIgnition: false,
+    lastConfirmedIgnitionAt: null,
+    pendingIgnition: null,
+    pendingSince: null,
+    pendingPollCount: 0,
+    activeTripId: null,
+    lastPacketTime: null,
+    lastSpeed: 0,
+    lastLatitude: null,
+    lastLongitude: null,
+    lastLocationName: null,
+    lastEventType: null,
+    updatedAt: '2026-07-06T04:00:00.000Z',
+    version: 1,
+    ...overrides,
+  };
+}
+
 function trackerMilestoneForMinutes(minutes: number): number | null {
   return idlingMilestoneForMinutes(minutes);
 }
 
 afterEach(() => {
+  setSendTelegramForTest(null);
   setPoolForTest(null);
+});
+
+describe('vehicle ignition state machine', () => {
+  it('confirms ignition on after consecutive pending-on polls', () => {
+    const pending = baseVehicleState({
+      ignitionState: 'PENDING_ON',
+      lastConfirmedIgnition: false,
+      pendingIgnition: true,
+      pendingSince: '2026-07-06T04:42:00.000Z',
+      pendingPollCount: 1,
+    });
+
+    const { newState, result } = processIgnitionReading(pending, true, '2026-07-06T04:42:30.000Z');
+
+    assert.equal(result.transition, 'confirmed_on');
+    assert.equal(newState.ignitionState, 'ON');
+    assert.equal(newState.lastConfirmedIgnition, true);
+    assert.ok(newState.activeTripId);
+  });
+
+  it('confirms ignition off after consecutive pending-off polls', () => {
+    const pending = baseVehicleState({
+      ignitionState: 'PENDING_OFF',
+      lastConfirmedIgnition: true,
+      pendingIgnition: false,
+      pendingSince: '2026-07-06T05:12:00.000Z',
+      pendingPollCount: 1,
+      activeTripId: '22222222-2222-2222-2222-222222222222',
+    });
+
+    const { newState, result } = processIgnitionReading(pending, false, '2026-07-06T05:12:30.000Z');
+
+    assert.equal(result.transition, 'confirmed_off');
+    assert.equal(result.tripId, '22222222-2222-2222-2222-222222222222');
+    assert.equal(newState.ignitionState, 'OFF');
+    assert.equal(newState.lastConfirmedIgnition, false);
+    assert.equal(newState.activeTripId, null);
+  });
 });
 
 describe('IGNITION_ON telemetry dedupe', () => {
@@ -96,8 +162,8 @@ describe('IGNITION_ON telemetry dedupe', () => {
 
   it('does not save duplicate ignition on for the same active trip', async () => {
     const { pool, calls } = makePool((sql) => {
-      if (sql.includes('SELECT id, latitude, longitude')) {
-        return { rows: [{ id: 'existing-ignition-id', latitude: null, longitude: null }] };
+      if (sql.includes('SELECT id FROM gps_telemetry') && sql.includes('recorded_at >= $6::timestamptz')) {
+        return { rows: [{ id: 'existing-ignition-id' }] };
       }
       if (sql.includes('INSERT INTO gps_telemetry')) {
         throw new Error('duplicate IGNITION_ON should not insert');
@@ -869,6 +935,7 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
     const telemetryRows: Array<{ vehicle_id: string; active_trip_id: string; event_type: string; idling_threshold_minutes: number }> = [];
     const sentTelegrams: string[] = [];
     const order: string[] = [];
+    let dedupLock: Promise<void> = Promise.resolve();
 
     const handler = (sql: string, params?: unknown[]) => {
       if (sql.includes('BEGIN')) { order.push('BEGIN'); return { rows: [] }; }
@@ -934,14 +1001,36 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
         const result = handler(sql, params);
         return { rows: result.rows ?? [], rowCount: result.rowCount ?? result.rows?.length ?? 0 };
       },
-      connect: async () => ({
+      connect: async () => {
+        let clientReleaseDedupLock: (() => void) | null = null;
+        return {
         query: async (sql: string, params?: unknown[]) => {
+          if (sql.includes('last_alerted_duration_minutes') && sql.includes('gps_idling_dedup') && sql.includes('FOR UPDATE')) {
+            let releaseCurrentLock: () => void = () => undefined;
+            const currentLock = new Promise<void>((resolve) => {
+              releaseCurrentLock = resolve;
+            });
+            const previousLock = dedupLock;
+            dedupLock = dedupLock.then(() => currentLock);
+            await previousLock;
+            clientReleaseDedupLock = releaseCurrentLock;
+          }
           calls.push({ sql, params });
           const result = handler(sql, params);
+          if ((sql.includes('COMMIT') || sql.includes('ROLLBACK')) && clientReleaseDedupLock) {
+            clientReleaseDedupLock();
+            clientReleaseDedupLock = null;
+          }
           return { rows: result.rows ?? [], rowCount: result.rowCount ?? result.rows?.length ?? 0 };
         },
-        release: () => undefined,
-      }),
+        release: () => {
+          if (clientReleaseDedupLock) {
+            clientReleaseDedupLock();
+            clientReleaseDedupLock = null;
+          }
+        },
+      };
+      },
     };
 
     return {
@@ -960,20 +1049,16 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
 
   // Replace sendTelegram with a recorder for the duration of these tests.
   let sentMessages: string[] = [];
-  let realSendTelegram: typeof import('@car-tracker/tracker').sendTelegram;
 
   beforeEach(() => {
     sentMessages = [];
+    setSendTelegramForTest(async (message: string) => {
+      sentMessages.push(message);
+      return { ok: true };
+    });
   });
 
   it('two concurrent executions at 11min → only one telemetry row + one telegram', async () => {
-    const tracker = await import('@car-tracker/tracker');
-    realSendTelegram = tracker.sendTelegram;
-    tracker.sendTelegram = async (message: string) => {
-      sentMessages.push(message);
-      return { ok: true };
-    };
-
     const { pool, order, telemetryRows, dedupRows } = makeIdlingMockPool();
     setPoolForTest(pool);
 
@@ -999,9 +1084,6 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
       handleIdlingAlertInTransaction(baseParams),
     ]);
 
-    // Restore
-    tracker.sendTelegram = realSendTelegram;
-
     // Exactly one telemetry row, one telegram message.
     assert.equal(telemetryRows.length, 1, 'must insert exactly one IDLING_TOO_LONG telemetry row');
     assert.equal(sentMessages.length, 1, 'must send exactly one Telegram message');
@@ -1022,13 +1104,6 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
   });
 
   it('threshold is used for the message, not raw elapsed minutes', async () => {
-    const tracker = await import('@car-tracker/tracker');
-    realSendTelegram = tracker.sendTelegram;
-    tracker.sendTelegram = async (message: string) => {
-      sentMessages.push(message);
-      return { ok: true };
-    };
-
     const { pool } = makeIdlingMockPool();
     setPoolForTest(pool);
 
@@ -1047,8 +1122,6 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
       thresholdMinutes: 25, // elapsed 26min → threshold 25
       telegramMessage: '⏱ Idling for 25 minutes',
     });
-
-    tracker.sendTelegram = realSendTelegram;
 
     assert.ok(sentMessages[0].includes('Idling for 25 minutes'), 'message must use threshold (25), not 26');
   });
