@@ -139,11 +139,6 @@ export function NewMaintenanceModal({ isOpen, onClose, onSubmit, initialRecord }
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  function handleBackdropClick(e: React.MouseEvent) {
-    // Prevent closing when clicking outside the modal
-    if (false && e.target === e.currentTarget) onClose();
-  }
-
   function handleVehicleSelect(vehicle: Vehicle) {
     setVehicleId(vehicle.id);
     setVehicleSearch(`${vehicle.plateNumber} — ${vehicle.make} ${vehicle.model}`);

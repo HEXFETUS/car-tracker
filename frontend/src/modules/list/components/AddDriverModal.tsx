@@ -73,11 +73,6 @@ export function AddDriverModal({ isOpen, onClose, onSubmit }: AddDriverModalProp
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  function handleBackdropClick(e: React.MouseEvent) {
-    // Prevent closing when clicking outside the modal
-    if (false && e.target === modalRef.current) onClose();
-  }
-
   function validate(): FormErrors {
     const errs: FormErrors = {};
     if (!fullName.trim()) errs.fullName = 'Full name is required';

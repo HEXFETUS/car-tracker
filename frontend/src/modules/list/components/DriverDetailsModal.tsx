@@ -20,8 +20,6 @@ function isExpired(dateStr: string): boolean {
   return new Date(dateStr) < new Date();
 }
 
-const STATUS_OPTIONS = ['active', 'inactive', 'on-leave', 'suspended'];
-
 function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3">

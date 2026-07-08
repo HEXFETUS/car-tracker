@@ -75,11 +75,6 @@ export function AddVehicleModal({ isOpen, onClose, onSubmit }: AddVehicleModalPr
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  function handleBackdropClick(e: React.MouseEvent) {
-    // Prevent closing when clicking outside the modal
-    if (false && e.target === modalRef.current) onClose();
-  }
-
   function validate(): FormErrors {
     const errs: FormErrors = {};
     if (!plateNumber.trim()) errs.plateNumber = 'Plate Number is required';
