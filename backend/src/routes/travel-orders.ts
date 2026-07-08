@@ -25,6 +25,10 @@ interface TravelOrderRow {
   request_driver?: boolean;
   notes?: string | null;
   approved_by?: string | null;
+  requested_by?: string | null;
+  traveler_signature?: string | null;
+  requested_by_signature?: string | null;
+  approved_by_signature?: string | null;
   lat_long_origin?: string | null;
   lat_long_destination?: string | null;
   location_name?: string | null;
@@ -79,6 +83,9 @@ interface TravelOrderResponse {
   destinations: DestinationResponse[];
   vehicleMake?: string | null;
   vehicleModel?: string | null;
+  travelerSignature?: string | null;
+  requestedBySignature?: string | null;
+  approvedBySignature?: string | null;
 }
 
 interface DestinationResponse {
@@ -150,6 +157,9 @@ async function mapRow(row: TravelOrderRow): Promise<TravelOrderResponse> {
     destinations,
     vehicleMake: (row as any).vehicle_make ?? null,
     vehicleModel: (row as any).vehicle_model ?? null,
+    travelerSignature: row.traveler_signature ?? null,
+    requestedBySignature: row.requested_by_signature ?? null,
+    approvedBySignature: row.approved_by_signature ?? null,
   };
 }
 
@@ -619,9 +629,11 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 router.patch('/:id', async (req: Request, res: Response) => {
+  console.log('PATCH BODY:', JSON.stringify(req.body).slice(0, 200));
+  console.log('APPROVE signature:', req.body.approvedBySignature?.slice(0, 50));
+  console.log('REQUEST signature:', req.body.requestedBySignature?.slice(0, 50));
   const fieldMap: Record<string, string> = {
     status: 'status',
-    approvedBy: 'approved_by',
     notes: 'notes',
     originLocation: 'origin_location',
     destinationLocation: 'destination_target',
@@ -635,6 +647,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
     latLongOrigin: 'lat_long_origin',
     latLongDestination: 'lat_long_destination',
     locationName: 'location_name',
+    travelerSignature: 'traveler_signature',
   };
   const allowedFields = Object.keys(fieldMap);
   const updates: string[] = [];
@@ -659,6 +672,35 @@ router.patch('/:id', async (req: Request, res: Response) => {
 
       updates.push(`${fieldMap[field]} = $${idx++}`);
       values.push(req.body[field]);
+    }
+  }
+
+  // When transitioning to FOR_REQUEST, stamp the requesting user and signature
+  if (req.body.status === 'FOR_REQUEST') {
+    const requestingUserId = req.headers['x-user-id'];
+    if (requestingUserId) {
+      updates.push(`requested_by = $${idx++}`);
+      values.push(requestingUserId as string);
+    }
+    if (req.body.requestedBySignature !== undefined) {
+      updates.push(`requested_by_signature = $${idx++}`);
+      values.push(req.body.requestedBySignature as string | null);
+    }
+  }
+
+  // When transitioning to APPROVED, stamp the approving user and signature
+  if (req.body.status === 'APPROVED') {
+    const approvingUserId = req.headers['x-user-id'];
+    if (approvingUserId) {
+      updates.push(`approved_by = $${idx++}`);
+      values.push(approvingUserId as string);
+    }
+    if (req.body.approvedBySignature !== undefined) {
+      updates.push(`approved_by_signature = $${idx++}`);
+      values.push(req.body.approvedBySignature as string | null);
+    } else if (approvingUserId) {
+      updates.push(`approved_by_signature = $${idx++}`);
+      values.push(null as string | null);
     }
   }
 

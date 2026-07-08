@@ -30,6 +30,11 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export function ScheduleModal({ isOpen, onClose, date, orders }: ScheduleModalProps) {
+  // Reset scroll position when modal opens
+  if (isOpen) {
+    window.scrollTo(0, 0);
+  }
+
   // Close on Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -56,10 +61,10 @@ export function ScheduleModal({ isOpen, onClose, date, orders }: ScheduleModalPr
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="relative w-full max-w-lg min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl flex flex-col">
+      <div className="relative w-full max-w-lg max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-none sm:rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100 shrink-0">
           <div className="flex items-center gap-3">
@@ -85,7 +90,7 @@ export function ScheduleModal({ isOpen, onClose, date, orders }: ScheduleModalPr
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
           {orders.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[200px] text-center">
               <Calendar className="size-8 text-zinc-300 mb-2" />
@@ -162,7 +167,7 @@ export function ScheduleModal({ isOpen, onClose, date, orders }: ScheduleModalPr
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-6 py-4 border-t border-zinc-100 bg-white rounded-b-2xl shrink-0">
+        <div className="flex items-center justify-end px-6 py-4 border-t border-zinc-100 shrink-0">
           <button
             type="button"
             onClick={onClose}

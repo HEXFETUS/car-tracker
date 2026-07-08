@@ -91,17 +91,56 @@ export function TravelOrderPrintable({ order }: TravelOrderPrintableProps) {
       </div>
 
       <div className="to-signatures">
-        <div>
-          <div className="sig-line">{order.travelerName || '—'}</div>
-          <div className="sig-label">EMPLOYEE'S NAME & SIGNATURE</div>
+        <div className="signature-block">
+          {order.travelerSignature ? (
+            <img
+              className="signature-image"
+              src={order.travelerSignature}
+              alt="Traveler signature"
+            />
+          ) : null}
+
+          <div className="signature-name">
+            {order.travelerName || '—'}
+          </div>
+
+          <div className="signature-label">
+        EMPLOYEE'S NAME & SIGNATURE
+          </div>
         </div>
-        <div>
-          <div className="sig-line">{order.approvedByName || '—'}</div>
-          <div className="sig-label">IMMEDIATE HEAD</div>
+        <div className="signature-block">
+          {order.approvedBySignature ? (
+            <img
+              className="signature-image"
+              src={order.approvedBySignature}
+              alt="Approved by signature"
+            />
+          ) : null}
+
+          <div className="signature-name">
+            {order.approvedByName || '—'}
+          </div>
+
+          <div className="signature-label">
+            IMMEDIATE HEAD
+          </div>
         </div>
-        <div>
-          <div className="sig-line">{order.travelerName || '—'}</div>
-          <div className="sig-label">NOTED BY HR</div>
+        <div className="signature-block">
+          {order.requestedBySignature ? (
+            <img
+              className="signature-image"
+              src={order.requestedBySignature}
+              alt="Requested by signature"
+            />
+          ) : null}
+
+          <div className="signature-name">
+            {order.requestedBy?.fullName || '—'}
+          </div>
+
+          <div className="signature-label">
+        NOTED BY HR
+          </div>
         </div>
       </div>
 

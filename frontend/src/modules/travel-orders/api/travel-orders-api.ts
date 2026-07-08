@@ -55,6 +55,10 @@ export interface TravelOrderData {
   destinations: DestinationData[];
   vehicleMake?: string | null;
   vehicleModel?: string | null;
+  travelerSignature?: string | null;
+  requestedBySignature?: string | null;
+  approvedBySignature?: string | null;
+  requestedBy?: { fullName?: string | null; position?: string | null } | null;
 }
 
 export async function fetchTravelOrders(): Promise<TravelOrderData[]> {

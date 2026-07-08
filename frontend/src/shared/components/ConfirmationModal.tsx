@@ -59,6 +59,13 @@ export function ConfirmationModal() {
   const config = TYPE_CONFIG[options.type ?? 'info'];
   const Icon = config.icon;
 
+  // Reset scroll position when modal opens
+  useEffect(() => {
+    if (open) {
+      window.scrollTo(0, 0);
+    }
+  }, [open]);
+
   /* Trap focus & handle Escape / Enter */
   useEffect(() => {
     if (!open) return;

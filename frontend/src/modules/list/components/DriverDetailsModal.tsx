@@ -64,6 +64,11 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
   const [editExpiryDate, setEditExpiryDate] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
 
+  // Reset scroll position when modal opens
+  if (isOpen && driver) {
+    window.scrollTo(0, 0);
+  }
+
   if (!isOpen || !driver) return null;
 
   const expired = isExpired(driver.expiryDate);
@@ -147,10 +152,10 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
   if (editing) {
     return (
       <div
-        className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
         onClick={(e) => { if (e.target === e.currentTarget) cancelEditing(); }}
       >
-        <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+        <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
           <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
             <div>
               <h2 className="text-lg font-bold text-zinc-900">Edit Driver</h2>
@@ -160,7 +165,7 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
               <X className="size-5" />
             </button>
           </div>
-          <div className="px-6 py-5 space-y-4">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
             <SectionCard title="Personal Information" icon={<User className="size-4" />}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
@@ -219,10 +224,10 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
   // ── Details View ──
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+      <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
           <div className="flex flex-col gap-1">
@@ -248,7 +253,7 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5 space-y-4">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
           {/* Status */}
           <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-4 py-3">
             <span className="text-sm font-medium text-zinc-700">Status</span>
@@ -320,7 +325,7 @@ export function DriverDetailsModal({ isOpen, onClose, onSuccess, driver }: Drive
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-6 py-4 border-t border-zinc-100">
+        <div className="flex items-center justify-end px-6 py-4 border-t border-zinc-100 shrink-0">
           <button
             type="button"
             onClick={onClose}

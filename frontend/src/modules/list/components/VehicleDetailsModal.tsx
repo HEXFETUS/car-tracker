@@ -56,6 +56,11 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
   const [editVehicleType, setEditVehicleType] = useState('');
   const [editFuelType, setEditFuelType] = useState('');
 
+  // Reset scroll position when modal opens
+  if (isOpen && vehicle) {
+    window.scrollTo(0, 0);
+  }
+
   if (!isOpen || !vehicle) return null;
 
   const isUnderRepair = vehicle.underRepair === true;
@@ -169,10 +174,10 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
   if (showRepairNote) {
     return (
       <div
-        className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm"
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
         onClick={(e) => { if (e.target === e.currentTarget) setShowRepairNote(false); }}
       >
-        <div className="relative w-full max-w-lg animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+        <div className="relative w-full max-w-lg max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
           <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
             <div className="flex items-center gap-3">
               <div className="flex size-10 items-center justify-center rounded-full bg-amber-100">
@@ -191,7 +196,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
               <X className="size-5" />
             </button>
           </div>
-          <div className="px-6 py-5">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
             <label className="block text-sm font-medium text-zinc-700 mb-1.5">
               Reason for Repair <span className="text-red-500">*</span>
             </label>
@@ -205,7 +210,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
             />
             <p className="mt-1.5 text-xs text-zinc-400">This note will be saved and visible in the vehicle details.</p>
           </div>
-          <div className="flex items-center justify-end gap-3 border-t border-zinc-100 px-6 py-4">
+          <div className="flex items-center justify-end gap-3 border-t border-zinc-100 px-6 py-4 shrink-0">
             <button
               type="button"
               onClick={() => setShowRepairNote(false)}
@@ -239,10 +244,10 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
   if (editing) {
     return (
       <div
-        className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
         onClick={(e) => { if (e.target === e.currentTarget) cancelEditing(); }}
       >
-        <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+        <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
           <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
             <div>
               <h2 className="text-lg font-bold text-zinc-900">Edit Vehicle</h2>
@@ -252,7 +257,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
               <X className="size-5" />
             </button>
           </div>
-          <div className="px-6 py-5 space-y-4">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
             <SectionCard title="Basic Information" icon={<Car className="size-4" />}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
@@ -321,10 +326,10 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
   // ── Details View ──
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+      <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
           <div className="flex flex-col gap-1">
@@ -362,7 +367,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5 space-y-4">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
           {/* Repair note banner */}
           {vehicle.notes && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
@@ -410,7 +415,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-100">
+        <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-100 shrink-0">
           <div>
             {isUnderRepair ? (
               <button

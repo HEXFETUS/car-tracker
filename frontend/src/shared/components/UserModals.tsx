@@ -37,6 +37,8 @@ export function PasswordModal({ open, onClose, onPasswordChanged, currentUserId 
       setSubmitting(false);
       return;
     }
+    // Reset scroll position when modal opens
+    window.scrollTo(0, 0);
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
       if (e.key === 'Enter') confirmRef.current?.click();
@@ -250,6 +252,8 @@ export function AccountModal({ open, currentUser, onClose }: AccountModalProps) 
       setPosition(currentUser.department ?? '');
       setPhotoPreview(currentUser.picture ?? null);
     }
+    // Reset scroll position when modal opens
+    window.scrollTo(0, 0);
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
     }

@@ -21,6 +21,13 @@ export function NewTravelOrderModal({
   const modalRef = useRef<HTMLDivElement>(null);
   const canEditDateIssued = user?.userType === 'SUPERADMIN';
 
+  // Reset scroll position when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      window.scrollTo(0, 0);
+    }
+  }, [isOpen]);
+
   // Close on Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -35,12 +42,12 @@ export function NewTravelOrderModal({
   return (
     <div
       ref={modalRef}
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
       onClick={(e) => {
-        if (e.target === modalRef.current) e.stopPropagation();
+        if (e.target === modalRef.current) onClose();
       }}
     >
-      <div className="relative w-full max-w-4xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl flex flex-col">
+      <div className="relative w-full max-w-4xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-none sm:rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100 shrink-0">
           <div>
@@ -58,8 +65,8 @@ export function NewTravelOrderModal({
           </button>
         </div>
 
-        {/* Form */}
-        <div className="flex-1 px-6 py-5 overflow-y-auto">
+        {/* Form - scrollable area */}
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
           <TravelOrderForm
             onSubmit={onSubmit}
             onCancel={onClose}

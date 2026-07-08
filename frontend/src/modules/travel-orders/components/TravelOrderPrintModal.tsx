@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { X, Printer, Download } from 'lucide-react';
 import type { TravelOrderData } from '../api/travel-orders-api';
 import { TravelOrderPrintable } from './TravelOrderPrintable';
@@ -11,6 +11,13 @@ interface TravelOrderPrintModalProps {
 
 export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPrintModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
+
+  // Reset scroll position when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      window.scrollTo(0, 0);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -27,7 +34,7 @@ export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPri
         className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       >
-      <div className="relative w-full max-w-5xl max-h-[90vh] bg-white rounded-2xl shadow-brand-xl flex flex-col">
+      <div className="relative w-full max-w-5xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl flex flex-col">
         {/* ── Header ── */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 shrink-0">
           <h3 className="text-base font-bold text-zinc-800">Print Travel Order</h3>
@@ -41,7 +48,7 @@ export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPri
         </div>
 
         {/* ── Scrollable Body ── */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 print-preview-content">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth print-preview-content">
           <div
             id="travel-order-print"
             ref={printRef}

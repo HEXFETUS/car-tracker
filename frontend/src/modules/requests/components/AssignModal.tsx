@@ -54,6 +54,11 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
   const [selectedVehicleId, setSelectedVehicleId] = useState('');
   const [selectedDriverId, setSelectedDriverId] = useState('');
 
+  // Reset scroll position when modal opens
+  if (isOpen && order) {
+    window.scrollTo(0, 0);
+  }
+
   // Load vehicles and drivers when modal opens
   useEffect(() => {
     if (isOpen) {
@@ -132,10 +137,10 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
       onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
-      <div className="relative w-full max-w-2xl min-h-screen sm:min-h-0 animate-in fade-in zoom-in-95 rounded-none sm:rounded-2xl bg-white shadow-brand-xl flex flex-col">
+      <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-none sm:rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100 shrink-0">
           <div className="flex items-center gap-3">
@@ -153,7 +158,7 @@ export function AssignModal({ isOpen, onClose, order, onSuccess }: AssignModalPr
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
           <div className="space-y-4">
             {/* Request Information */}
             <SectionCard title="Request Information" icon={<ClipboardCheck className="size-4" />}>
