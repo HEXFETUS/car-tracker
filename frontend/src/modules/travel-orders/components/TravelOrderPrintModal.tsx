@@ -1,5 +1,6 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { X, Printer, Download } from 'lucide-react';
+import html2canvas from 'html2canvas';
 import type { TravelOrderData } from '../api/travel-orders-api';
 import { TravelOrderPrintable } from './TravelOrderPrintable';
 
@@ -11,6 +12,7 @@ interface TravelOrderPrintModalProps {
 
 export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPrintModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
+  const [downloading, setDownloading] = useState(false);
 
   // Reset scroll position when modal opens
   useEffect(() => {
@@ -25,8 +27,29 @@ export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPri
     window.print();
   };
 
-  const handleDownload = () => {
-    window.print();
+  const handleDownload = async () => {
+    const element = printRef.current;
+    if (!element) return;
+
+    setDownloading(true);
+    try {
+      const canvas = await html2canvas(element, {
+        scale: 3,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        scrollX: -window.scrollX,
+        scrollY: -window.scrollY,
+      });
+
+      const link = document.createElement('a');
+      link.download = `Travel_Order_${order.toNumber}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error('Failed to download travel order image:', err);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -78,10 +101,11 @@ export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPri
           <button
             type="button"
             onClick={handleDownload}
-            className="rounded-lg ring-1 ring-brand-sage px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition-colors inline-flex items-center gap-2"
+            disabled={downloading}
+            className="rounded-lg ring-1 ring-brand-sage px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition-colors inline-flex items-center gap-2 disabled:opacity-60"
           >
             <Download className="size-4" />
-            Download
+            {downloading ? 'Downloading...' : 'Download'}
           </button>
         </div>
       </div>
