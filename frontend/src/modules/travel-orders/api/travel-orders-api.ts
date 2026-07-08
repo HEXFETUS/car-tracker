@@ -154,6 +154,7 @@ export async function createTravelOrder(
     travelerName?: string;
     requestVehicle?: boolean;
     requestDriver?: boolean;
+    travelerSignature?: string | null;
     latLongOrigin?: string | null;
     latLongDestination?: string | null;
     destinations?: Array<{
@@ -191,6 +192,9 @@ export async function updateTravelOrder(
     requestDriver: boolean;
     status: string;
     approvedBy: string;
+    travelerSignature: string | null;
+    requestedBySignature: string | null;
+    approvedBySignature: string | null;
   }>,
 ): Promise<TravelOrderData> {
   const res = await apiFetch(`${API_BASE}/api/travel-orders/${id}`, {

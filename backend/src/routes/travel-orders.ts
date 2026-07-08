@@ -509,6 +509,7 @@ router.post('/', async (req: Request, res: Response) => {
     toNumber,
     latLongOrigin, latLongDestination,
     destinations,
+    travelerSignature,
   } = req.body;
 
   if (!destinationLocation && (!destinations || destinations.length === 0)) {
@@ -573,8 +574,9 @@ router.post('/', async (req: Request, res: Response) => {
           (to_number, vehicle_id, driver_id, origin_location, destination_target,
            scheduled_departure, scheduled_arrival, purpose_of_travel, notes,
            department, traveler_name, request_vehicle, request_driver,
-           lat_long_origin, lat_long_destination, location_name)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+           lat_long_origin, lat_long_destination, location_name,
+           traveler_signature)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         RETURNING *
       `, [
         toNumber,
@@ -585,6 +587,7 @@ router.post('/', async (req: Request, res: Response) => {
         requestVehicle ?? false, requestDriver ?? false,
         finalLatLongOrigin, finalLatLong,
         finalDestination,
+        travelerSignature || null,
       ]);
 
       createdRow = result.rows[0];

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, Printer } from 'lucide-react';
+import { X, Pencil, Trash2, Loader2, MapPin, Calendar, User, Truck, UserCircle, FileText, CheckCircle, Send, Printer, Pen } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { formatDateManila, formatTimeManila, formatDateTimeManila } from '@/shared/lib/date-utils';
 import { useNotification } from '@/shared/context/NotificationContext';
@@ -13,6 +13,7 @@ import {
   type TravelOrderData,
 } from '../api/travel-orders-api';
 import { TravelOrderPrintModal } from './TravelOrderPrintModal';
+import { SignatureModal } from '@/shared/components/SignatureModal';
 
 interface TravelOrderDetailsModalProps {
   isOpen: boolean;
@@ -89,6 +90,12 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
+  const [signatureModalState, setSignatureModalState] = useState<{
+    isOpen: boolean;
+    mode: 'request' | 'approve';
+  }>({ isOpen: false, mode: 'request' });
+  const [requestedBySignature, setRequestedBySignature] = useState<string | null>(null);
+  const [approvedBySignature, setApprovedBySignature] = useState<string | null>(null);
 
   // Reset scroll position when modal opens
   useEffect(() => {
@@ -216,8 +223,13 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     }
   }
 
-  /** Called when the user clicks "Submit For Request" button */
-  async function handleSubmitForRequest() {
+  /** Open signature modal for "For Request" action */
+  function handleForRequestClick() {
+    setSignatureModalState({ isOpen: true, mode: 'request' });
+  }
+
+  /** Called after signature is confirmed for "For Request" */
+  async function handleSubmitForRequest(signatureDataUrl: string | null) {
     if (!order) return;
 
     const confirmed = await confirm({
@@ -229,7 +241,10 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
 
     setSaving(true);
     try {
-      await updateTravelOrder(order.id, { status: 'FOR_REQUEST' });
+      await updateTravelOrder(order.id, {
+        status: 'FOR_REQUEST',
+        requestedBySignature: signatureDataUrl || null,
+      });
       toast('Travel order submitted for request!', 'success');
       onSuccess();
       onClose();
@@ -306,7 +321,13 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     }
   }
 
-  async function handleApprove() {
+  /** Open signature modal for "Approve" action */
+  function handleApproveClick() {
+    setSignatureModalState({ isOpen: true, mode: 'approve' });
+  }
+
+  /** Called after signature is confirmed for "Approve" */
+  async function handleApprove(signatureDataUrl: string | null) {
     if (!order) return;
     const confirmed = await confirm({
       title: 'Approve Travel Order?',
@@ -316,7 +337,11 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     if (!confirmed) return;
     setSaving(true);
     try {
-      await updateTravelOrder(order.id, { status: 'APPROVED', approvedBy: user!.id });
+      await updateTravelOrder(order.id, {
+        status: 'APPROVED',
+        approvedBy: user!.id,
+        approvedBySignature: signatureDataUrl || null,
+      });
       toast('Travel order approved!', 'success');
       onSuccess();
       onClose();
@@ -812,19 +837,19 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
               </>
             ) : order.status === 'PENDING' ? (
               <>
-                <button
-                  type="button"
-                  onClick={handleSubmitForRequest}
-                  disabled={saving}
-                  className="rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
-                >
-                  {saving ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Send className="size-4" />
-                  )}
-                  {saving ? 'Submitting…' : 'For Request'}
-                </button>
+              <button
+                type="button"
+                onClick={handleForRequestClick}
+                disabled={saving}
+                className="rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
+              >
+                {saving ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Send className="size-4" />
+                )}
+                {saving ? 'Submitting…' : 'For Request'}
+              </button>
               </>
             ) : order.status === 'FOR_APPROVAL' ? (
               <>
@@ -838,7 +863,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                 </button>
                 <button
                   type="button"
-                  onClick={handleApprove}
+                  onClick={handleApproveClick}
                   disabled={saving}
                   className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-60 inline-flex items-center gap-2"
                 >
@@ -907,6 +932,22 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
           order={order}
         />
       )}
+
+      {/* Signature Modal for For Request / Approve */}
+      <SignatureModal
+        isOpen={signatureModalState.isOpen}
+        onClose={() => setSignatureModalState({ ...signatureModalState, isOpen: false })}
+        onConfirm={(dataUrl) => {
+          setSignatureModalState({ ...signatureModalState, isOpen: false });
+          if (signatureModalState.mode === 'request') {
+            handleSubmitForRequest(dataUrl);
+          } else {
+            handleApprove(dataUrl);
+          }
+        }}
+        currentValue={null}
+        title={signatureModalState.mode === 'request' ? 'Sign to Submit for Request' : 'Sign to Approve'}
+      />
     </div>
   );
 }

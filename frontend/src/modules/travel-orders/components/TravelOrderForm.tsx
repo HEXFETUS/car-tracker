@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Upload, MapPin, User, Truck, FileText, Calendar, ChevronRight, ChevronLeft, Plus, Trash2, GripVertical } from 'lucide-react';
+import { X, Upload, MapPin, User, Truck, FileText, Calendar, ChevronRight, ChevronLeft, Plus, Trash2, GripVertical, Pencil } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { fetchNextToNumber } from '../api/travel-orders-api';
 import { PlaceSearchInput } from './PlaceSearchInput';
 import { PinpointMapModal } from './PinpointMapModal';
+import { SignatureModal } from '@/shared/components/SignatureModal';
 import { useNotification } from '@/shared/context/NotificationContext';
 import type { TravelOrder, TravelOrderDestination } from '../types';
 import { DEFAULT_ORIGIN_ADDRESS, DEFAULT_ORIGIN_LATLONG } from '../constants';
@@ -135,11 +136,13 @@ export function TravelOrderForm({
   const [vehicleName, setVehicleName] = useState('');
   const [driverName, setDriverName] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [travelerSignature, setTravelerSignature] = useState<string | null>(null);
   const [imageData, setImageData] = useState<string | null>(null);
   const [imageName, setImageName] = useState('');
   const [errors, setErrors] = useState<FormErrors>({});
   const [isDragging, setIsDragging] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
+  const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
 
   // Lat/Lng state
   const [latLongOrigin, setLatLongOrigin] = useState<string | null>(null);
@@ -175,6 +178,7 @@ export function TravelOrderForm({
     setRequestVehicle(false);
     setRequestDriver(false);
     setRemarks('');
+    setTravelerSignature(null);
     setImageData(null);
     setImageName('');
     setErrors({});
@@ -278,6 +282,7 @@ export function TravelOrderForm({
       requestVehicle,
       requestDriver,
       remarks: remarks.trim() || undefined,
+      travelerSignature,
       imageAttachment: imageData,
       status: 'pending',
       latLongOrigin: resolvedLatLongOrigin,
@@ -823,6 +828,59 @@ export function TravelOrderForm({
           {currentStep === 3 && (
             <FormSection title="Additional Information" icon={<FileText className="size-4" />} step>
               <div className="space-y-4">
+                {/* Traveler Signature */}
+                <div className="rounded-lg border-2 border-amber-200 bg-amber-50/50 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="flex items-center gap-1.5 text-sm font-bold text-zinc-800">
+                      <Pencil className="size-4 text-amber-600" />
+                      Traveler Signature
+                      <span className="text-red-500">*</span>
+                    </label>
+                    <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                      Required
+                    </span>
+                  </div>
+                  {travelerSignature ? (
+                    <div className="relative overflow-hidden rounded-lg ring-2 ring-amber-300">
+                      <img
+                        src={travelerSignature}
+                        alt="Traveler signature"
+                        className="h-28 w-full object-contain bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setIsSignatureModalOpen(true)}
+                        className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 hover:opacity-100 transition-opacity"
+                      >
+                        <span className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-zinc-700 shadow-sm">
+                          Re-sign
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTravelerSignature(null)}
+                        className="absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-red-500 hover:bg-white hover:text-red-600 shadow-sm transition-colors"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsSignatureModalOpen(true)}
+                      className="flex w-full items-center justify-center gap-3 rounded-lg border-2 border-dashed border-amber-300 bg-white px-4 py-10 text-sm text-zinc-500 hover:border-amber-500 hover:bg-amber-50 transition-all group"
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="flex size-12 items-center justify-center rounded-full bg-amber-100 group-hover:bg-amber-200 transition-colors">
+                          <Pencil className="size-6 text-amber-600" />
+                        </div>
+                        <span className="font-semibold text-zinc-700">Tap to sign</span>
+                        <span className="text-xs text-zinc-400">Use your finger or mouse to draw your signature</span>
+                      </div>
+                    </button>
+                  )}
+                </div>
+
                 <FormField
                   label="Remarks"
                   icon={<FileText className="size-4" />}
@@ -964,6 +1022,14 @@ export function TravelOrderForm({
             ? 'Origin'
             : `Destination ${(mapState.destIndex ?? 0) + 1}`
         }
+      />
+
+      {/* Signature Modal */}
+      <SignatureModal
+        isOpen={isSignatureModalOpen}
+        onClose={() => setIsSignatureModalOpen(false)}
+        onConfirm={(dataUrl) => setTravelerSignature(dataUrl)}
+        currentValue={travelerSignature}
       />
     </>
   );

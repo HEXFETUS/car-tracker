@@ -21,6 +21,7 @@ export interface TravelOrder {
   requestVehicle: boolean;
   requestDriver: boolean;
   remarks?: string;
+  travelerSignature?: string | null;
   imageAttachment: string | null;
   status: 'pending' | 'for_approval' | 'approved' | 'rejected';
   /** Lat/Lng for origin (lat,lng format) */

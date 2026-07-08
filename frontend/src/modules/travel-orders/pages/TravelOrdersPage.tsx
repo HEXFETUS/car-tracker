@@ -114,6 +114,7 @@ export function TravelOrdersPage() {
         travelerName: order.travelerName,
         requestVehicle: order.requestVehicle,
         requestDriver: order.requestDriver,
+        travelerSignature: order.travelerSignature ?? null,
         latLongOrigin: order.latLongOrigin,
         latLongDestination: order.latLongDestination,
         destinations,
