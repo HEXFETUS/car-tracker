@@ -1,11 +1,25 @@
-# Task Progress: Redesign No TO Trip Lifecycle
+# Car Tracker - GPS Telemetry Fix Implementation
 
-- [x] Analyze existing codebase architecture
-- [x] Create migration 066 to add lifecycle columns to gps_no_to_logs
-- [x] Build `buildNoToLifecycleTrips()` in noToLifecycleService.ts - mirrors TO lifecycle with dynamic destination detection
-- [x] Build `upsertNoToTripLifecycle()` - full lifecycle upsert with farthest-distance arrival detection
-- [x] Rewrite `syncNoToLogsFromTelemetry()` to use lifecycle state machine instead of per-active-trip-id grouping
-- [x] Update `/api/gps-logs/no-to/:id/details` route to return proper Origin/Arrival/End
-- [x] Update scheduler.ts import to use new noToLifecycleService.ts
-- [x] Update routes/gps-logs.ts import to use new noToLifecycleService.ts
-- [ ] Verify implementation with acceptance test scenario
+## Root Causes Identified
+
+1. **Three independent ignition detection paths** - Scheduler.ts has TWO paths (DB-backed + emittedAlerts) and tracker.js has its own detection. All can fire in the same cycle.
+2. **active_trip_id-based dedup is broken** - Each path generates different tripId formats (`trip-${vid}-${now}` vs `randomUUID()`), so dedup by `vehicle_id + active_trip_id + event_type` NEVER catches duplicates.
+3. **No ignition debounce** - Any OFF→ON→OFF glitch is saved as real events.
+4. **No coordination between scheduler paths** - DB-backed detection (line 1525) and emittedAlerts processing (line 1759) both check the same vehicle with no cross-check.
+5. **Telegram sent even when telemetry insert is skipped** - Not all paths check `savedTelemetry.inserted` before sending Telegram.
+
+## Implementation Plan
+
+- [x] Phase 1: Trace complete flow (done)
+- [x] Phase 2-3: Investigate root causes (done)
+- [ ] Phase 4: Create VehicleStateMachine (gpsVehicleStateService.ts)
+- [ ] Phase 5: Create ignition debounce mechanism
+- [ ] Phase 6: Fix telemetry deduplication to use time-window (not tripId)
+- [ ] Phase 7: Fix trip creation - reuse existing active trip
+- [ ] Phase 8: Fix Telegram notifications - only send after confirmed insert
+- [ ] Phase 9: Fix scheduler.ts to use state machine, eliminate dual paths
+- [ ] Phase 10: Add comprehensive logging
+- [ ] Phase 11: Configuration (move thresholds to env)
+- [ ] Phase 12: Create tests
+- [ ] Phase 13: Verify all tests pass
+- [ ] Phase 14: Migration scripts if needed

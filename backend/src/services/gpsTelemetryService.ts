@@ -5,6 +5,7 @@
 // fleet sync cycle.
 
 import { getPool } from '../db/db.js';
+import { IGNITION_DUPLICATE_WINDOW_SECONDS } from './gpsVehicleStateService.js';
 
 export interface TelemetryInsert {
   vehicleId: string;
@@ -182,6 +183,8 @@ export async function getLatestTelemetry(vehicleId: string): Promise<{
 
 /**
  * Check whether an ignition boundary event already exists for a trip cycle.
+ * Deprecated: Use hasRecentIgnitionEvent from gpsVehicleStateService instead.
+ * This function is kept for backward compatibility but will be removed.
  */
 export async function telemetryTripEventExists(
   vehicleId: string,
@@ -189,14 +192,16 @@ export async function telemetryTripEventExists(
   eventType: string,
 ): Promise<boolean> {
   const pool = getPool();
+  // Use time-window dedup instead of tripId-based dedup
+  const windowSeconds = IGNITION_DUPLICATE_WINDOW_SECONDS;
   const result = await pool.query(
     `SELECT 1
        FROM gps_telemetry
       WHERE vehicle_id = $1
-        AND active_trip_id = $2
-        AND event_type = $3
+        AND event_type = $2
+        AND recorded_at >= now() - INTERVAL '1 second' * $3
       LIMIT 1`,
-    [vehicleId, activeTripId, eventType],
+    [vehicleId, eventType, windowSeconds],
   );
   return result.rows.length > 0;
 }
@@ -310,21 +315,47 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
       }
     }
 
-    const duplicateResult = eventType === 'IGNITION_ON'
-      ? await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
-        `SELECT id, latitude, longitude
-           FROM gps_telemetry
-          WHERE vehicle_id = $1
-            AND active_trip_id = $2
-            AND CASE event_type
-              WHEN 'IGNITION ON' THEN 'IGNITION_ON'
-              WHEN 'IGNITION ON ALERT' THEN 'IGNITION_ON'
-              ELSE event_type
-            END = 'IGNITION_ON'
-          LIMIT 1`,
-        [data.vehicleId, data.activeTripId ?? null],
-      )
-      : await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
+    // ── Dedup: Use time-window for ignition events ────────────
+    // DO NOT use active_trip_id for dedup because different paths
+    // generate different tripIds. Use vehicle_id + event_type + time window.
+    if (eventType === 'IGNITION_ON' || eventType === 'IGNITION_OFF') {
+      // For IGNITION_OFF, search for IGNITION_OFF variants; for IGNITION_ON, search for ON variants
+      const isOn = eventType === 'IGNITION_ON';
+      const typeVariants = isOn
+        ? ['IGNITION_ON', 'IGNITION ON', 'IGNITION ON ALERT']
+        : ['IGNITION_OFF', 'IGNITION OFF', 'IGNITION OFF ALERT'];
+      const dupResult = await pool.query<{ id: string }>(
+        `SELECT id FROM gps_telemetry
+         WHERE vehicle_id = $1
+           AND (event_type = $2 OR event_type = $3 OR event_type = $4)
+           AND ignition = $5
+           AND recorded_at >= $6::timestamptz - INTERVAL '1 second' * $7
+         LIMIT 1`,
+        [
+          data.vehicleId,
+          typeVariants[0], typeVariants[1], typeVariants[2],
+          data.ignition,
+          data.recordedAt,
+          IGNITION_DUPLICATE_WINDOW_SECONDS,
+        ],
+      );
+      if (dupResult.rows[0]?.id) {
+        if (data.telegramMessage) {
+          await pool.query(
+            `UPDATE gps_telemetry
+                SET telegram_message = COALESCE(telegram_message, $2)
+              WHERE id = $1`,
+            [dupResult.rows[0].id, data.telegramMessage],
+          );
+        }
+        console.log(
+          `[telemetry] INSERT ${eventType} skipped by time-window dedup vehicle=${data.vehicleId} window=${IGNITION_DUPLICATE_WINDOW_SECONDS}s`,
+        );
+        return { inserted: false, updated: false, id: dupResult.rows[0].id };
+      }
+    } else {
+      // For non-ignition events, use existing minute+doubled-location dedup
+      const nonIgnitionDuplicateResult = await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
         `SELECT id
               , latitude
               , longitude
@@ -354,21 +385,22 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
           normalizedLocationName,
         ],
       );
-    const duplicateRow = duplicateResult.rows[0];
-    if (duplicateRow?.id) {
-      if (eventType !== 'LOCATION_UPDATE') {
-        if (data.telegramMessage) {
-          await pool.query(
-            `UPDATE gps_telemetry
-                SET telegram_message = COALESCE(telegram_message, $2)
-              WHERE id = $1`,
-            [duplicateRow.id, data.telegramMessage],
-          );
+      const nonIgnitionDuplicateRow = nonIgnitionDuplicateResult.rows[0];
+      if (nonIgnitionDuplicateRow?.id) {
+        if (eventType !== 'LOCATION_UPDATE') {
+          if (data.telegramMessage) {
+            await pool.query(
+              `UPDATE gps_telemetry
+                  SET telegram_message = COALESCE(telegram_message, $2)
+                WHERE id = $1`,
+              [nonIgnitionDuplicateRow.id, data.telegramMessage],
+            );
+          }
+            console.log(
+              `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
+            );
+            return { inserted: false, updated: false, id: nonIgnitionDuplicateRow.id };
         }
-          console.log(
-            `[telemetry] INSERT gps_telemetry skipped by dedupe key vehicle=${data.vehicleId} event=${eventType} minute=${recordedAtMinute} location=${JSON.stringify(normalizedLocationName)}`,
-          );
-          return { inserted: false, updated: false, id: duplicateRow.id };
       }
     }
 

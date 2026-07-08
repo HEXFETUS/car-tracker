@@ -55,7 +55,6 @@ export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPri
   return (
       <div
         className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       >
       <div className="relative w-full max-w-5xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl flex flex-col">
         {/* ── Header ── */}
