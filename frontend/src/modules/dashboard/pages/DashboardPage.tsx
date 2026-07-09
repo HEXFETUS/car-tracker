@@ -247,30 +247,6 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ── Alert Badge ───────────────────────────────────────────────
-function AlertBadge({ type }: { type: string }) {
-  const colorMap: Record<string, string> = {
-    IGNITION_ON: 'bg-blue-100 text-blue-700',
-    IGNITION_OFF: 'bg-orange-100 text-orange-700',
-    IDLING: 'bg-red-100 text-red-700',
-    NO_APPROVED_TRAVEL_ORDER: 'bg-purple-100 text-purple-700',
-  };
-  const severity: Record<string, string> = {
-    IGNITION_ON: 'bg-blue-500',
-    IGNITION_OFF: 'bg-orange-500',
-    IDLING: 'bg-red-500',
-    NO_APPROVED_TRAVEL_ORDER: 'bg-purple-500',
-  };
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={cn('inline-block size-2 rounded-full', severity[type] || 'bg-zinc-400')} />
-      <span className={cn('inline-flex rounded-full px-2 py-0.5 text-xs font-bold', colorMap[type] || 'bg-zinc-100 text-zinc-700')}>
-        {type.replace(/_/g, ' ')}
-      </span>
-    </span>
-  );
-}
-
 // ── Live Fleet Card ───────────────────────────────────────────
 function LiveFleetCard({ moving, idling }: { moving: number; idling: number }) {
   return (
@@ -702,57 +678,6 @@ export function DashboardPage() {
 
       {/* ── Operations Tables ────────────────────────── */}
       <div className="grid gap-6">
-        <DashboardCard title="Active Trips" icon={Navigation}>
-          {d.tables.activeTrips.length > 0 ? (
-            <div className={tableContainerClass}>
-              <div className="overflow-x-auto">
-                <table className={tableClass}>
-                  <thead>
-                    <tr className={tableHeaderClass}>
-                      <th className={tableHeaderCellClass}>TO #</th>
-                      <th className={tableHeaderCellClass}>Vehicle</th>
-                      <th className={tableHeaderCellClass}>Driver</th>
-                      <th className={tableHeaderCellClass}>Route</th>
-                      <th className={tableHeaderCellClass}>Departure</th>
-                      <th className={tableHeaderCellClass}>Arrival</th>
-                      <th className={tableHeaderCellClass}>Progress</th>
-                      <th className={tableHeaderCellClass}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {d.tables.activeTrips.map((trip) => {
-                      const start = trip.scheduled_departure ? new Date(trip.scheduled_departure).getTime() : 0;
-                      const end = trip.scheduled_arrival ? new Date(trip.scheduled_arrival).getTime() : 0;
-                      const now = Date.now();
-                      const progress = start && end ? Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100)) : 0;
-                      return (
-                        <tr key={trip.id} className={tableRowClass}>
-                          <td className={tableCellClass}>{trip.to_number}</td>
-                          <td className={tableCellClass}>{trip.plate_number}</td>
-                          <td className={tableCellClass}>{trip.driver_name}</td>
-                          <td className={tableCellClass}>{trip.origin_location} → {trip.destination_target}</td>
-                          <td className={tableCellClass}>{formatDateTimeManila(trip.scheduled_departure)}</td>
-                          <td className={tableCellClass}>{formatDateTimeManila(trip.scheduled_arrival)}</td>
-                          <td className={tableCellClass}>
-                            <div className="flex items-center gap-2">
-                              <div className="h-1.5 flex-1 rounded-full bg-brand-cream">
-                                <div className="h-1.5 rounded-full bg-brand-teal transition-all" style={{ width: `${progress}%` }} />
-                              </div>
-                              <span className="text-xs text-zinc-500 w-10 text-right">{Math.round(progress)}%</span>
-                            </div>
-                          </td>
-                          <td className={tableCellClass}><StatusBadge status={trip.status} /></td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <EmptyState message="No active trips at the moment" />
-          )}
-        </DashboardCard>
 
         <DashboardCard title="Live Vehicle Monitoring" icon={Radio}>
           {d.tables.liveMonitoring.length > 0 ? (
@@ -793,38 +718,6 @@ export function DashboardPage() {
           )}
         </DashboardCard>
 
-        <DashboardCard title="GPS Alert Center" icon={Bell}>
-          {d.tables.recentAlerts.length > 0 ? (
-            <div className={tableContainerClass}>
-              <div className="overflow-x-auto">
-                <table className={tableClass}>
-                  <thead>
-                    <tr className={tableHeaderClass}>
-                      <th className={tableHeaderCellClass}>Time</th>
-                      <th className={tableHeaderCellClass}>Vehicle</th>
-                      <th className={tableHeaderCellClass}>Alert Type</th>
-                      <th className={tableHeaderCellClass}>Message</th>
-                      <th className={tableHeaderCellClass}>Location</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {d.tables.recentAlerts.map((alert) => (
-                      <tr key={alert.id} className={tableRowClass}>
-                        <td className={tableCellClass}>{formatDateTimeManila(alert.time)}</td>
-                        <td className={tableCellClass}>{alert.vehicle}</td>
-                        <td className={tableCellClass}><AlertBadge type={alert.alert_type} /></td>
-                        <td className={tableCellClass}>{alert.alert_message}</td>
-                        <td className={tableCellClass}>{alert.location}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <EmptyState message="No recent GPS alerts" />
-          )}
-        </DashboardCard>
 
         <DashboardCard title="Recently Completed Trips" icon={CheckCircle2}>
           {d.tables.recentlyCompleted.length > 0 ? (
@@ -938,16 +831,6 @@ export function DashboardPage() {
           )}
         </DashboardCard>
       </div>
-
-      {/* ── GPS Health ─────────────────────────────── */}
-      <DashboardCard title="GPS Telemetry Health" icon={Radio}>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricRow label="Telemetry Received" value={<span className="font-bold text-brand-teal">{k.gps.trips_recorded_today}</span>} className="bg-brand-pastel/20" />
-          <MetricRow label="Total Distance Today" value={<span className="font-bold text-brand-sage">{fmtKm(k.gps.total_distance_today)}</span>} className="bg-brand-moss/20" />
-          <MetricRow label="Avg Distance/Trip" value={<span className="font-bold text-brand-teal">{fmtKm(k.gps.avg_distance_per_trip)}</span>} className="bg-brand-cream" />
-          <MetricRow label="Max Speed Today" value={<span className="font-bold text-red-600">{fmtSpeed(k.gps.max_speed_today)}</span>} className="bg-red-50/60" />
-        </div>
-      </DashboardCard>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <DashboardCard title="Travel Order Matching Accuracy" icon={ShieldCheck}>
