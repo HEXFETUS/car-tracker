@@ -240,6 +240,9 @@ function formatLocationTime(location, eventTime) {
 
 export function formatVehicleHeader(name, toNumber = null) {
   const plate = String(name || '').trim();
+  if (plate.includes('(') && plate.includes(')')) {
+    return plate;
+  }
   if (toNumber && String(toNumber).trim()) {
     return `${plate} (${String(toNumber).trim()})`;
   }
@@ -581,7 +584,7 @@ export function getVehicleDisplayName(vehicle) {
   if (vehicle.to_display_name) return vehicle.to_display_name;
   const plate = extractPlateNumber(vehicle);
   const toNumber = getTravelOrderNumber(vehicle);
-  return toNumber ? `${plate} (TO-${toNumber})` : `${plate} ()`;
+  return toNumber ? `${plate} (TO-${toNumber})` : `${plate}`;
 }
 
 /**
@@ -1095,11 +1098,15 @@ export async function syncFleetAndAlert(options = {}) {
 
     vehicleStatuses.push({
       id: vid,
+      plateNumber,
       name,
       model: getVehicleModel(vehicle),
       coordinates: getVehicleCoordinates(vehicle),
+      latitude: coordinates_?.latitude ?? null,
+      longitude: coordinates_?.longitude ?? null,
       location,
       time: formattedEventTime,
+      eventTime,
       speed,
       speeding,
       ignition,
@@ -1113,6 +1120,8 @@ export async function syncFleetAndAlert(options = {}) {
       idling_too_long: idle.idlingTooLong,
       idle_limit_minutes: IDLE_LIMIT_MINUTES,
       idle_alert_count: idle.idleAlertCount,
+      driver,
+      toNumber,
     });
 
     // Build trip log record for this vehicle

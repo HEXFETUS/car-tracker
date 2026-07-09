@@ -413,26 +413,26 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
      ON CONFLICT DO NOTHING
      RETURNING id`,
-       [
-         data.vehicleId,
-         data.plateNumber,
-         eventType,
-         data.latitude,
-         data.longitude,
-         data.speedKmh,
-         data.fuelLiters,
-         data.ignition,
-         data.locationName,
-         inheritedDriverId,
-         inheritedTravelOrderId,
-         data.recordedAt,
-         data.activeTripId ?? null,
-         data.idlingThresholdMinutes ?? null,
-         data.telegramMessage ?? null,
-         data.telegramStatus ?? null,
-         data.telegramError ?? null,
-         data.telegramAttemptedAt ?? null,
-       ],
+        [
+          data.vehicleId,
+          data.plateNumber,
+          eventType,
+          data.latitude,
+          data.longitude,
+          data.speedKmh,
+          data.fuelLiters,
+          data.ignition,
+          data.locationName,
+          inheritedDriverId,
+          inheritedTravelOrderId,
+          data.recordedAt,
+          data.activeTripId ?? null,
+          data.idlingThresholdMinutes ?? null,
+          data.telegramMessage ?? null,
+          data.telegramStatus ?? null,
+          data.telegramError ?? null,
+          data.telegramAttemptedAt ?? null,
+        ],
     );
     const id = result.rows[0]?.id ?? null;
     if (id) {
@@ -529,6 +529,25 @@ export async function updateTelemetryTelegramDelivery(
       WHERE id = $1`,
     [id, status, error, attemptedAt],
   );
+}
+
+
+/**
+ * Get the last idling threshold minutes for a vehicle + active trip.
+ * Returns 0 if no idling alert has been saved for this trip.
+ */
+export async function getLastIdlingThreshold(vehicleId: string, activeTripId: string): Promise<number> {
+  const pool = getPool();
+  const result = await pool.query<{ threshold: number | null }>(
+    `SELECT COALESCE(MAX(idling_threshold_minutes), 0) AS threshold
+       FROM gps_telemetry
+      WHERE vehicle_id = $1
+        AND active_trip_id = $2
+        AND event_type = 'IDLING_TOO_LONG'
+        AND idling_threshold_minutes IS NOT NULL`,
+    [vehicleId, activeTripId],
+  );
+  return result.rows[0]?.threshold ?? 0;
 }
 
 export interface FetchTelemetryParams {

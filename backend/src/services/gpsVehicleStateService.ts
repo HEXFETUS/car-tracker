@@ -108,6 +108,9 @@ export async function ensureVehicleStateSchema(): Promise<void> {
       version INTEGER NOT NULL DEFAULT 1
     );
   `);
+  await pool.query(`
+    ALTER TABLE gps_vehicle_state ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+  `);
   schemaReady = true;
 }
 
@@ -631,4 +634,54 @@ export async function resetVehicleState(vehicleId: string): Promise<void> {
     [vehicleId],
   );
   console.log(`[vehicle-state] Reset state for vehicle=${vehicleId}`);
+}
+
+export async function upsertVehicleState(params: {
+  vehicleId: string;
+  ignitionState: 'ON' | 'OFF';
+  lastConfirmedIgnition: boolean;
+  lastConfirmedIgnitionAt: string | null;
+  activeTripId: string | null;
+  lastPacketTime: string;
+  lastSpeed: number;
+  lastLatitude: number | null;
+  lastLongitude: number | null;
+  lastLocationName: string | null;
+  lastEventType: string;
+}): Promise<void> {
+  await ensureVehicleStateSchema();
+  const pool = getPool();
+  await pool.query(
+    `INSERT INTO gps_vehicle_state
+       (vehicle_id, ignition_state, last_confirmed_ignition, last_confirmed_ignition_at,
+        active_trip_id, last_packet_time, last_speed, last_latitude, last_longitude,
+        last_location_name, last_event_type, updated_at, version)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), 1)
+     ON CONFLICT (vehicle_id) DO UPDATE SET
+       ignition_state = EXCLUDED.ignition_state,
+       last_confirmed_ignition = EXCLUDED.last_confirmed_ignition,
+       last_confirmed_ignition_at = EXCLUDED.last_confirmed_ignition_at,
+       active_trip_id = EXCLUDED.active_trip_id,
+       last_packet_time = EXCLUDED.last_packet_time,
+       last_speed = EXCLUDED.last_speed,
+       last_latitude = EXCLUDED.last_latitude,
+       last_longitude = EXCLUDED.last_longitude,
+       last_location_name = EXCLUDED.last_location_name,
+       last_event_type = EXCLUDED.last_event_type,
+       updated_at = now(),
+       version = gps_vehicle_state.version + 1`,
+    [
+      params.vehicleId,
+      params.ignitionState,
+      params.lastConfirmedIgnition,
+      params.lastConfirmedIgnitionAt,
+      params.activeTripId,
+      params.lastPacketTime,
+      params.lastSpeed,
+      params.lastLatitude,
+      params.lastLongitude,
+      params.lastLocationName,
+      params.lastEventType,
+    ],
+  );
 }
