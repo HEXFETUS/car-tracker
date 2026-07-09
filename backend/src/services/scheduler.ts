@@ -24,6 +24,8 @@ import {
   ensureVehicleStateSchema,
   upsertVehicleState,
 } from './gpsVehicleStateService.js';
+import { createGpsAlert } from './gpsAlertService.js';
+import { createNotificationForRoles } from './notificationService.js';
 
 type SendTelegramFn = typeof trackerSendTelegram;
 let sendTelegram: SendTelegramFn = trackerSendTelegram;
@@ -892,6 +894,22 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               telemetrySkipped += 1;
               console.log(`[scheduler] IDLING SKIPPED vehicle=${vehicleId} reason=duplicate`);
             }
+
+            // Create notification for all roles when idling alert is saved
+            if (saveResult.saved && saveResult.telemetryId) {
+              try {
+                await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'], {
+                  type: 'gps_alert',
+                  title: 'Idling Alert',
+                  message: `Vehicle ${plateNumber} has been idling for ${thresholdMinutes} minutes.`,
+                  targetUrl: '/gps-logs',
+                  targetTab: 'alerts',
+                  entityId: saveResult.telemetryId,
+                });
+              } catch (notifError) {
+                console.error(`[scheduler] Failed to create idling notification vehicle=${vehicleId}:`, (notifError as Error).message);
+              }
+            }
             continue;
           }
 
@@ -952,6 +970,22 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               telemetrySkipped += 1;
               console.log(`[scheduler] SPEEDING SKIPPED vehicle=${vehicleId}`);
             }
+
+            // Create notification for all roles when speeding alert is saved
+            if (saveResult.saved && saveResult.telemetryId) {
+              try {
+                await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'], {
+                  type: 'gps_alert',
+                  title: 'Speeding Alert',
+                  message: `Vehicle ${plateNumber} is speeding at ${speedKmh} km/h.`,
+                  targetUrl: '/gps-logs',
+                  targetTab: 'alerts',
+                  entityId: saveResult.telemetryId,
+                });
+              } catch (notifError) {
+                console.error(`[scheduler] Failed to create speeding notification vehicle=${vehicleId}:`, (notifError as Error).message);
+              }
+            }
             continue;
           }
 
@@ -975,6 +1009,22 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             } else {
               telemetrySkipped += 1;
               console.log(`[scheduler] LOW_FUEL SKIPPED vehicle=${vehicleId}`);
+            }
+
+            // Create notification for all roles when low fuel alert is saved
+            if (saveResult.saved && saveResult.telemetryId) {
+              try {
+                await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'], {
+                  type: 'gps_alert',
+                  title: 'Low Fuel Alert',
+                  message: `Vehicle ${plateNumber} has low fuel: ${fuelLiters} liters.`,
+                  targetUrl: '/gps-logs',
+                  targetTab: 'alerts',
+                  entityId: saveResult.telemetryId,
+                });
+              } catch (notifError) {
+                console.error(`[scheduler] Failed to create low fuel notification vehicle=${vehicleId}:`, (notifError as Error).message);
+              }
             }
             continue;
           }

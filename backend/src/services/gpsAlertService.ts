@@ -138,7 +138,7 @@ export async function createNoTravelOrderAlert(vehicleId: string, latitude: numb
     latitude,
     longitude,
   });
-  await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER'], {
+  await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'], {
     type: 'gps_alert',
     title: 'GPS Alert',
     message: `Trip has no linked Travel Order.\nVehicle: ${plate ?? 'Unknown'}`,

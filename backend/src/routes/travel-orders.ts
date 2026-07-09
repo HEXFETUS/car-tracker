@@ -3,6 +3,7 @@ import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
 import { DEFAULT_ORIGIN_ADDRESS, DEFAULT_ORIGIN_LATLONG } from '../config/constants.js';
 import { syncTravelOrderToActiveTrip } from '../services/travelOrderSyncService.js';
+import { createNotificationForRoles } from '../services/notificationService.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -819,6 +820,43 @@ router.patch('/:id', async (req: Request, res: Response) => {
         console.log('[TO Sync] status update active-trip sync', syncResult);
       } catch (syncError) {
         console.error('[TO Sync] status update active-trip sync failed:', (syncError as Error).message);
+      }
+    }
+
+    // Send notifications based on status change
+    if (updatedRow && req.body.status) {
+      try {
+        const newStatus = String(req.body.status).toUpperCase();
+        const prevStatus = String(updatedRow.status).toUpperCase();
+        
+        // Only send notifications for APPROVED or CANCELLED status changes
+        if (['APPROVED', 'CANCELLED'].includes(newStatus)) {
+          const toNumber = updatedRow.to_number;
+          const rolesToNotify: string[] = ['SUPERADMIN'];
+          
+          // Determine which roles to notify based on previous status
+          if (prevStatus === 'PENDING') {
+            rolesToNotify.push('HR');
+          } else if (prevStatus === 'FOR_REQUEST') {
+            rolesToNotify.push('DISPATCHER');
+          } else if (prevStatus === 'FOR_APPROVAL') {
+            rolesToNotify.push('ADMIN');
+          }
+          
+          // Remove duplicates and send notification
+          const uniqueRoles = Array.from(new Set(rolesToNotify));
+          
+          await createNotificationForRoles(uniqueRoles, {
+            type: 'travel_request',
+            title: `Travel Order ${newStatus}`,
+            message: `Travel Order ${toNumber} has been ${newStatus.toLowerCase()}.`,
+            targetUrl: '/travel-orders',
+            targetTab: newStatus.toLowerCase(),
+            entityId: updatedRow.id,
+          });
+        }
+      } catch (notifError) {
+        console.error(`[travel-orders] Failed to create notification for TO ${updatedRow.id}:`, (notifError as Error).message);
       }
     }
 
