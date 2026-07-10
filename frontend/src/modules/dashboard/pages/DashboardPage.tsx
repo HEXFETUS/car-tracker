@@ -9,7 +9,7 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 import {
   Car, CheckCircle2, Wrench, AlertTriangle,
   Route, Radio, Navigation, RefreshCw,
-  Users, FileText, BarChart3, Bell,
+  Users, FileText, BarChart3,
   ShieldCheck, Gauge, Activity,
   ChevronRight,
 } from 'lucide-react';
@@ -398,7 +398,6 @@ export function DashboardPage() {
   const [lastUpdated, setLastUpdated] = useState<string>(formatDateTimeManila(new Date().toISOString()));
   const [realtimeData, setRealtimeData] = useState<{ moving: number; idling: number } | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
-  const [alertSeverityFilter, setAlertSeverityFilter] = useState<'All' | 'Critical' | 'Warning' | 'Info'>('All');
 
   const queryOptions = {
     staleTime: 30_000,
@@ -447,7 +446,6 @@ export function DashboardPage() {
   const live = liveQuery.data ?? { tables: { liveMonitoring: [], activeTrips: [] } };
   const tables = tablesQuery.data ?? { leaderboard: { driverPerformance: [] }, maintenance: { overview: emptyDashboardData().maintenance.overview, trends: [] }, admin: { matchingAccuracy: emptyDashboardData().admin.matchingAccuracy, fleetUtilization: emptyDashboardData().admin.fleetUtilization }, tables: { recentAlerts: [], recentlyCompleted: [] } };
 
-  const recentAlerts = tables.tables.recentAlerts ?? [];
   const liveMonitoring = live.tables.liveMonitoring ?? [];
   const activeTrips = live.tables.activeTrips ?? [];
 
@@ -459,7 +457,6 @@ export function DashboardPage() {
     charts: charts.charts,
     tables: {
       liveMonitoring,
-      recentAlerts,
       recentlyCompleted: tables.tables.recentlyCompleted ?? [],
       activeTrips,
     },
@@ -475,25 +472,10 @@ export function DashboardPage() {
     averageSpeed: d.leaderboard.driverPerformance.reduce((sum, driver) => sum + driver.avg_speed, 0) / Math.max(d.leaderboard.driverPerformance.length, 1),
     engineHoursToday: d.tables.recentlyCompleted.reduce((sum, trip) => sum + (trip.gps_distance_km ? trip.gps_distance_km / 10 : 0), 0),
     movingHoursToday: d.tables.activeTrips.reduce((sum, trip) => sum + (trip.status === 'ACTIVE' ? 1 : 0), 0),
-    fuelAlerts: d.tables.recentAlerts.filter((alert) => alert.alert_type.toLowerCase().includes('fuel')).length,
-  }), [d.leaderboard.driverPerformance, d.tables.activeTrips, d.tables.recentAlerts, d.tables.recentlyCompleted, k.gps.total_distance_today]);
+    fuelAlerts: 0,
+  }), [d.leaderboard.driverPerformance, d.tables.activeTrips, d.tables.recentlyCompleted, k.gps.total_distance_today]);
 
   const activeTripCards = useMemo(() => d.tables.activeTrips.slice(0, 6), [d.tables.activeTrips]);
-  const alertCards = useMemo(() => {
-    const severityOrder: Record<string, number> = { Critical: 3, Warning: 2, Info: 1 };
-    return d.tables.recentAlerts
-      .slice(0, 10)
-      .sort((a, b) => severityOrder[b.alert_type.includes('IDLING') ? 'Warning' : 'Info'] - severityOrder[a.alert_type.includes('IDLING') ? 'Warning' : 'Info']);
-  }, [d.tables.recentAlerts]);
-
-  const filteredAlerts = useMemo(() => {
-    if (alertSeverityFilter === 'All') return alertCards;
-    return alertCards.filter((alert) => {
-      if (alertSeverityFilter === 'Critical') return alert.alert_type.includes('IDLING') || alert.alert_type.includes('NO_APPROVED');
-      if (alertSeverityFilter === 'Warning') return alert.alert_type.includes('IGNITION');
-      return alert.alert_type.includes('IDLING') || alert.alert_type.includes('IGNITION');
-    });
-  }, [alertCards, alertSeverityFilter]);
 
   if (summaryQuery.isLoading) return <LoadingSkeleton />;
 
@@ -551,8 +533,6 @@ export function DashboardPage() {
         <KpiCard icon={Radio} label="Vehicles Idling" value={realtimeData?.idling ?? d.realTime.vehiclesIdling} status="Engine running" gradient="bg-gradient-to-br from-amber-50 to-white" iconColor="bg-amber-500" onClick={() => navigate('/gps-logs?tab=tracking&filter=idling')} />
         <KpiCard icon={Navigation} label="Active Trips" value={k.fleet.active_trips} status="In progress" gradient="bg-gradient-to-br from-brand-cream/60 to-white" iconColor="bg-brand-sage" onClick={() => navigate('/gps-logs?tab=tracking')} />
         <KpiCard icon={FileText} label="Travel Orders Today" value={k.travelOrders.completed_today} status={`${k.travelOrders.active_travel_orders} active`} gradient="bg-gradient-to-br from-brand-moss/40 to-white" iconColor="bg-brand-sage" onClick={() => navigate('/travel-orders')} />
-        <KpiCard icon={Bell} label="GPS Alerts Today" value={k.alerts.active_gps_alerts} status={`${k.alerts.idling_alerts} idling`} gradient="bg-gradient-to-br from-red-50 to-white" iconColor="bg-red-500" onClick={() => navigate('/gps-logs?tab=alerts')} />
-        <KpiCard icon={FileText} label="No TO Trips" value={(k.alerts as any).gps_anomalies_detected ?? 0} status="Requires attention" gradient="bg-gradient-to-br from-purple-50 to-white" iconColor="bg-purple-500" onClick={() => navigate('/gps-logs?tab=alerts&filter=no-to')} />
         <KpiCard icon={Wrench} label="Maintenance Due" value={k.fleet.maintenance_due} status={`${k.fleet.vehicles_under_repair} under repair`} gradient="bg-gradient-to-br from-orange-50 to-white" iconColor="bg-orange-500" onClick={() => navigate('/list?tab=maintenance')} />
       </div>
 
@@ -612,31 +592,6 @@ export function DashboardPage() {
           </div>
         </DashboardCard>
 
-        <DashboardCard title="Alert Panel" icon={Bell}>
-          <div className="mb-3 flex flex-wrap gap-2">
-            {(['All', 'Critical', 'Warning', 'Info'] as const).map((filter) => (
-              <button key={filter} onClick={() => setAlertSeverityFilter(filter)} className={cn('rounded-full px-3 py-1.5 text-sm font-semibold transition-all', alertSeverityFilter === filter ? 'bg-red-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200')}>
-                {filter}
-              </button>
-            ))}
-          </div>
-          <div className="space-y-2">
-            {filteredAlerts.length > 0 ? filteredAlerts.map((alert) => {
-              const severity = alert.alert_type.includes('IDLING') || alert.alert_type.includes('NO_APPROVED') ? 'Critical' : alert.alert_type.includes('IGNITION') ? 'Warning' : 'Info';
-              const palette = severity === 'Critical' ? 'border-red-200 bg-red-50 text-red-700' : severity === 'Warning' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-blue-200 bg-blue-50 text-blue-700';
-              return (
-                <div key={alert.id} className={cn('rounded-xl border p-3 transition-all hover:shadow-sm', palette)}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold">{alert.vehicle}</span>
-                    <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-bold">{severity}</span>
-                  </div>
-                  <p className="mt-1 text-sm">{alert.alert_message}</p>
-                  <p className="mt-2 text-xs opacity-80">{formatDateTimeManila(alert.time)} · {alert.location}</p>
-                </div>
-              );
-            }) : <EmptyState message="No alerts in the current filter" />}
-          </div>
-        </DashboardCard>
       </div>
 
       {/* ── Charts Section ───────────────────────────── */}

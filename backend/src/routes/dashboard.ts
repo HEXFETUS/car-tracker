@@ -15,17 +15,8 @@ async function timedQuery(pool: QueryablePool, label: string, sql: string, param
   }
 }
 
-function mapRecentAlerts(rows: any[]) {
-  return rows.map((r: any) => ({
-    ...r,
-    alertType: r.alert_type,
-    alertMessage: r.alert_message,
-    gpsRecordNo: r.gps_record_no,
-  }));
-}
-
 async function loadSummary(pool: QueryablePool) {
-  const [fleetKpis, travelOrderKpis, gpsKpis, alertCounts, realTimeStatus] = await Promise.all([
+  const [fleetKpis, travelOrderKpis, gpsKpis, realTimeStatus] = await Promise.all([
     timedQuery(pool, 'dashboard fleetKpis', `
       SELECT
         (SELECT COUNT(*) FROM vehicles) AS total_vehicles,
@@ -51,13 +42,6 @@ async function loadSummary(pool: QueryablePool) {
         (SELECT COALESCE(MAX(max_speed_kph), 0) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS max_speed_today,
         (SELECT COUNT(*) FROM gps_trip_logs WHERE anomaly_flag = TRUE AND trip_date >= CURRENT_DATE - INTERVAL '7 days') AS gps_anomalies_detected
     `),
-    timedQuery(pool, 'dashboard alertCounts', `
-      SELECT
-        (SELECT COUNT(*) FROM gps_alerts WHERE alert_type = 'IGNITION_ON' AND DATE(created_at) = CURRENT_DATE) AS ignition_on_alerts,
-        (SELECT COUNT(*) FROM gps_alerts WHERE alert_type = 'IGNITION_OFF' AND DATE(created_at) = CURRENT_DATE) AS ignition_off_alerts,
-        (SELECT COUNT(*) FROM gps_alerts WHERE alert_type = 'IDLING' AND DATE(created_at) = CURRENT_DATE) AS idling_alerts,
-        (SELECT COUNT(*) FROM gps_alerts WHERE DATE(created_at) = CURRENT_DATE) AS active_gps_alerts
-    `),
     timedQuery(pool, 'dashboard realTimeStatus', `
       WITH latest_telemetry AS (
         SELECT DISTINCT ON (vehicle_id)
@@ -80,7 +64,12 @@ async function loadSummary(pool: QueryablePool) {
       fleet: fleetKpis.rows[0],
       travelOrders: travelOrderKpis.rows[0],
       gps: gpsKpis.rows[0],
-      alerts: alertCounts.rows[0],
+      alerts: {
+        ignition_on_alerts: 0,
+        ignition_off_alerts: 0,
+        idling_alerts: 0,
+        active_gps_alerts: 0,
+      },
     },
     realTime: {
       vehiclesMoving: parseInt(realTimeStatus.rows[0]?.vehicles_moving || '0', 10),
@@ -281,23 +270,7 @@ async function loadLive(pool: QueryablePool) {
 }
 
 async function loadTables(pool: QueryablePool) {
-  const [recentAlerts, driverLeaderboard, maintenanceOverview, maintenanceTrends, matchingAccuracy, totalVehiclesResult, recentlyCompleted] = await Promise.all([
-    timedQuery(pool, 'dashboard recentAlerts', `
-      SELECT
-        a.id,
-        a.created_at AS time,
-        v.plate_number AS vehicle,
-        a.alert_type,
-        a.alert_message,
-        CONCAT(
-          COALESCE(a.latitude::text, 'N/A'), ', ', COALESCE(a.longitude::text, 'N/A')
-        ) AS location,
-        a.gps_log_id AS gps_record_no
-      FROM gps_alerts a
-      LEFT JOIN vehicles v ON v.id = a.vehicle_id
-      ORDER BY a.created_at DESC
-      LIMIT 20
-    `),
+  const [driverLeaderboard, maintenanceOverview, maintenanceTrends, matchingAccuracy, totalVehiclesResult, recentlyCompleted] = await Promise.all([
     timedQuery(pool, 'dashboard driverLeaderboard', `
       SELECT
         d.id AS driver_id,
@@ -387,7 +360,6 @@ async function loadTables(pool: QueryablePool) {
 
   return {
     tables: {
-      recentAlerts: mapRecentAlerts(recentAlerts.rows),
       recentlyCompleted: recentlyCompleted.rows,
     },
     leaderboard: {
