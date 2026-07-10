@@ -816,8 +816,15 @@ export function getDriver(vehicle) {
     return raw.name || raw.full_name || raw.display_name || raw.label || null;
   }
   const str = raw ? String(raw).trim() : '';
-  return str && !str.startsWith('{') ? str : null;
+  if (!str || str.startsWith('{')) return null;
+  // Filter out UUIDs (driver IDs) - these should be displayed as "ID:..." not as names
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str)) return null;
+  return str;
 }
+
+// ── Driver Extraction (exported for use by other modules) ────────
+
+export { getDriver as getVehicleDriver };
 
 // ── Vehicle Status Builder ────────────────────────────────────
 
@@ -942,6 +949,25 @@ export async function syncFleetAndAlert(options = {}) {
     if (overrideDriverId) {
       vehicle.driver_id = overrideDriverId;
     }
+    
+    // Try to get driver name from Cartrack, or resolve from database if Cartrack only provides driver_id
+    let driver = driverOverrides[vid] || getDriver(vehicle);
+    const driverId = vehicle.driver_id || null;
+    
+    // If Cartrack returned a UUID instead of a name, look up the driver name from database
+    if (!driver && driverId) {
+      try {
+        const pool = getPostgresPool();
+        const driverResult = await pool.query('SELECT full_name FROM drivers WHERE id = $1 LIMIT 1', [driverId]);
+        const dbDriverName = driverResult.rows[0]?.full_name || null;
+        if (dbDriverName) {
+          driver = dbDriverName;
+        }
+      } catch (error) {
+        console.log(`[tracker] Could not resolve driver name for ${driverId}:`, error.message);
+      }
+    }
+    
     const name = getVehicleDisplayName(vehicle);
     const ignition = getIgnition(vehicle);
     const speed = getVehicleSpeed(vehicle);
@@ -963,8 +989,6 @@ export async function syncFleetAndAlert(options = {}) {
     const moving = speed > 0;
     const idle = getIdleStatus(ignition, moving, prev, getVehicleIdleMinutes(vehicle));
     const toNumber = getTravelOrderNumber(vehicle);
-    const driver = driverOverrides[vid] || getDriver(vehicle);
-    const driverId = vehicle.driver_id || null;
     const coordinates = getVehicleCoordinates(vehicle);
 
     const alerts = [];

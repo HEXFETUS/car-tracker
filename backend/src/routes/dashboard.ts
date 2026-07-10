@@ -1,6 +1,6 @@
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import { getPool } from '../db/db.js';
-import { syncFleetAndAlert } from '@car-tracker/tracker';
+import { syncFleetAndAlert, getVehicleDriver } from '@car-tracker/tracker';
 
 const router: ExpressRouter = express.Router();
 
@@ -189,7 +189,7 @@ async function loadLive(pool: QueryablePool) {
         return {
           vehicle_id: String(v.id ?? ''),
           plate_number: String(v.name ?? '').split(' ')[0] || String(v.id ?? ''),
-          driver_name: v.driver || 'Unassigned',
+          driver_name: getVehicleDriver(v) || 'Unassigned',
           latitude,
           longitude,
           last_seen: v.time || new Date().toISOString(),

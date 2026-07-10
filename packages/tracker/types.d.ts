@@ -117,6 +117,8 @@ export function formatIgnitionAlert(name: string, ignition: boolean, location: s
 export function formatSpeedingAlert(name: string, speed: number, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
 export function formatIdlingTooLongAlert(name: string, idleMinutes: number, fuel: number | null | undefined, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
 
+export function getVehicleDriver(vehicle: any): string | null;
+
 // ── Trip Log Transformer ──────────────────────────────────────
 
 export function extractPlateNumber(vehicle: any): string;
