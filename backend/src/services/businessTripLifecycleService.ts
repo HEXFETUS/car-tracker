@@ -1,6 +1,5 @@
 import { getPool } from '../db/db.js';
 import { getFleetConfig } from './fleetConfigService.js';
-import { createGpsAlert } from './gpsAlertService.js';
 
 type BusinessTripStatus =
   | 'WAITING_AT_BASE'
@@ -103,35 +102,7 @@ function parseCoord(value: string | null | undefined): { lat: number; lng: numbe
   return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
 }
 
-async function createLifecycleAlertOnce(params: {
-  vehicleId: string;
-  gpsLogId: string;
-  alertType: string;
-  alertMessage: string;
-  coord: string | null;
-}): Promise<void> {
-  const pool = getPool();
-  const existing = await pool.query<{ id: string }>(
-    `SELECT id
-       FROM gps_alerts
-      WHERE gps_log_id = $1
-        AND alert_type = $2
-        AND alert_message = $3
-      LIMIT 1`,
-    [params.gpsLogId, params.alertType, params.alertMessage],
-  );
-  if (existing.rows[0]) return;
 
-  const parsed = parseCoord(params.coord);
-  await createGpsAlert({
-    vehicleId: params.vehicleId,
-    gpsLogId: params.gpsLogId,
-    alertType: params.alertType,
-    alertMessage: params.alertMessage,
-    latitude: parsed?.lat ?? null,
-    longitude: parsed?.lng ?? null,
-  });
-}
 
 function haversineDistance(coord1: string | null | undefined, coord2: string | null | undefined): number {
   const a = parseCoord(coord1);
@@ -577,8 +548,6 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
     );
   }
 
-  await createLifecycleAlerts(gpsTripLogId, trip);
-
   return status;
 }
 
@@ -703,38 +672,6 @@ async function upsertNoToTrip(trip: LifecycleTrip): Promise<'created' | 'updated
   }
 
   return status;
-}
-
-async function createLifecycleAlerts(gpsTripLogId: string, trip: LifecycleTrip): Promise<void> {
-  if (trip.pausedAt && trip.pauseLocation) {
-    await createLifecycleAlertOnce({
-      vehicleId: trip.travelOrder.vehicle_id,
-      gpsLogId: gpsTripLogId,
-      alertType: 'TRIP_PAUSED_AWAY_FROM_BASE',
-      alertMessage: 'Trip paused away from base',
-      coord: trip.pauseLocation,
-    });
-  }
-
-  if (trip.resumedAt) {
-    await createLifecycleAlertOnce({
-      vehicleId: trip.travelOrder.vehicle_id,
-      gpsLogId: gpsTripLogId,
-      alertType: 'TRIP_RESUMED',
-      alertMessage: 'Trip resumed',
-      coord: trip.pauseLocation ?? trip.lastCoord,
-    });
-  }
-
-  if (trip.returnedToBaseAt) {
-    await createLifecycleAlertOnce({
-      vehicleId: trip.travelOrder.vehicle_id,
-      gpsLogId: gpsTripLogId,
-      alertType: 'TRIP_COMPLETED',
-      alertMessage: 'Trip completed',
-      coord: trip.lastCoord,
-    });
-  }
 }
 
 export async function syncBusinessTripLogsFromTelemetry(): Promise<{
@@ -1195,3 +1132,7 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
   console.log(`[no-to-sync] Done: created=${created} updated=${updated} skipped=${skipped} failed=${failed}`);
   return { created, updated, skipped, failed };
 }
+
+
+
+

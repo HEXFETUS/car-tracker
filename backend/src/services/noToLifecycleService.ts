@@ -24,6 +24,7 @@
 
 import { getPool } from '../db/db.js';
 import { getFleetConfig } from './fleetConfigService.js';
+import { createNotificationForRoles } from './notificationService.js';
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -846,8 +847,25 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
       for (const trip of trips) {
         try {
           const result = await upsertNoToTripLifecycle(trip);
-          if (result === 'created') created += 1;
-          else updated += 1;
+          if (result === 'created') {
+            created += 1;
+            // Create notification for all roles when a new no-TO trip is detected
+            try {
+              const plate = trip.plateNumber ?? trip.vehicleId;
+              await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'], {
+                type: 'gps_alert',
+                title: 'No Travel Order Alert',
+                message: `Vehicle ${plate} completed a trip without an approved travel order.\nOrigin: ${trip.originName}\nDestination: ${trip.destinationName}`,
+                targetUrl: '/gps-logs',
+                targetTab: 'alerts',
+                entityId: trip.vehicleId,
+              });
+            } catch (notifError) {
+              console.error(`[no-to-lifecycle-sync] Failed to create notification for vehicle=${trip.vehicleId}:`, (notifError as Error).message);
+            }
+          } else {
+            updated += 1;
+          }
         } catch (error) {
           failed += 1;
           console.error('[no-to-lifecycle-sync] Failed to persist trip:', (error as Error).message);

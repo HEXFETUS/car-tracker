@@ -24,8 +24,8 @@ import {
   ensureVehicleStateSchema,
   upsertVehicleState,
 } from './gpsVehicleStateService.js';
-import { createGpsAlert } from './gpsAlertService.js';
 import { createNotificationForRoles } from './notificationService.js';
+import { syncNoToLogsFromTelemetry } from './noToLifecycleService.js';
 
 type SendTelegramFn = typeof trackerSendTelegram;
 let sendTelegram: SendTelegramFn = trackerSendTelegram;
@@ -697,6 +697,22 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               continue;
             }
 
+            // Skip LOCATION_UPDATE if there's a higher-priority alert for this vehicle
+            // (e.g. MOTION_STARTED, SPEEDING) - those will be handled by the emitted
+            // alerts processing loop below instead, preventing duplicate telemetry entries.
+            if (hasHigherPriorityTelemetryEventForSnapshot(emittedAlerts ?? [], vehicleId, 'LOCATION_UPDATE')) {
+              telemetrySkipped += 1;
+              console.log('[scheduler-state]', {
+                plateNumber,
+                vehicleId,
+                currentIgnition,
+                wasOn,
+                activeTripId,
+                action: 'location_update_skipped_higher_priority',
+              });
+              continue;
+            }
+
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.LOCATION_UPDATE, vehicleId, plateNumber, activeTripId,
               latitude, longitude, speedKmh, fuelLiters, true, locationName, recordedAt, null, emittedAlerts ?? [],
@@ -1044,6 +1060,22 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
       }
     }
 
+    // ── Step 4: Sync No-TO logs from telemetry ────────────────
+    let noToCreated = 0;
+    let noToUpdated = 0;
+    let noToSkipped = 0;
+    let noToFailed = 0;
+    try {
+      const noToResult = await syncNoToLogsFromTelemetry();
+      noToCreated = noToResult.created;
+      noToUpdated = noToResult.updated;
+      noToSkipped = noToResult.skipped;
+      noToFailed = noToResult.failed;
+    } catch (noToError) {
+      noToFailed = -1;
+      console.error('[scheduler] No-TO sync failed:', (noToError as Error).message);
+    }
+
     const duration = (Date.now() - cycleStart) / 1000;
     state.lastRunDuration = duration;
     state.lastRunAt = new Date().toISOString();
@@ -1055,6 +1087,10 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
       `telemetry_skipped=${telemetrySkipped}`,
       `telegram_sent=${telegramSent}`,
       `telegram_failed=${telegramFailed}`,
+      `no_to_created=${noToCreated}`,
+      `no_to_updated=${noToUpdated}`,
+      `no_to_skipped=${noToSkipped}`,
+      `no_to_failed=${noToFailed}`,
       `duration=${duration.toFixed(2)}s`,
     ].join(', ');
 

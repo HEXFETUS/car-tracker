@@ -16,7 +16,6 @@ import {
   haversineDistance,
   type TravelOrderWithTimes,
 } from '../services/gpsLogService.js';
-import { fetchGpsAlerts, getVehiclePlate } from '../services/gpsAlertService.js';
 import { fetchTelemetry } from '../services/gpsTelemetryService.js';
 import {
   resolveCartrackUnitId,
@@ -1256,39 +1255,6 @@ router.delete('/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('DELETE /api/gps-logs/:id error:', (error as Error).message);
     res.status(500).json({ success: false, error: 'Database error' });
-  }
-});
-
-// GET /api/gps-logs/alerts — List GPS alerts
-router.get('/alerts', async (req: Request, res: Response) => {
-  try {
-    const page = Math.max(1, Number(req.query.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
-    const vehicleId = req.query.vehicleId as string | undefined;
-    const alertType = req.query.alertType as string | undefined;
-    const alertDate = req.query.alertDate as string | undefined;
-
-    const result = await fetchGpsAlerts({ page, pageSize, vehicleId, alertType, alertDate });
-
-    // Enrich with plate numbers
-    const enriched = await Promise.all(
-      result.data.map(async (alert) => {
-        const plate = await getVehiclePlate(alert.vehicle_id);
-        return { ...alert, vehiclePlate: plate ?? 'Unknown' };
-      }),
-    );
-
-    res.json({
-      success: true,
-      data: enriched,
-      total: result.total,
-      page: result.page,
-      pageSize: result.pageSize,
-      message: 'GPS alerts retrieved successfully',
-    });
-  } catch (error) {
-    console.error('GET /api/gps-logs/alerts error:', (error as Error).message);
-    res.status(500).json({ success: false, data: null, error: 'Database error' });
   }
 });
 

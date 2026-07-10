@@ -4,7 +4,6 @@
 // Called by the cron sync pipeline after each fleet telemetry cycle.
 
 import { getPool } from '../db/db.js';
-import { createGpsAlert, getVehiclePlate } from './gpsAlertService.js';
 import { DEFAULT_ORIGIN, DEFAULT_BASE_RADIUS_METERS } from '../config/constants.js';
 import { getFleetConfig } from './fleetConfigService.js';
 import { syncBusinessTripLogsFromTelemetry } from './businessTripLifecycleService.js';
