@@ -873,30 +873,35 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               continue;
             }
 
-            const shouldSave = await shouldSaveIdlingAlert(vehicleId, activeTripId, thresholdMinutes);
-            if (!shouldSave) {
+            const idlingStartedAt = alert.idlingStartedAt || new Date().toISOString();
+            const txResult = await handleIdlingAlertInTransaction({
+              vehicleId,
+              plateNumber,
+              activeTripId,
+              latitude,
+              longitude,
+              speedKmh,
+              fuelLiters: fuelLiters ?? null,
+              ignition,
+              locationName,
+              recordedAt,
+              idlingStartedAt,
+              thresholdMinutes,
+              telegramMessage: telegramMessage || '',
+            });
+            if (txResult.skipped) {
               telemetrySkipped += 1;
-              console.log(`[scheduler] IDLING SKIPPED vehicle=${vehicleId} reason=dedup threshold=${thresholdMinutes}`);
+              console.log(`[scheduler] IDLING SKIPPED vehicle=${vehicleId} reason=${txResult.reason}`);
               continue;
             }
 
-            const saveResult = await saveTelemetryAndSendTelegram(
-              EVENT_TYPE.IDLING, vehicleId, plateNumber, activeTripId,
-              latitude, longitude, speedKmh, fuelLiters, ignition, locationName, recordedAt, telegramMessage, emittedAlerts ?? [],
-              thresholdMinutes,
-            );
-            if (saveResult.saved) {
-              telemetrySaved += 1;
-              if (saveResult.telegramSent) telegramSent += 1;
-              if (saveResult.telegramError) telegramFailed += 1;
-              console.log(`[scheduler] IDLING SAVED vehicle=${vehicleId} threshold=${thresholdMinutes}min`);
-            } else {
-              telemetrySkipped += 1;
-              console.log(`[scheduler] IDLING SKIPPED vehicle=${vehicleId} reason=duplicate`);
-            }
+            telemetrySaved += 1;
+            if (txResult.telegramSent) telegramSent += 1;
+            if (txResult.telegramError) telegramFailed += 1;
+            console.log(`[scheduler] IDLING SAVED vehicle=${vehicleId} threshold=${thresholdMinutes}min`);
 
             // Create notification for all roles when idling alert is saved
-            if (saveResult.saved && saveResult.telemetryId) {
+            if (txResult.telemetryId) {
               try {
                 await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'], {
                   type: 'gps_alert',
@@ -904,7 +909,7 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
                   message: `Vehicle ${plateNumber} has been idling for ${thresholdMinutes} minutes.`,
                   targetUrl: '/gps-logs',
                   targetTab: 'alerts',
-                  entityId: saveResult.telemetryId,
+                  entityId: txResult.telemetryId,
                 });
               } catch (notifError) {
                 console.error(`[scheduler] Failed to create idling notification vehicle=${vehicleId}:`, (notifError as Error).message);
