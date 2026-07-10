@@ -252,9 +252,7 @@ export function formatVehicleHeader(name, toNumber = null) {
 export function formatSpeedingAlert(name, speed, location, eventTime, toNumber = null, driver = null, driverId = null) {
   const excess = Math.max(0, speed - SPEED_LIMIT_KMH);
   const extraLines = [];
-  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
-  if (!driverText && driverId) driverText = `ID:${driverId}`;
-  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
@@ -269,9 +267,7 @@ export function formatSpeedingAlert(name, speed, location, eventTime, toNumber =
 
 export function formatIgnitionAlert(name, ignition, location, eventTime, toNumber = null, driver = null, driverId = null) {
   const extraLines = [];
-  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
-  if (!driverText && driverId) driverText = `ID:${driverId}`;
-  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
@@ -282,9 +278,7 @@ export function formatIgnitionAlert(name, ignition, location, eventTime, toNumbe
 }
 
 export function formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber = null, driver = null, driverId = null) {
-  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
-  if (!driverText && driverId) driverText = `ID:${driverId}`;
-  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
     `🔴 IGNITION OFF - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
@@ -297,9 +291,7 @@ export function formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber
 
 export function formatMotionAlert(name, location, eventTime, toNumber = null, driver = null, driverId = null) {
   const extraLines = [];
-  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
-  if (!driverText && driverId) driverText = `ID:${driverId}`;
-  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(`🟢 MOTION STARTED - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`, ...extraLines, ...formatLocationTime(location, eventTime));
@@ -307,9 +299,7 @@ export function formatMotionAlert(name, location, eventTime, toNumber = null, dr
 
 export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber = null, driver = null, driverId = null) {
   const extraLines = [];
-  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
-  if (!driverText && driverId) driverText = `ID:${driverId}`;
-  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
+  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
