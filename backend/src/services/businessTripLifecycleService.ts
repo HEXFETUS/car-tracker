@@ -385,7 +385,7 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
               coordinates_origin = $7,
               coordinates_destination = CASE WHEN $5::boolean THEN $8 ELSE NULL END,
               departure_time_gps = $9,
-              arrival_time_gps = CASE WHEN $5::boolean THEN $10 ELSE NULL END,
+              arrival_time_gps = CASE WHEN $5::boolean THEN $10::timestamptz ELSE NULL END,
               gps_distance_km = $11,
               engine_hours = $12,
               max_speed_kph = $13,

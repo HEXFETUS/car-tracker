@@ -1681,13 +1681,13 @@ router.get('/travel-order/:travelOrderId/details', async (req: Request, res: Res
     const trip = tripResult.rows[0];
     const routeResult = await pool.query(
       `SELECT latitude, longitude, recorded_at, speed_kmh, location_name, ignition, event_type
-       FROM gps_telemetry
-       WHERE vehicle_id = $1
-         AND DATE(recorded_at) = DATE($2::timestamp)
-         AND latitude IS NOT NULL
-         AND longitude IS NOT NULL
-       ORDER BY recorded_at ASC`,
-      [trip.vehicle_id, trip.scheduled_departure],
+       FROM gps_telemetry gt
+       JOIN gps_trip_logs g ON g.id = gt.gps_trip_log_id
+       WHERE g.travel_order_id = $1
+         AND gt.latitude IS NOT NULL
+         AND gt.longitude IS NOT NULL
+       ORDER BY gt.recorded_at ASC`,
+      [req.params.travelOrderId],
     );
 
     const route = routeResult.rows.map((row: any) => ({
