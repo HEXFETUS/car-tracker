@@ -366,46 +366,59 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
   let gpsTripLogId = existing.rows[0]?.id ?? null;
   let status: 'created' | 'updated' = 'updated';
   if (gpsTripLogId) {
+    // Only freeze destination/end fields once the lifecycle reaches a terminal
+    // state. Otherwise, keep the original TO destination/coords on the log;
+    // live tracking is handled by coordinates_destination updates from the
+    // telemetry-driven path. This avoids showing a live mid-route location
+    // as the trip End address in the modal.
+    const settled = ['ARRIVED_AT_DESTINATION', 'COMPLETED', 'PAUSED_AWAY_FROM_BASE'].includes(trip.status);
+    // When the lifecycle is still en-route (not settled), explicitly clear
+    // end-state fields so the next lifecycle rebuild won't preserve stale
+    // "destination/arrival" values from previous syncs. When settled, write
+    // the terminal values.
     await pool.query(
       `UPDATE gps_trip_logs
           SET driver_id = COALESCE($3, driver_id),
               travel_order_id = $2,
               origin_gps_start_point = $4,
-              destination_gps_end_point = $5,
-              coordinates_origin = $6,
-              coordinates_destination = $7,
-              departure_time_gps = $8,
-              arrival_time_gps = $9,
-              gps_distance_km = $10,
-              engine_hours = $11,
-              max_speed_kph = $12,
-              trip_status_gps = $13,
-              to_status_auto = $26,
-              anomaly_flag = $14,
-              notes_remarks = COALESCE($15, notes_remarks),
-              active_trip_id = $16,
+              destination_gps_end_point = CASE WHEN $5::boolean THEN $6 ELSE NULL END,
+              coordinates_origin = $7,
+              coordinates_destination = CASE WHEN $5::boolean THEN $8 ELSE NULL END,
+              departure_time_gps = $9,
+              arrival_time_gps = CASE WHEN $5::boolean THEN $10 ELSE NULL END,
+              gps_distance_km = $11,
+              engine_hours = $12,
+              max_speed_kph = $13,
+              trip_status_gps = $14,
+              to_status_auto = $27,
+              anomaly_flag = $15,
+              notes_remarks = COALESCE($16, notes_remarks),
+              active_trip_id = $17,
               trip_type = 'OUTBOUND',
-              destination_verified = $17,
-              business_trip_status = $18,
-              destination_reached_at = $19,
-              returned_to_base_at = $20,
-              paused_at = $21,
-              pause_location = $22,
-              resumed_at = $23,
-              matched_destination_distance_m = $24,
-              matched_origin_distance_m = $25,
-              arrived_location_name = $27,
-              arrived_coordinates = $28
+              destination_verified = $18,
+              business_trip_status = $19,
+              destination_reached_at = $20,
+              returned_to_base_at = $21,
+              paused_at = $22,
+              pause_location = $23,
+              resumed_at = $24,
+              matched_destination_distance_m = $25,
+              matched_origin_distance_m = $26,
+              arrived_location_name = $28,
+              arrived_coordinates = $29
         WHERE id = $1`,
       [
         gpsTripLogId,
         travelOrderId,
         driverId,
         trip.originName,
+        settled,
         trip.destinationName,
         trip.originCoord,
+        settled,
         trip.destinationCoord,
         trip.startedAt,
+        settled,
         trip.returnedToBaseAt,
         gpsDistanceKm,
         engineHours,

@@ -249,10 +249,12 @@ export function formatVehicleHeader(name, toNumber = null) {
   return `${plate} (⚠️ No TO)`;
 }
 
-export function formatSpeedingAlert(name, speed, location, eventTime, toNumber = null, driver = null) {
+export function formatSpeedingAlert(name, speed, location, eventTime, toNumber = null, driver = null, driverId = null) {
   const excess = Math.max(0, speed - SPEED_LIMIT_KMH);
   const extraLines = [];
-  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  if (!driverText && driverId) driverText = `ID:${driverId}`;
+  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
@@ -265,9 +267,11 @@ export function formatSpeedingAlert(name, speed, location, eventTime, toNumber =
   );
 }
 
-export function formatIgnitionAlert(name, ignition, location, eventTime, toNumber = null, driver = null) {
+export function formatIgnitionAlert(name, ignition, location, eventTime, toNumber = null, driver = null, driverId = null) {
   const extraLines = [];
-  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  if (!driverText && driverId) driverText = `ID:${driverId}`;
+  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
@@ -277,8 +281,10 @@ export function formatIgnitionAlert(name, ignition, location, eventTime, toNumbe
   );
 }
 
-export function formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber = null, driver = null) {
-  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+export function formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber = null, driver = null, driverId = null) {
+  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  if (!driverText && driverId) driverText = `ID:${driverId}`;
+  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
     `🔴 IGNITION OFF - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`,
@@ -289,17 +295,21 @@ export function formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber
   );
 }
 
-export function formatMotionAlert(name, location, eventTime, toNumber = null, driver = null) {
+export function formatMotionAlert(name, location, eventTime, toNumber = null, driver = null, driverId = null) {
   const extraLines = [];
-  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  if (!driverText && driverId) driverText = `ID:${driverId}`;
+  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(`🟢 MOTION STARTED - ${vehicleEmoji} ${formatVehicleHeader(name, toNumber)}`, ...extraLines, ...formatLocationTime(location, eventTime));
 }
 
-export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber = null, driver = null) {
+export function formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber = null, driver = null, driverId = null) {
   const extraLines = [];
-  const driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  let driverText = typeof driver === 'string' && driver.trim() && !driver.trim().startsWith('{') ? driver.trim() : null;
+  if (!driverText && driverId) driverText = `ID:${driverId}`;
+  else if (driverText && driverId) driverText = `${driverText} (${driverId})`;
   extraLines.push(`👤 Driver: ${driverText || 'Unassigned'}`);
   const vehicleEmoji = getVehicleEmoji(name);
   return formatAlert(
@@ -865,6 +875,7 @@ export async function syncFleetAndAlert(options = {}) {
     noToVehicleIds = [],
     toDestinationOverrides = {},
     dispatchAlerts = true,
+    driverIdOverrides = {},
   } = options;
   const data = await getFleetDataCached();
   const vehicles = extractVehicles(data);
@@ -919,10 +930,17 @@ export async function syncFleetAndAlert(options = {}) {
     if (overrideToNumber) {
       const plate = extractPlateNumber(vehicle);
       vehicle.to_display_name = `${plate} (${overrideToNumber})`;
+      vehicle.to_number = overrideToNumber;
     } else if (noToVehicleIds.includes(vid)) {
       // Vehicle has NO approved travel order for today
       const plate = extractPlateNumber(vehicle);
       vehicle.to_display_name = `${plate} (⚠️ No TO)`;
+    }
+
+    // Apply driver_id override if provided (from travel order)
+    const overrideDriverId = driverIdOverrides[vid];
+    if (overrideDriverId) {
+      vehicle.driver_id = overrideDriverId;
     }
     const name = getVehicleDisplayName(vehicle);
     const ignition = getIgnition(vehicle);
@@ -946,6 +964,7 @@ export async function syncFleetAndAlert(options = {}) {
     const idle = getIdleStatus(ignition, moving, prev, getVehicleIdleMinutes(vehicle));
     const toNumber = getTravelOrderNumber(vehicle);
     const driver = driverOverrides[vid] || getDriver(vehicle);
+    const driverId = vehicle.driver_id || null;
     const coordinates = getVehicleCoordinates(vehicle);
 
     const alerts = [];
@@ -965,6 +984,7 @@ export async function syncFleetAndAlert(options = {}) {
         eventType,
         coordinates,
         driver,
+        driver_id: driverId,
         to_number: toNumber,
         timestamp: eventTime,
         plate: plateNumber,
@@ -994,11 +1014,11 @@ export async function syncFleetAndAlert(options = {}) {
       // Replace generic trip state ignition messages with properly formatted ones
       let message = a.message;
       if (a.type === 'IGNITION_ON') {
-        message = formatIgnitionAlert(name, true, location, eventTime, toNumber, driver);
+        message = formatIgnitionAlert(name, true, location, eventTime, toNumber, driver, driverId);
         tripStateFiredIgnition = true;
         pushAlert('trip_state', message, 'IGNITION_ON', { tripId: a.tripId ?? null });
       } else if (a.type === 'IGNITION_OFF') {
-        message = formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber, driver);
+        message = formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber, driver, driverId);
         tripStateFiredIgnition = true;
         pushAlert('trip_state', message, 'IGNITION_OFF', { tripId: a.tripId ?? null });
       }
@@ -1016,12 +1036,12 @@ export async function syncFleetAndAlert(options = {}) {
       if (ignitionChanged && !tripStateFiredIgnition) {
         const eventType = ignition ? 'IGNITION_ON' : 'IGNITION_OFF';
         const message = eventType === 'IGNITION_OFF' 
-          ? formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber, driver)
-          : formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver);
+          ? formatIgnitionOffAlert(name, fuel, location, eventTime, toNumber, driver, driverId)
+          : formatIgnitionAlert(name, ignition, location, eventTime, toNumber, driver, driverId);
         pushAlert('ignition', message, eventType);
       }
-      if (ignition && speeding && !prevSpeeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
-      if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
+      if (ignition && speeding && !prevSpeeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver, driverId));
+      if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver, driverId));
       if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) {
         const thresholdReached =
           idle.idleAlertCount > 0
@@ -1039,11 +1059,11 @@ export async function syncFleetAndAlert(options = {}) {
         }
 
         idlingAlertEmitted = true;
-        pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
+        pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver, driverId));
       }
       if (ignition && moving && !prevMoving && prevIdlingTooLong) {
         motionAlertEmitted = true;
-        pushAlert('motion', formatMotionAlert(name, location, eventTime, toNumber, driver));
+        pushAlert('motion', formatMotionAlert(name, location, eventTime, toNumber, driver, driverId));
       }
       if (
         ignition &&
@@ -1054,12 +1074,12 @@ export async function syncFleetAndAlert(options = {}) {
         !idlingAlertEmitted &&
         !motionAlertEmitted
       ) {
-        pushAlert('location_update', formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber, driver));
+        pushAlert('location_update', formatLocationUpdateAlert(name, speed, fuel, location, eventTime, toNumber, driver, driverId));
       }
     } else if (ignition) {
-      if (speeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver));
-      if (lowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver));
-      if (idle.idlingTooLong) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver));
+      if (speeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver, driverId));
+      if (lowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver, driverId));
+      if (idle.idlingTooLong) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver, driverId));
     }
 
     if (dispatchAlerts) {

@@ -100,6 +100,7 @@ export interface SyncResult {
 export function syncFleetAndAlert(options?: {
   resolveVehicleId?: (plateNumber: string) => Promise<string | null>;
   driverOverrides?: Record<string, string>;
+  driverIdOverrides?: Record<string, string | null>;
   toNumberOverrides?: Record<string, string>;
   toDestinationOverrides?: Record<string, string>;
   noToVehicleIds?: string[];

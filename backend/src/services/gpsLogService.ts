@@ -1673,14 +1673,21 @@ export async function syncGpsTripLogsFromTelemetry(): Promise<{
 
           const activeLog = returnTrip ?? outbound;
           const startTime = timestampToIso(activeLog.departure_time_gps);
+          // While the vehicle is still EN ROUTE, do NOT stamp arrival_time_gps
+          // or overwrite destination_gps_end_point with the live position. Stamping
+          // arrival_time_gps on every LOCATION_UPDATE made the trip look
+          // "completed" in the modal (the End card showed a live mid-route
+          // location + timestamp) even though the vehicle was still running.
+          // arrival_time_gps / destination_gps_end_point are only set on a
+          // real arrival (IDLING_TOO_LONG) or ignition-off (completed).
+          // coordinates_destination is still refreshed so the live map tracks
+          // the current position.
           await pool.query(
             `UPDATE gps_trip_logs
-                SET destination_gps_end_point = $2,
-                    coordinates_destination = $3,
-                    arrival_time_gps = $4,
+                SET coordinates_destination = $2,
                     trip_status_gps = 'EN ROUTE'
               WHERE id = $1`,
-            [activeLog.id, row.location_name || activeLog.destination_gps_end_point || '', currentCoord, recordedAt],
+            [activeLog.id, currentCoord],
           );
           await updateTripMetrics(activeLog.id, vehicleId, activeTripId, startTime, recordedAt);
           console.log('[gps-trip-log] updated en route', { vehicleId, activeTripId, tripType: activeLog.trip_type });

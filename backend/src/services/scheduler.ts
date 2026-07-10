@@ -394,8 +394,10 @@ async function saveTelemetryAndSendTelegram(
   locationName: string | null,
   recordedAt: string,
   telegramMessage: string | null,
-  emittedAlerts: Array<{ vehicleId?: string; eventType?: string; message?: string }>,
+  emittedAlerts: Array<{ vehicleId?: string; eventType?: string; message?: string; toNumber?: string | null }>,
   idlingThresholdMinutes?: number | null,
+  travelOrderId?: string | null,
+  driverId?: string | null,
 ): Promise<{ saved: boolean; telemetryId: string | null; telegramSent: boolean; telegramError: string | null }> {
   const resolvedMessage = telegramMessage ?? resolveMessageFromEmitted(emittedAlerts, vehicleId, eventType, plateNumber);
   if (shouldSendTelegram(eventType) && !resolvedMessage) {
@@ -412,8 +414,9 @@ async function saveTelemetryAndSendTelegram(
     fuelLiters,
     ignition,
     locationName,
-    driverId: null,
+    driverId: driverId ?? null,
     toNumber: null,
+    travelOrderId: travelOrderId ?? null,
     recordedAt,
     activeTripId,
     telegramMessage: resolvedMessage,
@@ -484,9 +487,51 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
   console.log(`[scheduler] Starting sync cycle ${cycleLabel}...`);
 
   try {
+    // Fetch TO numbers and driver IDs for vehicles with active travel orders
+    const toNumberOverrides: Record<string, string> = {};
+    const driverIdOverrides: Record<string, string | null> = {};
+    try {
+      const toResult = await getPool().query<{ vehicle_id: string; to_number: string; driver_id: string | null }>(
+        `SELECT DISTINCT ON (vehicle_id) vehicle_id, to_number, driver_id
+         FROM travel_orders
+         WHERE status = 'APPROVED'
+           AND vehicle_id IS NOT NULL
+           AND DATE(scheduled_departure) = CURRENT_DATE
+           AND to_number IS NOT NULL`,
+      );
+      for (const row of toResult.rows) {
+        toNumberOverrides[row.vehicle_id] = row.to_number;
+        driverIdOverrides[row.vehicle_id] = row.driver_id;
+      }
+    } catch (err) {
+      console.error('[scheduler] Failed to fetch TO numbers:', (err as Error).message);
+    }
+
+    // Pre-fetch travel_order_id UUIDs and driver_id keyed by toNumber for quick lookup
+    const travelOrderIdByToNumber = new Map<string, string>();
+    const driverIdByToNumber = new Map<string, string | null>();
+    try {
+      const toIdResult = await getPool().query<{ to_number: string; id: string; driver_id: string | null }>(
+        `SELECT DISTINCT ON (to_number) to_number, id, driver_id
+         FROM travel_orders
+         WHERE status = 'APPROVED'
+           AND to_number IS NOT NULL
+           AND DATE(scheduled_departure) = CURRENT_DATE`,
+      );
+      console.log('[scheduler] Travel order IDs loaded:', toIdResult.rows.length, 'entries');
+      for (const row of toIdResult.rows) {
+        travelOrderIdByToNumber.set(row.to_number, row.id);
+        driverIdByToNumber.set(row.to_number, row.driver_id);
+      }
+    } catch (err) {
+      console.error('[scheduler] Failed to fetch travel order IDs:', (err as Error).message);
+    }
+
     const result = await syncFleetAndAlert({
       resolveVehicleId: (plateNumber: string) => findVehicleByPlate(plateNumber),
       dispatchAlerts: false,
+      toNumberOverrides,
+      driverIdOverrides,
     });
 
     console.log('[scheduler-debug]', {
@@ -713,9 +758,20 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               continue;
             }
 
+            // Resolve travel order for LOCATION_UPDATE
+            const locationUpdateTravelOrderId = v.toNumber
+              ? (travelOrderIdByToNumber.get(v.toNumber) ?? null)
+              : null;
+            const locationUpdateDriverId = v.toNumber
+              ? (driverIdByToNumber.get(v.toNumber) ?? null)
+              : null;
+
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.LOCATION_UPDATE, vehicleId, plateNumber, activeTripId,
               latitude, longitude, speedKmh, fuelLiters, true, locationName, recordedAt, null, emittedAlerts ?? [],
+              null,
+              locationUpdateTravelOrderId,
+              locationUpdateDriverId,
             );
             if (saveResult.saved) {
               if (saveResult.telegramSent) telegramSent += 1;
@@ -766,9 +822,20 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               continue;
             }
 
+            // Resolve travel order for IGNITION_OFF
+            const ignitionOffTravelOrderId = v.toNumber
+              ? (travelOrderIdByToNumber.get(v.toNumber) ?? null)
+              : null;
+            const ignitionOffDriverId = v.toNumber
+              ? (driverIdByToNumber.get(v.toNumber) ?? null)
+              : null;
+
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.IGNITION_OFF, vehicleId, plateNumber, activeTripId,
               latitude, longitude, speedKmh, fuelLiters, false, locationName, recordedAt, null, emittedAlerts ?? [],
+              null,
+              ignitionOffTravelOrderId,
+              ignitionOffDriverId,
             );
             if (!saveResult.saved) {
               console.error(`[scheduler-state] CRITICAL: IGNITION_OFF insert failed vehicle=${vehicleId}`);
@@ -934,6 +1001,18 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             continue;
           }
 
+          // Resolve toNumber to travel_order_id UUID and driver_id
+          const resolvedTravelOrderId = alert.toNumber
+            ? (travelOrderIdByToNumber.get(alert.toNumber) ?? null)
+            : null;
+          const resolvedDriverId = alert.toNumber
+            ? (driverIdByToNumber.get(alert.toNumber) ?? null)
+            : null;
+
+          if (alert.toNumber && !resolvedTravelOrderId) {
+            console.warn(`[scheduler] Travel order not found for toNumber=${alert.toNumber} vehicle=${vehicleId}`);
+          }
+
           // LOCATION_UPDATE / MOTION_STARTED
           if (finalEventType === EVENT_TYPE.LOCATION_UPDATE || finalEventType === EVENT_TYPE.MOTION_STARTED) {
             if (!activeTripId) {
@@ -951,6 +1030,9 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             const saveResult = await saveTelemetryAndSendTelegram(
               finalEventType, vehicleId, plateNumber, activeTripId,
               latitude, longitude, speedKmh, fuelLiters, ignition, locationName, recordedAt, telegramMessage, emittedAlerts ?? [],
+              null,
+              resolvedTravelOrderId,
+              resolvedDriverId,
             );
             if (saveResult.saved) {
               telemetrySaved += 1;
@@ -981,6 +1063,9 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.SPEEDING, vehicleId, plateNumber, activeTripId,
               latitude, longitude, speedKmh, fuelLiters, ignition, locationName, recordedAt, telegramMessage, emittedAlerts ?? [],
+              null,
+              resolvedTravelOrderId,
+              resolvedDriverId,
             );
             if (saveResult.saved) {
               telemetrySaved += 1;
@@ -1021,6 +1106,9 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.LOW_FUEL, vehicleId, plateNumber, activeTripId,
               latitude, longitude, speedKmh, fuelLiters, ignition, locationName, recordedAt, telegramMessage, emittedAlerts ?? [],
+              null,
+              resolvedTravelOrderId,
+              resolvedDriverId,
             );
             if (saveResult.saved) {
               telemetrySaved += 1;
