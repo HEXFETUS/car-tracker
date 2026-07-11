@@ -842,6 +842,14 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               throw new Error(`Failed to insert IGNITION_OFF telemetry for vehicle=${vehicleId}`);
             }
 
+            // Close any active idling session when ignition turns off
+            try {
+              await closeIdlingDedupDb(vehicleId, activeTripId);
+              console.log(`[scheduler] Idling session closed for vehicle=${vehicleId} trip=${activeTripId} reason=ignition_off`);
+            } catch (err) {
+              console.error(`[scheduler] Failed to close idling session for vehicle=${vehicleId}:`, errorMessage(err));
+            }
+
             await upsertVehicleState({
               vehicleId,
               ignitionState: 'OFF',
@@ -1043,6 +1051,17 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               telemetrySkipped += 1;
               console.log(`[scheduler] ${finalEventType} SKIPPED vehicle=${vehicleId}`);
             }
+
+            // Close any active idling session when the vehicle starts moving
+            if (finalEventType === EVENT_TYPE.MOTION_STARTED && activeTripId) {
+              try {
+                await closeIdlingDedupDb(vehicleId, activeTripId);
+                console.log(`[scheduler] Idling session closed for vehicle=${vehicleId} trip=${activeTripId} reason=motion_started`);
+              } catch (err) {
+                console.error(`[scheduler] Failed to close idling session for vehicle=${vehicleId}:`, errorMessage(err));
+              }
+            }
+
             continue;
           }
 
