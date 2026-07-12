@@ -1480,11 +1480,17 @@ export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTx
       return { skipped: true, reason: 'already_alerted', telemetryId: null, telegramSent: false, telegramError: null };
     }
     const dupResult = await client.query<{ id: string }>(
-      `SELECT id FROM gps_telemetry
-        WHERE vehicle_id = $1
-          AND active_trip_id = $2
-          AND event_type = 'IDLING_TOO_LONG'
-          AND idling_threshold_minutes = $3
+      `SELECT t.id FROM gps_telemetry t
+        WHERE t.vehicle_id = $1
+          AND t.active_trip_id = $2
+          AND t.event_type = 'IDLING_TOO_LONG'
+          AND t.idling_threshold_minutes = $3
+          AND EXISTS (
+            SELECT 1 FROM gps_idling_dedup d
+            WHERE d.vehicle_id = t.vehicle_id
+              AND d.active_trip_id = t.active_trip_id
+              AND d.is_active = true
+          )
         LIMIT 1`,
       [params.vehicleId, params.activeTripId, params.thresholdMinutes],
     );

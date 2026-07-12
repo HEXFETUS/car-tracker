@@ -158,7 +158,7 @@ function isMoving(row: TelemetryRow): boolean {
 
 function isIdling(row: TelemetryRow): boolean {
   const eventType = normalizeTelemetryEvent(row.event_type);
-  return eventType === 'IDLING' || (eventType === 'LOCATION_UPDATE' && Number(row.speed_kmh) === 0);
+  return eventType === 'IDLING' || eventType === 'IDLING_TOO_LONG' || (eventType === 'LOCATION_UPDATE' && Number(row.speed_kmh) === 0);
 }
 
 function tripDateFromTimestamp(value: string): string {
@@ -168,13 +168,17 @@ function tripDateFromTimestamp(value: string): string {
 async function generateNoToRecordNo(departureTime: string): Promise<string> {
   const pool = getPool();
   const year = new Date(departureTime).getFullYear();
-  const result = await pool.query<{ cnt: string }>(
-    `SELECT COUNT(*) AS cnt
+  // Use MAX of the numeric suffix instead of COUNT(*) so that gaps from
+  // deleted/linked-then-removed records are skipped and we never generate
+  // a record number that already exists.
+  const result = await pool.query<{ max_seq: string | null }>(
+    `SELECT MAX(CAST(split_part(no_to_record_no, '-', 4) AS INTEGER)) AS max_seq
        FROM gps_no_to_logs
       WHERE EXTRACT(YEAR FROM COALESCE(departure_time, trip_date, created_at)) = $1`,
     [year],
   );
-  return `NO-TO-${year}-${String(Number(result.rows[0]?.cnt ?? 0) + 1).padStart(4, '0')}`;
+  const nextSeq = (Number(result.rows[0]?.max_seq ?? 0)) + 1;
+  return `NO-TO-${year}-${String(nextSeq).padStart(4, '0')}`;
 }
 
 /**
@@ -481,7 +485,12 @@ export function buildNoToLifecycleTrips(
     completed.push(current);
   }
 
-  return completed;
+  // ── Filter out trips that never had a LOCATION_UPDATE ──
+  // A trip with only IGNITION_ON → IGNITION_OFF and no actual movement
+  // (no LOCATION_UPDATE events) should not create a no-TO log.
+  return completed.filter((trip) =>
+    trip.points.some((p) => normalizeTelemetryEvent(p.event_type) === 'LOCATION_UPDATE'),
+  );
 }
 
 // ── Upsert ─────────────────────────────────────────────────────────
@@ -660,27 +669,46 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
       trip.candidateDestinationCoordinates,
       primaryActiveTripId,
     ];
-    const columnPlaceholders = insertValues.map((_, i) => `$${i + 1}`);
     const insertSql = `INSERT INTO gps_no_to_logs
        (${insertColumns.join(', ')})
-     VALUES (${columnPlaceholders.join(', ')})
+     VALUES (${insertColumns.map((_, i) => `$${i + 1}`).join(', ')})
      RETURNING id`;
 
     console.log('[no-to-insert-debug]', {
       insertColumnCount: insertColumns.length,
       insertValueCount: insertValues.length,
-      placeholderCount: columnPlaceholders.length,
-      insertColumns,
     });
 
-    const inserted = await pool.query<{ id: string }>(
-      insertSql,
-      insertValues,
-    );
-    noToLogId = inserted.rows[0].id;
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const inserted = await pool.query<{ id: string }>(insertSql, insertValues);
+        noToLogId = inserted.rows[0]?.id ?? null;
+        if (noToLogId) break;
+      } catch (err: any) {
+        lastError = err;
+        // If duplicate key on no_to_record_no, regenerate and retry
+        if (err?.code === '23505' && err?.constraint === 'gps_no_to_logs_no_to_record_no_key') {
+          const newNo = await generateNoToRecordNo(trip.startedAt);
+          insertValues[0] = newNo;
+          continue;
+        }
+        // Otherwise rethrow
+        throw err;
+      }
+    }
+
+    if (!noToLogId && lastError) {
+      throw lastError;
+    }
   }
 
   // ── Sync active trip sessions ──
+  if (!noToLogId) {
+    console.warn('[no-to-upsert] Skipping active trip sync — no noToLogId');
+    return status;
+  }
+
   await pool.query(`DELETE FROM gps_no_to_log_active_trips WHERE gps_no_to_log_id = $1`, [noToLogId]);
 
   for (const activeTripId of trip.activeTripIds) {
