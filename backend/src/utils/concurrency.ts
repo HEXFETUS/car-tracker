@@ -19,10 +19,13 @@ export async function concurrent<T>(
     if (executing.length >= concurrency) {
       await Promise.race(executing);
       // Remove settled tasks
-      executing.splice(
-        executing.findIndex(p => Promise.race([p, Promise.resolve()]) === p),
-        1,
+      const settledIndex = await Promise.race(
+        executing.map(async (p, i) => {
+          try { await p; } catch {}
+          return i;
+        })
       );
+      executing.splice(settledIndex, 1);
     }
   }
 

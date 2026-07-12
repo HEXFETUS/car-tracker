@@ -497,7 +497,8 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
          WHERE status = 'APPROVED'
            AND vehicle_id IS NOT NULL
            AND DATE(scheduled_departure) = CURRENT_DATE
-           AND to_number IS NOT NULL`,
+           AND to_number IS NOT NULL
+         ORDER BY vehicle_id, scheduled_departure DESC`,
       );
       for (const row of toResult.rows) {
         toNumberOverrides[row.vehicle_id] = row.to_number;
@@ -516,7 +517,8 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
          FROM travel_orders
          WHERE status = 'APPROVED'
            AND to_number IS NOT NULL
-           AND DATE(scheduled_departure) = CURRENT_DATE`,
+           AND DATE(scheduled_departure) = CURRENT_DATE
+         ORDER BY to_number, id DESC`,
       );
       console.log('[scheduler] Travel order IDs loaded:', toIdResult.rows.length, 'entries');
       for (const row of toIdResult.rows) {
@@ -1532,6 +1534,9 @@ export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTx
       ],
     );
     const telemetryId = telemResult.rows[0]?.id ?? null;
+    // COMMIT before sending Telegram to avoid holding the transaction open
+    // during the potentially slow HTTP call to the Telegram API.
+    await client.query('COMMIT');
     let telegramSent = false;
     let telegramError: string | null = null;
     const attemptedAt = new Date().toISOString();
@@ -1547,7 +1552,6 @@ export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTx
         telegramError = errorMessage(err);
       }
     }
-    await client.query('COMMIT');
     if (telemetryId) {
       await updateTelemetryTelegramDelivery(
         telemetryId,

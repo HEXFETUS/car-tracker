@@ -867,7 +867,7 @@ export async function persistGpsTripLogs(
       const unauthorizedMovement =
         noTravelOrder && (tripLog.tripStatus === 'Moving' || tripLog.tripStatus === 'Idling');
       const noDriverAssigned = !resolvedDriverId;
-      const anomalyFlag = tripLog.anomalyFlag || noTravelOrder || unauthorizedMovement || noDriverAssigned;
+      const anomalyFlag = Boolean(tripLog.anomalyFlag) || noTravelOrder || unauthorizedMovement || noDriverAssigned;
 
       const anomalyNotes: string[] = [];
       if (noDriverAssigned) {

@@ -415,7 +415,6 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
         settled,
         trip.destinationName,
         trip.originCoord,
-        settled,
         trip.destinationCoord,
         trip.startedAt,
         settled,
@@ -789,7 +788,8 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
   // base-to-base movement loops.
   const telemetryResult = await pool.query<TelemetryRow>(
     `SELECT id, vehicle_id, plate_number, event_type, latitude, longitude,
-            speed_kmh, location_name, recorded_at, active_trip_id, driver_id
+            speed_kmh, location_name, recorded_at, active_trip_id, driver_id,
+            travel_order_id
        FROM gps_telemetry
       WHERE recorded_at IS NOT NULL
         AND vehicle_id IS NOT NULL
@@ -1145,7 +1145,3 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
   console.log(`[no-to-sync] Done: created=${created} updated=${updated} skipped=${skipped} failed=${failed}`);
   return { created, updated, skipped, failed };
 }
-
-
-
-
