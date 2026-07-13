@@ -30,13 +30,13 @@ export function ListToolbar({
     <div className="rounded-xl bg-white shadow-brand border border-zinc-100 p-3">
       <div className="flex items-center gap-2 flex-wrap">
         {/* ── Tabs ── */}
-        <div className="flex items-center gap-0.5 shrink-0 overflow-x-auto">
+        <div className="flex w-full shrink-0 items-center gap-0.5 overflow-x-auto lg:w-auto">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => onTabChange(tab.key)}
               className={cn(
-                'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap',
+                'inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors sm:min-h-0',
                 activeTab === tab.key
                   ? 'bg-brand-teal/10 text-brand-teal'
                   : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100',
@@ -63,9 +63,9 @@ export function ListToolbar({
         <div className="hidden lg:block flex-1 min-w-0" />
 
         {/* ── Search + Actions ── */}
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:flex-nowrap lg:w-auto">
           {/* Search */}
-          <div className="relative w-[220px]">
+          <div className="relative w-full sm:w-[220px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
             <input
               type="text"
@@ -79,7 +79,7 @@ export function ListToolbar({
            {/* New Item */}
           <button
             onClick={onNewItem}
-            className="inline-flex items-center justify-center gap-1.5 h-10 rounded-lg bg-brand-teal px-4 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+            className="inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-lg bg-brand-teal px-4 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97] sm:h-10 sm:w-auto"
           >
             <Plus className="size-4" />
             <span>{newItemLabel}</span>

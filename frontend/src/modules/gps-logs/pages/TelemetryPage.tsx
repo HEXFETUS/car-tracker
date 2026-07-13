@@ -194,12 +194,12 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
   // ── Filters ──
   const filters = (
     <>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <Car className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-brand-teal pointer-events-none" />
         <select
           value={vehicleFilter}
           onChange={(e) => { onVehicleFilterChange(e.target.value); setPage(1); }}
-          className="w-[170px] rounded-lg border-0 bg-white pl-8 pr-7 py-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm appearance-none cursor-pointer"
+          className="h-11 w-full appearance-none rounded-lg border-0 bg-white py-2 pl-8 pr-7 text-sm font-medium text-zinc-700 shadow-sm ring-1 ring-brand-sage transition-shadow hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 sm:h-auto sm:w-[170px]"
         >
           <option value="">All Vehicles</option>
           {vehiclesLoading && <option disabled>Loading…</option>}
@@ -213,12 +213,12 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
           </button>
         )}
       </div>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <AlertTriangle className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-brand-teal pointer-events-none" />
         <select
           value={eventFilter}
           onChange={(e) => { setEventFilter(e.target.value); setPage(1); }}
-          className="w-[170px] rounded-lg border-0 bg-white pl-8 pr-7 py-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm appearance-none cursor-pointer"
+          className="h-11 w-full appearance-none rounded-lg border-0 bg-white py-2 pl-8 pr-7 text-sm font-medium text-zinc-700 shadow-sm ring-1 ring-brand-sage transition-shadow hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 sm:h-auto sm:w-[170px]"
         >
           <option value="">All Events</option>
           <option value="IGNITION_ON">Ignition On</option>
@@ -235,14 +235,14 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
           </button>
         )}
       </div>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-brand-teal pointer-events-none" />
         <input
           type="date"
           value={dateFrom}
           max={today}
           onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-          className="gps-log-date-filter w-[168px] rounded-lg border-0 bg-white pl-8 pr-7 py-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm"
+          className="gps-log-date-filter h-11 w-full rounded-lg border-0 bg-white py-2 pl-8 pr-7 text-sm font-medium text-zinc-700 shadow-sm ring-1 ring-brand-sage transition-shadow hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 sm:h-auto sm:w-[168px]"
         />
         {dateFrom && (
           <button onClick={() => { setDateFrom(''); setPage(1); }} className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-600" title="Clear">
@@ -250,14 +250,14 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
           </button>
         )}
       </div>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-brand-teal pointer-events-none" />
         <input
           type="date"
           value={dateTo}
           max={today}
           onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-          className="gps-log-date-filter w-[168px] rounded-lg border-0 bg-white pl-8 pr-7 py-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm"
+          className="gps-log-date-filter h-11 w-full rounded-lg border-0 bg-white py-2 pl-8 pr-7 text-sm font-medium text-zinc-700 shadow-sm ring-1 ring-brand-sage transition-shadow hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 sm:h-auto sm:w-[168px]"
         />
         {dateTo && (
           <button onClick={() => { setDateTo(''); setPage(1); }} className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-600" title="Clear">
@@ -331,7 +331,7 @@ export function TelemetryPage({ activeTab, onTabChange, vehicleFilter, onVehicle
       {!loading && !error && result && result.length > 0 && (
         <>
           {/* Desktop table */}
-          <div className={tableContainerClass}>
+          <div className={cn(tableContainerClass, 'hidden md:block')}>
             <div className="overflow-x-auto">
               <table className={tableClass}>
                 <thead>

@@ -63,7 +63,7 @@ function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: strin
       <span className="mt-0.5 text-brand-teal shrink-0">{icon}</span>
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label}</p>
-        <p className="mt-0.5 text-sm font-medium text-zinc-900">{value || '—'}</p>
+        <div className="mt-0.5 min-w-0 break-words text-sm font-medium text-zinc-900">{value || '—'}</div>
       </div>
     </div>
   );
@@ -71,7 +71,7 @@ function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: strin
 
 function SectionCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-zinc-100 bg-white p-5 shadow-brand">
+    <div className="rounded-xl border border-zinc-100 bg-white p-3 shadow-brand sm:p-5">
       <div className="flex items-center gap-2 mb-4 pb-3 border-b border-zinc-100">
         <span className="text-brand-teal">{icon}</span>
         <h3 className="text-sm font-bold text-zinc-800">{title}</h3>
@@ -423,27 +423,27 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm transition-opacity"
     >
-      <div className="relative w-full max-w-4xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-none sm:rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
+      <div className="relative flex max-h-dvh w-full max-w-4xl flex-col bg-white shadow-brand-xl animate-in fade-in zoom-in-95 sm:max-h-[calc(100dvh-40px)] sm:rounded-2xl">
         {/* ── Header ── */}
-        <div className="flex items-start justify-between px-6 py-5 border-b border-zinc-100 shrink-0">
-          <div className="flex flex-col gap-1">
+        <div className="flex shrink-0 flex-col gap-3 border-b border-zinc-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6 sm:py-5">
+          <div className="min-w-0 flex flex-col gap-1">
             <div className="flex items-center gap-3 flex-wrap">
               <span className="inline-flex items-center rounded-full bg-brand-teal/10 px-3 py-1 text-sm font-bold text-brand-teal">
                 {order.toNumber}
               </span>
               <StatusBadge status={order.status} />
             </div>
-            <p className="text-sm text-zinc-400">
+            <p className="break-words text-xs text-zinc-400 sm:text-sm">
               Created {formatDateOnly(order.createdAt)} &bull; Created by {order.travelerName || 'Unknown'}
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex w-full shrink-0 items-center justify-end gap-1 sm:w-auto sm:gap-2">
             {!isEditing && canEditDelete && (
               <>
                 <button
                   type="button"
                   onClick={() => setIsEditing(true)}
-                  className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-brand-teal transition-colors"
+                  className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-brand-teal"
                   title={canAssign ? "Edit / Assign" : "Edit"}
                 >
                   <Pencil className="size-4" />
@@ -452,7 +452,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                   type="button"
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-red-500 transition-colors disabled:opacity-40"
+                  className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-red-500 disabled:opacity-40"
                   title="Delete"
                 >
                   {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
@@ -462,7 +462,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
             >
               <X className="size-5" />
             </button>
@@ -470,7 +470,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
         </div>
 
         {/* ── Scrollable Body ── */}
-        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-3 py-4 scroll-smooth sm:px-6 sm:py-5">
           <div className="space-y-4">
             {/* Trip Information */}
             <SectionCard title="Trip Information" icon={<MapPin className="size-4" />}>
@@ -810,8 +810,8 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
         </div>
 
         {/* ── Sticky Footer ── */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-100 bg-white rounded-b-2xl shrink-0">
-          <div className="flex items-center gap-2">
+        <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-100 bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:rounded-b-2xl sm:px-6 sm:py-4 [&_button]:min-h-11">
+          <div className="flex w-full flex-wrap items-center gap-2 [&>button]:min-w-0 [&>button]:flex-1 sm:w-auto sm:[&>button]:flex-none">
             {isEditing ? (
               <>
                 <button
@@ -878,7 +878,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 [&>button]:min-w-0 [&>button]:flex-1 sm:w-auto sm:justify-end sm:[&>button]:flex-none">
             {order.status === 'APPROVED' && user?.userType === 'SUPERADMIN' && (
               <button
                 type="button"

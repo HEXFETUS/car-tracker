@@ -132,12 +132,12 @@ export function SignatureModal({
   return (
     <div
       ref={modalRef}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity sm:p-4"
       onClick={(e) => {
         if (e.target === modalRef.current) onClose();
       }}
     >
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95">
+      <div className="relative flex max-h-dvh w-full max-w-md flex-col overflow-hidden bg-white shadow-brand-xl animate-in fade-in zoom-in-95 sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100">
           <div className="flex items-center gap-2">
@@ -147,14 +147,14 @@ export function SignatureModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
           >
             <X className="size-4" />
           </button>
         </div>
 
         {/* Canvas */}
-        <div className="p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
           <div
             className={cn(
               'relative overflow-hidden rounded-xl border-2',
@@ -165,7 +165,7 @@ export function SignatureModal({
               ref={canvasRef}
               width={500}
               height={200}
-              className="touch-none w-full h-[180px] bg-white cursor-crosshair"
+              className="h-[min(180px,32dvh)] w-full touch-none cursor-crosshair bg-white"
               onMouseDown={startDrawing}
               onMouseMove={draw}
               onMouseUp={stopDrawing}
@@ -186,13 +186,13 @@ export function SignatureModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-4 border-t border-zinc-100">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-100 px-4 py-4 sm:px-5">
           <button
             type="button"
             onClick={clearSignature}
             disabled={!hasDrawn}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+              'inline-flex min-h-11 items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
               hasDrawn
                 ? 'text-red-500 hover:bg-red-50'
                 : 'text-zinc-300 cursor-not-allowed'
@@ -205,7 +205,7 @@ export function SignatureModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg ring-1 ring-zinc-200 px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+              className="min-h-11 rounded-lg px-4 py-2 text-sm font-medium text-zinc-600 ring-1 ring-zinc-200 transition-colors hover:bg-zinc-50"
             >
               Cancel
             </button>
@@ -214,7 +214,7 @@ export function SignatureModal({
               onClick={handleConfirm}
               disabled={!hasDrawn}
               className={cn(
-                'rounded-lg px-5 py-2 text-sm font-medium transition-colors',
+                'min-h-11 rounded-lg px-5 py-2 text-sm font-medium transition-colors',
                 hasDrawn
                   ? 'bg-brand-teal text-white hover:bg-brand-teal/80'
                   : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'

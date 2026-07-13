@@ -437,7 +437,7 @@ export const UsersPage = forwardRef<UsersPageHandle, object>(function UsersPage(
   return (
     <div className="space-y-3">
       {/* Desktop table */}
-      <div className={tableContainerClass}>
+      <div className={cn(tableContainerClass, 'hidden md:block')}>
         <div className="overflow-x-auto">
           <table className={tableClass}>
             <thead>
@@ -497,9 +497,9 @@ export const UsersPage = forwardRef<UsersPageHandle, object>(function UsersPage(
               </div>
             </div>
             <div className="flex items-center justify-end gap-1 border-t border-zinc-100 px-4 py-2">
-              <button onClick={() => openEditModal(user)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-brand-teal hover:bg-brand-teal/10 min-h-[36px]"><Pencil className="size-3.5" /> Edit</button>
-              <button onClick={() => openPasswordModal(user)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-brand-sage hover:bg-brand-sage/10 min-h-[36px]"><KeyRound className="size-3.5" /> Password</button>
-              <button onClick={() => handleDeleteUser(user)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-red-500 hover:bg-red-50 min-h-[36px]"><Trash2 className="size-3.5" /> Delete</button>
+              <button onClick={() => openEditModal(user)} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-brand-teal hover:bg-brand-teal/10"><Pencil className="size-3.5" /> Edit</button>
+              <button onClick={() => openPasswordModal(user)} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-brand-sage hover:bg-brand-sage/10"><KeyRound className="size-3.5" /> Password</button>
+              <button onClick={() => handleDeleteUser(user)} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-red-500 hover:bg-red-50"><Trash2 className="size-3.5" /> Delete</button>
             </div>
           </div>
         ))}
@@ -627,10 +627,10 @@ export const UsersPage = forwardRef<UsersPageHandle, object>(function UsersPage(
       {editModalOpen && editUser && (
         <div className="fixed inset-0 z-[9999] flex items-start sm:items-center justify-center overflow-y-auto">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setEditModalOpen(false); resetEditForm(); }} />
-          <div className="relative z-10 w-full max-w-2xl min-h-screen sm:min-h-0">
-            <div className="rounded-none sm:rounded-2xl bg-white shadow-brand-xl min-h-screen sm:min-h-0 flex flex-col">
+          <div className="relative z-10 min-h-dvh w-full max-w-2xl sm:min-h-0">
+            <div className="flex min-h-dvh flex-col bg-white shadow-brand-xl sm:min-h-0 sm:rounded-2xl">
               {/* Scrollable body */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
                 {/* ── Header ── */}
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4">
@@ -645,7 +645,7 @@ export const UsersPage = forwardRef<UsersPageHandle, object>(function UsersPage(
                       </div>
                     </div>
                   </div>
-                  <button onClick={() => { setEditModalOpen(false); resetEditForm(); }} className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600" aria-label="Close"><X className="size-5" /></button>
+                  <button onClick={() => { setEditModalOpen(false); resetEditForm(); }} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600" aria-label="Close"><X className="size-5" /></button>
                 </div>
 
                 <div className="border-t border-zinc-100" />
@@ -751,10 +751,10 @@ export const UsersPage = forwardRef<UsersPageHandle, object>(function UsersPage(
       {passwordModalOpen && passwordTargetUser && (
         <div className="fixed inset-0 z-[9999] flex items-start sm:items-center justify-center overflow-y-auto">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setPasswordModalOpen(false); setNewPassword(''); }} />
-          <div className="relative z-10 w-full max-w-2xl min-h-screen sm:min-h-0">
-            <div className="rounded-none sm:rounded-2xl bg-white shadow-brand-xl min-h-screen sm:min-h-0 flex flex-col">
+          <div className="relative z-10 min-h-dvh w-full max-w-2xl sm:min-h-0">
+            <div className="flex min-h-dvh flex-col bg-white shadow-brand-xl sm:min-h-0 sm:rounded-2xl">
               {/* Scrollable body */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
                 {/* ── Header ── */}
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4">
@@ -766,7 +766,7 @@ export const UsersPage = forwardRef<UsersPageHandle, object>(function UsersPage(
                       <p className="text-sm text-zinc-500 mt-0.5">{passwordTargetUser.name}</p>
                     </div>
                   </div>
-                  <button onClick={() => { setPasswordModalOpen(false); setNewPassword(''); }} className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600" aria-label="Close"><X className="size-5" /></button>
+                  <button onClick={() => { setPasswordModalOpen(false); setNewPassword(''); }} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600" aria-label="Close"><X className="size-5" /></button>
                 </div>
 
                 <div className="border-t border-zinc-100" />

@@ -55,13 +55,13 @@ export function ReportsToolbar({
     <div className="rounded-xl bg-white shadow-brand border border-zinc-100 p-3">
       <div className="flex items-center gap-2 flex-wrap">
         {/* ── Tabs ── */}
-        <div className="flex items-center gap-0.5 shrink-0 overflow-x-auto">
+        <div className="flex w-full shrink-0 items-center gap-0.5 overflow-x-auto lg:w-auto">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => onTabChange(tab.key)}
               className={cn(
-                'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap',
+                'inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors sm:min-h-0',
                 activeTab === tab.key
                   ? 'bg-brand-teal/10 text-brand-teal'
                   : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100',
@@ -77,7 +77,7 @@ export function ReportsToolbar({
         <div className="hidden sm:block w-px h-6 bg-zinc-200 shrink-0" />
 
         {/* ── Search ── */}
-        <div className="relative w-[220px]">
+        <div className="relative w-full sm:w-[220px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
           <input
             type="text"
@@ -92,7 +92,7 @@ export function ReportsToolbar({
         <select
           value={reportType}
           onChange={(e) => onReportTypeChange(e.target.value)}
-          className="h-10 w-[170px] rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+          className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30 sm:h-10 sm:w-[170px]"
         >
           {REPORT_TYPE_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -106,7 +106,7 @@ export function ReportsToolbar({
           type="date"
           value={dateFrom}
           onChange={(e) => onDateFromChange(e.target.value)}
-          className="h-10 w-[145px] rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+          className="h-11 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30 sm:h-10 sm:w-[145px] sm:flex-none"
         />
 
         {/* ── Date To ── */}
@@ -114,7 +114,7 @@ export function ReportsToolbar({
           type="date"
           value={dateTo}
           onChange={(e) => onDateToChange(e.target.value)}
-          className="h-10 w-[145px] rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+          className="h-11 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30 sm:h-10 sm:w-[145px] sm:flex-none"
         />
 
         {/* ── Clear Search ── */}
@@ -132,7 +132,7 @@ export function ReportsToolbar({
         <div className="flex-1 min-w-0" />
 
         {/* ── Actions ── */}
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
           <button
             onClick={onRefresh}
             disabled={loading}

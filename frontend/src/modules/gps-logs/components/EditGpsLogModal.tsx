@@ -47,8 +47,8 @@ export function EditGpsLogModal({ isOpen, onClose, onSuccess, log, isSuperadmin 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-xl bg-white shadow-brand-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 sm:p-4">
+      <div className="max-h-dvh w-full max-w-lg overflow-y-auto bg-white shadow-brand-xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-xl">
         {/* Header */}
         <div className="flex items-center justify-between rounded-t-xl bg-brand-cream px-5 py-4">
           <div>

@@ -2,7 +2,7 @@
 // Used across all modules for visual consistency
 
 export const tableContainerClass =
-  'overflow-hidden rounded-xl border border-zinc-100 bg-white';
+  'overflow-x-auto rounded-xl border border-zinc-100 bg-white';
 
 export const tableClass =
   'min-w-full border-collapse text-sm';

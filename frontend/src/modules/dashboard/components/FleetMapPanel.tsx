@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, MapPin, Sparkles } from 'lucide-react';
+import { MapPin, Sparkles } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -24,8 +24,6 @@ interface FleetMapPanelProps {
     onOpenTripDetails: (tripId: string | null) => void;
 }
 
-type FilterKey = 'All' | 'Moving' | 'Idling' | 'Offline' | 'Alert' | 'No TO' | 'Maintenance Due';
-
 function getVehicleStatus(row: LiveMonitoringRow): 'moving' | 'idling' | 'offline' | 'alert' {
     const speed = Number(row.speed_kmh ?? row.speed ?? 0);
     if (row.ignition === true && speed > 0) return 'moving';
@@ -47,71 +45,7 @@ function getStatusMeta(status: 'moving' | 'idling' | 'offline' | 'alert') {
     }
 }
 
-function getFilterCount(vehicles: LiveMonitoringRow[], filter: FilterKey) {
-    return vehicles.filter((vehicle) => {
-        const status = getVehicleStatus(vehicle);
-        switch (filter) {
-            case 'Moving':
-                return status === 'moving';
-            case 'Idling':
-                return status === 'idling';
-            case 'Offline':
-                return status === 'offline';
-            case 'Alert':
-                return status === 'alert';
-            case 'No TO':
-                return !vehicle.current_travel_order;
-            case 'Maintenance Due':
-                return false;
-            default:
-                return true;
-        }
-    }).length;
-}
-
-function useDebouncedValue<T>(value: T, delay = 180) {
-    const [debouncedValue, setDebouncedValue] = useState(value);
-    useEffect(() => {
-        const timeout = window.setTimeout(() => setDebouncedValue(value), delay);
-        return () => window.clearTimeout(timeout);
-    }, [value, delay]);
-    return debouncedValue;
-}
-
 export function FleetMapPanel({ vehicles, selectedVehicleId, onSelectVehicle, onOpenTripDetails }: FleetMapPanelProps) {
-    const [searchTerm, setSearchTerm] = useState('');
-    const [activeFilter, setActiveFilter] = useState<FilterKey>('All');
-    const debouncedSearch = useDebouncedValue(searchTerm);
-
-    const filteredVehicles = useMemo(() => {
-        const normalized = debouncedSearch.trim().toLowerCase();
-        return vehicles.filter((vehicle) => {
-            const status = getVehicleStatus(vehicle);
-            const matchesFilter = (() => {
-                switch (activeFilter) {
-                    case 'Moving':
-                        return status === 'moving';
-                    case 'Idling':
-                        return status === 'idling';
-                    case 'Offline':
-                        return status === 'offline';
-                    case 'Alert':
-                        return status === 'alert';
-                    case 'No TO':
-                        return !vehicle.current_travel_order;
-                    case 'Maintenance Due':
-                        return false;
-                    default:
-                        return true;
-                }
-            })();
-
-            const haystack = [vehicle.plate_number, vehicle.driver_name, vehicle.current_travel_order].filter(Boolean).join(' ').toLowerCase();
-            const matchesSearch = !normalized || haystack.includes(normalized);
-            return matchesFilter && matchesSearch;
-        });
-    }, [activeFilter, debouncedSearch, vehicles]);
-
     const activityFeed = useMemo(() => {
         const entries = vehicles.flatMap((vehicle) => {
             const status = getVehicleStatus(vehicle);
@@ -133,47 +67,6 @@ export function FleetMapPanel({ vehicles, selectedVehicleId, onSelectVehicle, on
 
     return (
         <div className="space-y-4">
-            <div className="rounded-2xl border border-zinc-100 bg-white p-4 shadow-sm transition-all hover:shadow-md">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-zinc-600">
-                        <Search className="size-4 text-brand-teal" />
-                        Search fleet operations
-                    </div>
-                    <div className="flex-1 lg:max-w-xl">
-                        <label className="relative block">
-                            <span className="sr-only">Search by plate, driver, or trip</span>
-                            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
-                            <input
-                                value={searchTerm}
-                                onChange={(event) => setSearchTerm(event.target.value)}
-                                placeholder="Plate number, driver, or vehicle"
-                                className="w-full rounded-xl border border-zinc-200 bg-zinc-50 py-2.5 pl-10 pr-3 text-sm text-zinc-700 outline-none transition focus:border-brand-teal focus:bg-white"
-                            />
-                        </label>
-                    </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                    {(['All', 'Moving', 'Idling', 'Offline', 'Alert', 'No TO', 'Maintenance Due'] as FilterKey[]).map((filter) => {
-                        const selected = activeFilter === filter;
-                        return (
-                            <button
-                                key={filter}
-                                onClick={() => setActiveFilter(filter)}
-                                className={cn(
-                                    'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-all hover:-translate-y-0.5',
-                                    selected ? 'bg-brand-teal text-white shadow-sm' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200',
-                                )}
-                            >
-                                {filter}
-                                <span className={cn('rounded-full px-2 py-0.5 text-[11px]', selected ? 'bg-white/20 text-white' : 'bg-white text-zinc-500')}>
-                                    {getFilterCount(vehicles, filter)}
-                                </span>
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
-
             <div className="grid gap-4 xl:grid-cols-[2fr,1fr]">
                 <div className="rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm transition-all hover:shadow-md">
                     <div className="mb-3 flex items-center justify-between px-2">
@@ -187,7 +80,7 @@ export function FleetMapPanel({ vehicles, selectedVehicleId, onSelectVehicle, on
                         </div>
                     </div>
                     <MapView
-                        vehicles={filteredVehicles}
+                        vehicles={vehicles}
                         selectedVehicleId={selectedVehicleId}
                         onSelectVehicle={onSelectVehicle}
                         onOpenTripDetails={onOpenTripDetails}

@@ -152,7 +152,7 @@ export function MaintenancePage({ searchQuery = '' }: MaintenancePageProps) {
       ) : (
         <>
           {/* ── Desktop Table ── */}
-          <div className={tableContainerClass}>
+          <div className={cn(tableContainerClass, 'hidden md:block')}>
             <table className={tableClass}>
               <thead>
                 <tr className={tableHeaderClass}>
@@ -202,14 +202,14 @@ export function MaintenancePage({ searchQuery = '' }: MaintenancePageProps) {
                       <div className="flex items-center justify-end gap-1">
                         <button
                           onClick={() => openEditModal(record)}
-                          className="rounded-lg p-2 text-zinc-400 hover:bg-brand-cream hover:text-brand-teal transition-colors"
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-brand-cream hover:text-brand-teal"
                           title="Edit"
                         >
                           <Pencil className="size-4" />
                         </button>
                         <button
                           onClick={() => handleDelete(record)}
-                          className="rounded-lg p-2 text-zinc-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500"
                           title="Delete"
                         >
                           <Trash2 className="size-4" />
@@ -241,14 +241,14 @@ export function MaintenancePage({ searchQuery = '' }: MaintenancePageProps) {
                   <div className="flex items-center gap-0.5 shrink-0">
                     <button
                       onClick={() => openEditModal(record)}
-                      className="rounded-lg p-2 text-zinc-400 hover:bg-brand-cream hover:text-brand-teal transition-colors"
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-brand-cream hover:text-brand-teal"
                       title="Edit"
                     >
                       <Pencil className="size-4" />
                     </button>
                     <button
                       onClick={() => handleDelete(record)}
-                      className="rounded-lg p-2 text-zinc-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500"
                       title="Delete"
                     >
                       <Trash2 className="size-4" />

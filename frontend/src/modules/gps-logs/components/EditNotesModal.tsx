@@ -32,9 +32,9 @@ export function EditNotesModal({ isOpen, onClose, onSuccess, logId, currentNotes
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/40 sm:p-4" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-xl bg-white shadow-brand-xl"
+        className="max-h-dvh w-full max-w-md overflow-y-auto bg-white shadow-brand-xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

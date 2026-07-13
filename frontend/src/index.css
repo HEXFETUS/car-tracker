@@ -294,3 +294,43 @@
 .to-number {
   color: #b91c1c;
 }
+
+/* Keep the printable document readable as an on-screen preview on phones.
+   Print output retains the official multi-column layout above. */
+@media screen and (max-width: 640px) {
+  .to-print-sheet {
+    padding: 16px 12px;
+  }
+
+  .to-grid,
+  .to-time-row,
+  .to-signatures {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .to-field,
+  .to-time-row .to-field {
+    grid-template-columns: minmax(92px, 34%) minmax(0, 1fr);
+  }
+
+  .to-field strong {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .to-purpose-box {
+    grid-template-columns: 1fr;
+  }
+
+  .to-purpose-label {
+    border-right: 0;
+    border-bottom: 1.5px solid #111;
+    padding: 8px;
+  }
+
+  .signature-block {
+    min-height: 72px;
+  }
+}

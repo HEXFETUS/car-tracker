@@ -27,6 +27,10 @@ export interface DashboardKpis {
     total_distance_today: number;
     avg_distance_per_trip: number;
     max_speed_today: number;
+    average_speed_today: number;
+    engine_hours_today: number;
+    moving_hours_today: number;
+    fuel_alerts_today: number;
     gps_anomalies_detected: number;
   };
   alerts: {
@@ -51,6 +55,7 @@ export interface TimeSeriesPoint {
 export interface LiveMonitoringRow {
   vehicle_id: string;
   plate_number: string;
+  under_repair?: boolean;
   driver_name: string;
   current_travel_order: string | null;
   current_travel_order_id: string | null;
@@ -238,6 +243,10 @@ function normalizeDashboardData(data: DashboardData): DashboardData {
         total_distance_today: toNumber(data.kpis.gps.total_distance_today),
         avg_distance_per_trip: toNumber(data.kpis.gps.avg_distance_per_trip),
         max_speed_today: toNumber(data.kpis.gps.max_speed_today),
+        average_speed_today: toNumber(data.kpis.gps.average_speed_today),
+        engine_hours_today: toNumber(data.kpis.gps.engine_hours_today),
+        moving_hours_today: toNumber(data.kpis.gps.moving_hours_today),
+        fuel_alerts_today: toNumber(data.kpis.gps.fuel_alerts_today),
         gps_anomalies_detected: toNumber(data.kpis.gps.gps_anomalies_detected),
       },
       alerts: {
@@ -420,6 +429,10 @@ export function emptyDashboardData(): DashboardData {
         total_distance_today: 0,
         avg_distance_per_trip: 0,
         max_speed_today: 0,
+        average_speed_today: 0,
+        engine_hours_today: 0,
+        moving_hours_today: 0,
+        fuel_alerts_today: 0,
         gps_anomalies_detected: 0,
       },
       alerts: {

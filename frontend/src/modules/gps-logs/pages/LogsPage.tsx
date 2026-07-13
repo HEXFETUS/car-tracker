@@ -180,12 +180,12 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
   // ── Filters ──
   const filters = (
     <>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <Car className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-brand-teal pointer-events-none" />
         <select
           value={vehicleFilter}
           onChange={(e) => { onVehicleFilterChange(e.target.value); setPage(1); }}
-          className="w-[170px] rounded-lg border-0 bg-white pl-8 pr-7 py-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm appearance-none cursor-pointer"
+          className="h-11 w-full rounded-lg border-0 bg-white py-2 pl-8 pr-7 text-sm font-medium text-zinc-700 shadow-sm ring-1 ring-brand-sage transition-shadow hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 sm:h-auto sm:w-[170px]"
         >
           <option value="">All Vehicles</option>
           {vehiclesLoading && <option disabled>Loading…</option>}
@@ -199,14 +199,14 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
           </button>
         )}
       </div>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-brand-teal pointer-events-none" />
         <input
           type="date"
           value={dateFilter}
           max={today}
           onChange={(e) => { onDateFilterChange(e.target.value); setPage(1); }}
-          className="gps-log-date-filter w-[168px] rounded-lg border-0 bg-white pl-8 pr-7 py-2 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 transition-shadow shadow-sm"
+          className="gps-log-date-filter h-11 w-full rounded-lg border-0 bg-white py-2 pl-8 pr-7 text-sm font-medium text-zinc-700 shadow-sm ring-1 ring-brand-sage transition-shadow hover:ring-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/30 sm:h-auto sm:w-[168px]"
         />
         {dateFilter && (
           <button onClick={() => { onDateFilterChange(''); setPage(1); }} className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-600" title="Clear">
@@ -250,6 +250,7 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
         isOpen={tripDetailOpen}
         onClose={() => { setTripDetailOpen(false); setTripDetailLogId(null); }}
         onOpenTrip={handleOpenTripDetails}
+        onDeleted={loadLogs}
         logId={tripDetailLogId}
       />
 
@@ -322,7 +323,7 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
       {!loading && !error && result && result.data.length > 0 && (
         <>
           {/* Desktop table */}
-          <div className={tableContainerClass}>
+          <div className={cn(tableContainerClass, 'hidden md:block')}>
             <div className="overflow-x-auto">
               <table className={tableClass}>
                 <thead>
@@ -457,7 +458,7 @@ export function LogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleFilte
                     {log.notesRemarks && <p className="text-xs text-zinc-500 bg-zinc-50 rounded-lg px-3 py-2 leading-relaxed">{log.notesRemarks}</p>}
                     <button
                       onClick={() => handleViewDetails(log)}
-                      className="inline-flex items-center gap-1 rounded-md px-3 py-2 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors min-h-10"
+                  className="inline-flex min-h-11 items-center gap-1 rounded-md px-3 py-2 text-xs font-medium text-brand-teal transition-colors hover:bg-brand-teal/5"
                     >
                       <Eye className="size-3.5" /> View Details
                     </button>

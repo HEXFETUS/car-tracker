@@ -209,10 +209,10 @@ export function PinpointMapModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="relative w-full max-w-3xl mx-4 rounded-2xl bg-white shadow-brand-xl overflow-hidden">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm sm:p-4">
+      <div className="relative flex max-h-dvh w-full max-w-3xl flex-col overflow-y-auto bg-white shadow-brand-xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-4 py-4 sm:items-center sm:px-6">
           <div>
             <h2 className="text-lg font-bold text-zinc-900">Pinpoint {locationLabel}</h2>
             <p className="text-sm text-zinc-400">Drag the marker or click the map to set the exact location</p>
@@ -220,16 +220,16 @@ export function PinpointMapModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
           >
             <X className="size-5" />
           </button>
         </div>
 
         {/* Search bar */}
-        <div className="px-6 py-3">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
+        <div className="shrink-0 px-4 py-3 sm:px-6">
+          <div className="flex flex-wrap gap-2 sm:flex-nowrap">
+            <div className="relative w-full flex-1 sm:w-auto">
               <input
                 type="text"
                 value={searchQuery}
@@ -244,7 +244,7 @@ export function PinpointMapModal({
               type="button"
               onClick={handleSearch}
               disabled={isSearching}
-              className="rounded-lg bg-brand-teal px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-50"
+              className="min-h-11 flex-1 rounded-lg bg-brand-teal px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-50 sm:flex-none"
             >
               {isSearching ? 'Searching...' : 'Search'}
             </button>
@@ -252,7 +252,7 @@ export function PinpointMapModal({
               type="button"
               onClick={handleGetCurrentLocation}
               disabled={isLoadingCoords}
-              className="rounded-lg ring-1 ring-brand-sage px-3 py-2.5 text-sm font-medium text-zinc-600 hover:bg-brand-cream transition-colors disabled:opacity-50"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-sm font-medium text-zinc-600 ring-1 ring-brand-sage transition-colors hover:bg-brand-cream disabled:opacity-50"
               title="Use current location"
             >
               <LocateFixed className="size-4" />
@@ -261,14 +261,14 @@ export function PinpointMapModal({
         </div>
 
         {/* Map */}
-        <div className="px-6 pb-3">
-          <div ref={mapRef} className="h-[400px] w-full rounded-lg border border-zinc-200 z-0" />
+        <div className="shrink-0 px-4 pb-3 sm:px-6">
+          <div ref={mapRef} className="z-0 h-[42dvh] min-h-52 w-full rounded-lg border border-zinc-200 sm:h-[400px]" />
         </div>
 
         {/* Coordinates */}
         {(lat || lng) && (
-          <div className="px-6 pb-3">
-            <div className="flex items-center gap-4 rounded-lg bg-brand-cream px-4 py-2.5 text-sm">
+          <div className="shrink-0 px-4 pb-3 sm:px-6">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-brand-cream px-4 py-2.5 text-sm">
               <span className="font-medium text-zinc-700">
                 Lat: <span className="text-brand-teal">{lat}</span>
               </span>
@@ -276,7 +276,7 @@ export function PinpointMapModal({
                 Lng: <span className="text-brand-teal">{lng}</span>
               </span>
               {address && (
-                <span className="text-zinc-500 truncate flex-1 text-right" title={address}>
+                <span className="w-full truncate text-zinc-500 sm:min-w-0 sm:flex-1 sm:text-right" title={address}>
                   {address}
                 </span>
               )}
@@ -285,11 +285,11 @@ export function PinpointMapModal({
         )}
 
         {/* Actions */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-zinc-200">
+        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-zinc-200 px-4 py-4 sm:px-6">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg ring-1 ring-brand-sage px-5 py-2.5 text-sm font-medium text-zinc-600 hover:bg-brand-cream transition-colors"
+            className="min-h-11 flex-1 rounded-lg px-5 py-2.5 text-sm font-medium text-zinc-600 ring-1 ring-brand-sage transition-colors hover:bg-brand-cream sm:flex-none"
           >
             Cancel
           </button>
@@ -297,7 +297,7 @@ export function PinpointMapModal({
             type="button"
             onClick={handleConfirm}
             disabled={!lat || !lng}
-            className="rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-teal/80 transition-colors disabled:opacity-50"
+            className="min-h-11 flex-[2] rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-50 sm:flex-none"
           >
             Confirm Location
           </button>

@@ -110,9 +110,9 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
   const today = new Date().toISOString().split('T')[0];
   const filters = (
     <>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <Car className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-brand-teal" />
-        <select value={vehicleFilter} onChange={(e) => { onVehicleFilterChange(e.target.value); setPage(1); }} className="h-10 w-[170px] appearance-none rounded-lg border-0 bg-white pl-8 pr-7 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage">
+        <select value={vehicleFilter} onChange={(e) => { onVehicleFilterChange(e.target.value); setPage(1); }} className="h-11 w-full appearance-none rounded-lg border-0 bg-white pl-8 pr-7 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage sm:h-10 sm:w-[170px]">
           <option value="">All Vehicles</option>
           {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plateNumber}</option>)}
         </select>
@@ -122,20 +122,20 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
           </button>
         )}
       </div>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-brand-teal" />
-        <input type="date" value={dateFilter} max={today} onChange={(e) => { onDateFilterChange(e.target.value); setPage(1); }} className="gps-log-date-filter h-10 w-[168px] rounded-lg border-0 bg-white pl-8 pr-7 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage" />
+        <input type="date" value={dateFilter} max={today} onChange={(e) => { onDateFilterChange(e.target.value); setPage(1); }} className="gps-log-date-filter h-11 w-full rounded-lg border-0 bg-white pl-8 pr-7 text-sm font-medium text-zinc-700 ring-1 ring-brand-sage sm:h-10 sm:w-[168px]" />
         {dateFilter && (
           <button onClick={() => { onDateFilterChange(''); setPage(1); }} className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-600" title="Clear">
             <X className="size-3" />
           </button>
         )}
       </div>
-      <button onClick={loadLogs} className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-brand-teal/30 px-3 text-sm font-medium text-brand-teal hover:bg-brand-teal/5">
+      <button onClick={loadLogs} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-brand-teal/30 px-3 text-sm font-medium text-brand-teal hover:bg-brand-teal/5 sm:h-10 sm:flex-none">
         <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
         Refresh
       </button>
-      <button onClick={handleSync} disabled={syncing} className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-brand-teal px-4 text-sm font-medium text-white hover:bg-brand-teal/90 disabled:bg-brand-teal/50">
+      <button onClick={handleSync} disabled={syncing} className="inline-flex h-11 flex-[2] items-center justify-center gap-1.5 rounded-lg bg-brand-teal px-4 text-sm font-medium text-white hover:bg-brand-teal/90 disabled:bg-brand-teal/50 sm:h-10 sm:flex-none">
         {syncing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
         {syncing ? 'Syncing...' : 'Sync No TO Logs'}
       </button>
@@ -159,7 +159,8 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
       )}
 
       {!loading && result && result.data.length > 0 && (
-        <div className={tableContainerClass}>
+        <>
+        <div className={cn(tableContainerClass, 'hidden md:block')}>
           <div className="overflow-x-auto">
             <table className={tableClass}>
               <thead>
@@ -208,6 +209,52 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
           </div>
           <Pagination currentPage={page} totalPages={Math.ceil(result.total / pageSize)} totalItems={result.total} pageSize={pageSize} onPageChange={setPage} />
         </div>
+        <div className="space-y-3 md:hidden">
+          {result.data.map((log) => (
+            <article key={log.id} className="overflow-hidden rounded-xl border border-zinc-100 bg-white shadow-brand">
+              <div className="flex items-start justify-between gap-3 bg-brand-cream/60 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-sm font-semibold text-brand-teal">{log.noToRecordNo}</p>
+                  <p className="mt-0.5 text-xs text-zinc-500">{formatDateManila(log.tripDate)}</p>
+                </div>
+                <span className={cn(
+                  'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold',
+                  log.statusDisplay === 'Completed'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-blue-200 bg-blue-50 text-blue-700',
+                )}>
+                  {log.statusDisplay}
+                </span>
+              </div>
+              <div className="space-y-3 px-4 py-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Vehicle</p>
+                  <p className="text-sm font-medium text-zinc-800">{log.vehiclePlateNo}</p>
+                </div>
+                {log.anomalyReason && (
+                  <p className={cn(
+                    'rounded-lg px-3 py-2 text-xs font-semibold',
+                    log.anomalyReason.toLowerCase().includes('unauthorized')
+                      ? 'bg-red-50 text-red-700'
+                      : 'bg-orange-50 text-orange-700',
+                  )}>
+                    {log.anomalyReason}
+                  </p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2 border-t border-zinc-100 p-3">
+                <button onClick={() => setDetailId(log.id)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg text-sm font-medium text-brand-teal hover:bg-brand-teal/5">
+                  <Eye className="size-4" /> View
+                </button>
+                <button onClick={() => openLinkModal(log)} disabled={log.status === 'linked'} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg text-sm font-medium text-brand-teal hover:bg-brand-teal/5 disabled:text-zinc-300">
+                  <Link2 className="size-4" /> Link
+                </button>
+              </div>
+            </article>
+          ))}
+          <Pagination currentPage={page} totalPages={Math.ceil(result.total / pageSize)} totalItems={result.total} pageSize={pageSize} onPageChange={setPage} />
+        </div>
+        </>
       )}
 
       {linkLog && (
@@ -215,7 +262,7 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
           <div className="w-full max-w-lg rounded-xl bg-white shadow-brand-xl">
             <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
               <h2 className="font-semibold text-zinc-800">Link to Travel Order</h2>
-              <button onClick={() => setLinkLog(null)} className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100"><X className="size-5" /></button>
+              <button onClick={() => setLinkLog(null)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100" aria-label="Close"><X className="size-5" /></button>
             </div>
             <div className="space-y-4 px-5 py-4">
               <p className="text-sm text-zinc-500">{linkLog.noToRecordNo} · {linkLog.vehiclePlateNo}</p>
@@ -227,8 +274,8 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
               </select>
             </div>
             <div className="flex justify-end gap-2 border-t border-zinc-100 px-5 py-4">
-              <button onClick={() => setLinkLog(null)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100">Cancel</button>
-              <button onClick={handleLink} disabled={!selectedToId || linking} className="inline-flex items-center gap-2 rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white disabled:bg-brand-teal/50">
+              <button onClick={() => setLinkLog(null)} className="min-h-11 flex-1 rounded-lg px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100 sm:flex-none">Cancel</button>
+              <button onClick={handleLink} disabled={!selectedToId || linking} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white disabled:bg-brand-teal/50 sm:flex-none">
                 {linking && <Loader2 className="size-4 animate-spin" />}
                 Link
               </button>

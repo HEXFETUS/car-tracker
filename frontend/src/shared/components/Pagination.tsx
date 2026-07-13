@@ -69,14 +69,34 @@ export function Pagination({
   }
 
   return (
-    <div className={cn('flex items-center justify-between border-t border-zinc-100 px-3 py-2 text-sm', className)}>
+    <div className={cn('flex flex-col gap-2 border-t border-zinc-100 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between', className)}>
       {/* Left: Showing text */}
-      <p className="text-[11px] text-zinc-400">
+      <p className="text-center text-[11px] text-zinc-400 sm:text-left">
         Showing {start}–{end} of {totalItems}
       </p>
 
       {/* Right: Navigation controls */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex w-full items-center justify-between gap-2 sm:hidden">
+        <button
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage === 1}
+          className="min-h-11 rounded-lg border border-zinc-200 px-4 text-xs font-medium transition-colors hover:border-brand-teal hover:text-brand-teal disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          ‹ Previous
+        </button>
+        <span className="text-xs font-medium text-zinc-500">
+          Page {currentPage} of {Math.max(1, totalPages)}
+        </span>
+        <button
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage === totalPages}
+          className="min-h-11 rounded-lg border border-zinc-200 px-4 text-xs font-medium transition-colors hover:border-brand-teal hover:text-brand-teal disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next ›
+        </button>
+      </div>
+
+      <div className="hidden items-center gap-1.5 sm:flex">
         {/* Back */}
         <button
           onClick={() => onPageChange(Math.max(1, currentPage - 1))}

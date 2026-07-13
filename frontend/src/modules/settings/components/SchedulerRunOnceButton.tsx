@@ -33,7 +33,7 @@ export function SchedulerRunOnceButton({ onComplete }: SchedulerRunOnceButtonPro
     <button
       onClick={handleRun}
       disabled={running}
-      className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60"
+      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60"
     >
       {running && <Loader2 className="size-3 animate-spin" />}
       <Play className="size-3" />

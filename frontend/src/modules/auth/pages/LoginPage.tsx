@@ -29,7 +29,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-dvh">
       {/* Left — Branding */}
       <div className="relative hidden w-1/2 flex-col items-center justify-center overflow-hidden p-12 text-white lg:flex">
         {/* Map background */}

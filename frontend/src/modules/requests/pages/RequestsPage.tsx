@@ -247,7 +247,7 @@ export function RequestsPage() {
       <div className="rounded-xl bg-white shadow-brand border border-zinc-100 p-3">
         <div className="flex items-center gap-2 flex-wrap">
           {/* ── Tabs ── */}
-          <div className="flex items-center gap-0.5 shrink-0 overflow-x-auto">
+          <div className="flex w-full shrink-0 items-center gap-0.5 overflow-x-auto lg:w-auto">
             {visibleTabs.map((tab) => {
               const Icon = tab.icon;
               return (
@@ -258,7 +258,7 @@ export function RequestsPage() {
                     setSearchQuery('');
                   }}
                   className={cn(
-                    'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap',
+                    'inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors sm:min-h-0',
                     safeActiveTab === tab.key
                       ? 'bg-brand-teal/10 text-brand-teal'
                       : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100',
@@ -286,9 +286,9 @@ export function RequestsPage() {
           <div className="hidden lg:block flex-1 min-w-0" />
 
           {/* ── Search + Actions ── */}
-          <div className="flex items-center gap-2">
+          <div className="flex w-full items-center gap-2 sm:w-auto">
             {safeActiveTab === 'request' && (
-              <div className="relative w-[220px]">
+              <div className="relative min-w-0 flex-1 sm:w-[220px] sm:flex-none">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
                 <input
                   type="text"
@@ -302,7 +302,7 @@ export function RequestsPage() {
             <button
               onClick={safeActiveTab === 'request' ? loadForRequestOrders : loadScheduledOrders}
               disabled={safeActiveTab === 'request' ? loadingRequest : loadingScheduled}
-              className="inline-flex items-center justify-center gap-1.5 h-10 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 hover:bg-zinc-100 transition-colors disabled:opacity-50"
+              className="inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 sm:h-10"
             >
               <RefreshCw className={cn('size-4', (safeActiveTab === 'request' ? loadingRequest : loadingScheduled) && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>

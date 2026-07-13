@@ -26,7 +26,7 @@ const queryClient = new QueryClient();
 
 function AppRoutes() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center h-screen text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<div className="flex h-dvh items-center justify-center text-muted-foreground">Loading...</div>}>
       <Routes>
       {/* Public: user-to request page — no auth required, standalone layout */}
       <Route path="/user-to/request" element={<RequestTravelOrderPage />} />

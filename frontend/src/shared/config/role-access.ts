@@ -10,8 +10,8 @@ export const NAV_ACCESS: Record<string, UserRole[]> = {
   '/': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
   '/travel-orders': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
   '/travel-requests': ['SUPERADMIN', 'DISPATCHER', 'VIEWER'],
-  '/gps-logs': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
-  '/list': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
+  '/gps-logs': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
+  '/list': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
   '/reports': ['SUPERADMIN', 'ADMIN', 'VIEWER'],
   '/settings': ['SUPERADMIN'],
 };
@@ -22,8 +22,8 @@ export const NAV_ACCESS: Record<string, UserRole[]> = {
  */
 export const TAB_ACCESS: Record<string, UserRole[]> = {
   // Travel Orders Tabs
-  'travel-orders:pending': ['SUPERADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
-  'travel-orders:for-approval': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'VIEWER'],
+  'travel-orders:pending': ['SUPERADMIN', 'HR', 'VIEWER'],
+  'travel-orders:for-approval': ['SUPERADMIN', 'ADMIN', 'VIEWER'],
   'travel-orders:approved': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
   'travel-orders:cancelled': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
   // Travel Requests Tabs

@@ -35,12 +35,56 @@ async function loadSummary(pool: QueryablePool) {
         (SELECT COUNT(*) FROM travel_orders WHERE status = 'CANCELLED') AS cancelled_orders
     `),
     timedQuery(pool, 'dashboard gpsKpis', `
+      WITH date_context AS (
+        SELECT (NOW() AT TIME ZONE 'Asia/Manila')::date AS today
+      ),
+      todays_trips AS (
+        SELECT gps_distance_km AS distance_km, engine_hours, max_speed_kph, anomaly_flag
+        FROM gps_trip_logs, date_context
+        WHERE trip_date = today
+        UNION ALL
+        SELECT distance_km, engine_hours, max_speed_kph, anomaly_flag
+        FROM gps_no_to_logs, date_context
+        WHERE trip_date = today
+          AND converted_gps_trip_log_id IS NULL
+      ),
+      telemetry_points AS (
+        SELECT
+          vehicle_id,
+          recorded_at,
+          speed_kmh,
+          LAG(recorded_at) OVER (PARTITION BY vehicle_id ORDER BY recorded_at) AS previous_at,
+          LAG(speed_kmh) OVER (PARTITION BY vehicle_id ORDER BY recorded_at) AS previous_speed
+        FROM gps_telemetry, date_context
+        WHERE recorded_at >= today::timestamp AT TIME ZONE 'Asia/Manila'
+          AND recorded_at < (today + 1)::timestamp AT TIME ZONE 'Asia/Manila'
+      )
       SELECT
-        (SELECT COUNT(*) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS trips_recorded_today,
-        (SELECT COALESCE(SUM(gps_distance_km), 0) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS total_distance_today,
-        (SELECT COALESCE(AVG(gps_distance_km), 0) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS avg_distance_per_trip,
-        (SELECT COALESCE(MAX(max_speed_kph), 0) FROM gps_trip_logs WHERE trip_date = CURRENT_DATE) AS max_speed_today,
-        (SELECT COUNT(*) FROM gps_trip_logs WHERE anomaly_flag = TRUE AND trip_date >= CURRENT_DATE - INTERVAL '7 days') AS gps_anomalies_detected
+        (SELECT COUNT(*) FROM todays_trips) AS trips_recorded_today,
+        (SELECT COALESCE(SUM(distance_km), 0) FROM todays_trips) AS total_distance_today,
+        (SELECT COALESCE(AVG(distance_km), 0) FROM todays_trips) AS avg_distance_per_trip,
+        (SELECT COALESCE(MAX(max_speed_kph), 0) FROM todays_trips) AS max_speed_today,
+        (SELECT COALESCE(SUM(engine_hours), 0) FROM todays_trips) AS engine_hours_today,
+        (SELECT COALESCE(AVG(speed_kmh) FILTER (WHERE speed_kmh > 0), 0) FROM telemetry_points) AS average_speed_today,
+        (SELECT COALESCE(SUM(
+          CASE
+            WHEN previous_at IS NOT NULL
+              AND recorded_at - previous_at <= INTERVAL '10 minutes'
+              AND (speed_kmh > 0 OR previous_speed > 0)
+            THEN EXTRACT(EPOCH FROM (recorded_at - previous_at)) / 3600.0
+            ELSE 0
+          END
+        ), 0) FROM telemetry_points) AS moving_hours_today,
+        (SELECT COUNT(*) FROM gps_telemetry, date_context
+          WHERE recorded_at >= today::timestamp AT TIME ZONE 'Asia/Manila'
+            AND recorded_at < (today + 1)::timestamp AT TIME ZONE 'Asia/Manila'
+            AND UPPER(event_type) = 'LOW_FUEL') AS fuel_alerts_today,
+        (
+          (SELECT COUNT(*) FROM gps_trip_logs, date_context WHERE anomaly_flag = TRUE AND trip_date >= today - 7)
+          +
+          (SELECT COUNT(*) FROM gps_no_to_logs, date_context
+            WHERE anomaly_flag = TRUE AND trip_date >= today - 7 AND converted_gps_trip_log_id IS NULL)
+        ) AS gps_anomalies_detected
     `),
     timedQuery(pool, 'dashboard realTimeStatus', `
       WITH latest_telemetry AS (
@@ -167,6 +211,62 @@ async function loadLive(pool: QueryablePool) {
   let liveSource = 'db';
   let activeTripsRows: any[] = [];
 
+  // Travel-order state is stored locally, while current position comes from
+  // Cartrack. Load both and merge them by the canonical plate number.
+  const vehicleContextResult = await timedQuery(pool, 'dashboard liveVehicleContext', `
+    SELECT
+      v.id AS vehicle_id,
+      v.plate_number,
+      v.under_repair,
+      COALESCE(d.full_name, 'Unassigned') AS driver_name,
+      current_order.id AS current_travel_order_id,
+      current_order.to_number AS current_travel_order,
+      current_order.origin_location AS origin,
+      current_order.destination_target AS destination,
+      current_order.scheduled_departure AS departure_time,
+      current_order.scheduled_arrival AS arrival_time,
+      current_order.status AS trip_status,
+      COALESCE(current_log.gps_distance_km, 0) AS distance_traveled
+    FROM vehicles v
+    LEFT JOIN LATERAL (
+      SELECT t.*
+      FROM travel_orders t
+      WHERE t.vehicle_id = v.id
+        AND t.status IN ('ACTIVE', 'APPROVED')
+      ORDER BY CASE WHEN t.status = 'ACTIVE' THEN 0 ELSE 1 END, t.updated_at DESC
+      LIMIT 1
+    ) current_order ON TRUE
+    LEFT JOIN drivers d ON d.id = current_order.driver_id
+    LEFT JOIN LATERAL (
+      SELECT g.gps_distance_km
+      FROM gps_trip_logs g
+      WHERE g.travel_order_id = current_order.id
+      ORDER BY g.created_at DESC
+      LIMIT 1
+    ) current_log ON TRUE
+  `);
+  const contextByPlate = new Map(
+    vehicleContextResult.rows.map((row: any) => [String(row.plate_number).replace(/\s+/g, '').toUpperCase(), row]),
+  );
+
+  const enrichLiveRow = (row: any) => {
+    const plateKey = String(row.plate_number ?? '').replace(/\s+/g, '').toUpperCase();
+    const context = contextByPlate.get(plateKey) as any;
+    if (!context) return row;
+    return {
+      ...row,
+      ...context,
+      // Keep the fresh tracker location fields after applying DB context.
+      latitude: row.latitude,
+      longitude: row.longitude,
+      last_seen: row.last_seen,
+      speed_kmh: row.speed_kmh,
+      ignition: row.ignition,
+      location_name: row.location_name,
+      driver_name: context.current_travel_order ? context.driver_name : row.driver_name,
+    };
+  };
+
   // Try current fleet snapshot from Cartrack first
   try {
     const fleetResult = await syncFleetAndAlert({ dispatchAlerts: false });
@@ -191,7 +291,7 @@ async function loadLive(pool: QueryablePool) {
 
     if (mapped.length > 0) {
       liveSource = 'cartrack';
-      liveMonitoringRows = mapped;
+      liveMonitoringRows = mapped.map(enrichLiveRow);
     }
   } catch (error) {
     console.error('[dashboard] syncFleetAndAlert failed:', error instanceof Error ? error.message : String(error));
@@ -231,7 +331,7 @@ async function loadLive(pool: QueryablePool) {
       ORDER BY v.plate_number ASC
       LIMIT 50
     `);
-    liveMonitoringRows = fallbackResult.rows;
+    liveMonitoringRows = fallbackResult.rows.map(enrichLiveRow);
   }
 
   // Always fetch active trips from DB (travel order state lives in DB)
@@ -311,9 +411,14 @@ async function loadTables(pool: QueryablePool) {
     timedQuery(pool, 'dashboard matchingAccuracy', `
       SELECT
         (SELECT COUNT(*) FROM gps_trip_logs WHERE travel_order_id IS NOT NULL) AS gps_logs_linked_to_to,
-        (SELECT COUNT(*) FROM gps_trip_logs WHERE travel_order_id IS NULL) AS gps_logs_without_to,
-        (SELECT COUNT(*) FROM gps_trip_logs WHERE to_status_auto = 'matched') AS auto_matched_trips,
-        (SELECT COUNT(*) FROM gps_trip_logs WHERE to_status_auto = 'manual') AS manual_corrections
+        (
+          (SELECT COUNT(*) FROM gps_trip_logs WHERE travel_order_id IS NULL)
+          +
+          (SELECT COUNT(*) FROM gps_no_to_logs
+            WHERE status = 'unmatched' AND converted_gps_trip_log_id IS NULL)
+        ) AS gps_logs_without_to,
+        (SELECT COUNT(*) FROM gps_trip_logs WHERE LOWER(to_status_auto) = 'matched') AS auto_matched_trips,
+        (SELECT COUNT(*) FROM gps_trip_logs WHERE LOWER(to_status_auto) = 'manual') AS manual_corrections
     `),
     timedQuery(pool, 'dashboard totalVehicles', `SELECT COUNT(*) AS cnt FROM vehicles`),
     timedQuery(pool, 'dashboard recentlyCompleted', `

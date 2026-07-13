@@ -54,11 +54,11 @@ export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPri
 
   return (
       <div
-        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 sm:p-4"
       >
-      <div className="relative w-full max-w-5xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl flex flex-col">
+      <div className="relative flex max-h-dvh w-full max-w-5xl flex-col bg-white shadow-brand-xl sm:max-h-[calc(100dvh-40px)] sm:rounded-2xl">
         {/* ── Header ── */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 shrink-0">
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 px-4 py-4 sm:px-6">
           <h3 className="text-base font-bold text-zinc-800">Print Travel Order</h3>
           <button
             type="button"
@@ -70,7 +70,7 @@ export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPri
         </div>
 
         {/* ── Scrollable Body ── */}
-        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 scroll-smooth print-preview-content">
+        <div className="print-preview-content flex-1 overflow-y-auto overscroll-contain px-2 py-4 scroll-smooth sm:px-6 sm:py-5">
           <div
             id="travel-order-print"
             ref={printRef}
@@ -81,7 +81,7 @@ export function TravelOrderPrintModal({ isOpen, onClose, order }: TravelOrderPri
         </div>
 
         {/* ── Footer ── */}
-        <div className="flex justify-end gap-2 px-6 py-4 border-t border-zinc-100 bg-white rounded-b-2xl shrink-0">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-zinc-100 bg-white px-4 py-4 sm:rounded-b-2xl sm:px-6">
           <button
             type="button"
             onClick={onClose}

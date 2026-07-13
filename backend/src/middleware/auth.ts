@@ -8,20 +8,20 @@ export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'DISPATCHER' | 'HR' | 'VIEWER';
  * Uses originalUrl prefixes since Express strips mount points from req.path.
  */
 const ROUTE_ACCESS: Record<string, UserRole[]> = {
-  '/api/vehicles': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
-  '/vehicles': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
-  '/api/drivers': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
-  '/drivers': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
+  '/api/vehicles': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
+  '/vehicles': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
+  '/api/drivers': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
+  '/drivers': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
   '/api/travel-orders': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
   '/travel-orders': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'],
-  '/api/gps-logs': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
-  '/gps-logs': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
+  '/api/gps-logs': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
+  '/gps-logs': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
   '/api/users': ['SUPERADMIN', 'ADMIN'],
   '/users': ['SUPERADMIN', 'ADMIN'],
   '/api/reports': ['SUPERADMIN', 'ADMIN', 'VIEWER'],
   '/reports': ['SUPERADMIN', 'ADMIN', 'VIEWER'],
-  '/api/maintenance': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
-  '/maintenance': ['SUPERADMIN', 'ADMIN', 'DISPATCHER'],
+  '/api/maintenance': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
+  '/maintenance': ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR'],
   '/api/settings': ['SUPERADMIN'],
   '/settings': ['SUPERADMIN'],
 };

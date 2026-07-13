@@ -190,7 +190,7 @@ export function YearlyReportPage({ selectedYear }: YearlyReportPageProps) {
               <span className="text-zinc-500">Reporting Period:</span>
               <span className="font-medium text-zinc-900">{selectedYear}</span>
             </div>
-            <div className="flex items-center gap-6">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
               <div>
                 <span className="text-zinc-400">Avg Trips / Month: </span>
                 <span className="font-semibold text-zinc-900">{summary.avgTripsPerMonth.toFixed(0)}</span>

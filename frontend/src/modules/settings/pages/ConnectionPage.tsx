@@ -101,8 +101,8 @@ function SchedulerIntervalEditor({
 
   return (
     <div className="mt-2 space-y-2">
-      <div className="flex items-end gap-2">
-        <label className="flex flex-col gap-0.5">
+      <div className="grid grid-cols-[minmax(0,1fr),auto,minmax(0,1fr)] items-end gap-2">
+        <label className="flex min-w-0 flex-col gap-0.5">
           <span className="text-[10px] text-zinc-400">Min</span>
           <input
             type="number"
@@ -110,11 +110,11 @@ function SchedulerIntervalEditor({
             max={60}
             value={minutes}
             onChange={(e) => setMinutes(Math.max(0, parseInt(e.target.value) || 0))}
-            className="w-16 rounded-lg border border-zinc-200 px-2 py-1 text-xs text-zinc-800 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
+            className="min-h-11 w-full rounded-lg border border-zinc-200 px-2 py-1 text-sm text-zinc-800 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal sm:min-h-0 sm:w-16 sm:text-xs"
           />
         </label>
         <span className="pb-1 text-xs text-zinc-400">:</span>
-        <label className="flex flex-col gap-0.5">
+        <label className="flex min-w-0 flex-col gap-0.5">
           <span className="text-[10px] text-zinc-400">Sec</span>
           <input
             type="number"
@@ -122,17 +122,17 @@ function SchedulerIntervalEditor({
             max={59}
             value={seconds}
             onChange={(e) => setSeconds(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))}
-            className="w-16 rounded-lg border border-zinc-200 px-2 py-1 text-xs text-zinc-800 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
+            className="min-h-11 w-full rounded-lg border border-zinc-200 px-2 py-1 text-sm text-zinc-800 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal sm:min-h-0 sm:w-16 sm:text-xs"
           />
         </label>
-        <span className="pb-1 text-[10px] text-zinc-400">
+        <span className="col-span-3 text-[10px] text-zinc-400 sm:col-span-1 sm:pb-1">
           = {formatDuration(minutes * 60 + seconds)}
         </span>
       </div>
       <button
         onClick={handleSave}
         disabled={saving}
-        className="inline-flex items-center gap-1 rounded-lg bg-brand-teal px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60"
+        className="inline-flex min-h-11 w-full items-center justify-center gap-1 rounded-lg bg-brand-teal px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60 sm:w-auto"
       >
         {saving && <Loader2 className="size-3 animate-spin" />}
         {saving ? 'Saving…' : 'Apply'}
@@ -169,11 +169,11 @@ function TelegramTestSection() {
   };
 
   return (
-    <div className="flex justify-end mt-2">
+    <div className="mt-2 flex justify-end">
       <button
         onClick={handleSend}
         disabled={sending}
-        className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60"
+        className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60 sm:w-auto"
       >
         {sending && <Loader2 className="size-3 animate-spin" />}
         <MessageSquare className="size-3" />
@@ -270,10 +270,10 @@ function buildSchedulerCard(connection: ConnectionCheck, _onReload: () => void) 
       details={details}
     >
       {/* Action buttons aligned right */}
-      <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-zinc-100">
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-100 pt-3 [&>button]:flex-1 sm:[&>button]:flex-none">
         <button
           onClick={_onReload}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 transition-colors"
+          className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100"
         >
           <RefreshCw className="size-3" />
           Refresh
@@ -421,7 +421,7 @@ export const ConnectionPage = forwardRef<ConnectionPageHandle, object>(function 
   // Loading state
   if (loading) {
     return (
-      <div className="rounded-xl border border-zinc-100 bg-white p-6 shadow-brand">
+      <div className="rounded-xl border border-zinc-100 bg-white p-4 shadow-brand sm:p-6">
         <div className="flex items-center justify-center py-10">
           <Loader2 className="size-5 animate-spin text-brand-teal" />
           <span className="ml-3 text-sm text-zinc-500">Loading settings...</span>
@@ -433,7 +433,7 @@ export const ConnectionPage = forwardRef<ConnectionPageHandle, object>(function 
   // Error state
   if (error) {
     return (
-      <div className="rounded-xl border border-zinc-100 bg-white p-6 shadow-brand">
+      <div className="rounded-xl border border-zinc-100 bg-white p-4 shadow-brand sm:p-6">
         <div className="text-center py-10">
           <AlertTriangle className="size-8 text-red-400 mx-auto mb-3" />
           <p className="text-sm font-medium text-zinc-700">Unable to load settings</p>

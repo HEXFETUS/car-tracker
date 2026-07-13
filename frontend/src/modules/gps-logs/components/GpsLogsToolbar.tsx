@@ -41,13 +41,13 @@ export function GpsLogsToolbar({
   const content = (
     <div className="flex items-center gap-3 flex-wrap">
       {/* ── Tabs ── */}
-      <div className="flex items-center gap-0.5 shrink-0">
+      <div className="flex w-full shrink-0 items-center gap-0.5 overflow-x-auto lg:w-auto">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             onClick={() => onTabChange(tab.key)}
             className={cn(
-              'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors',
+              'inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors sm:min-h-0',
               activeTab === tab.key
                 ? 'bg-brand-teal/10 text-brand-teal'
                 : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100',
@@ -60,7 +60,7 @@ export function GpsLogsToolbar({
       </div>
 
       {/* ── Filters ── */}
-      {filters && <div className="flex items-center gap-2 flex-wrap">{filters}</div>}
+      {filters && <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto">{filters}</div>}
 
       {/* ── Search / Reset ── */}
       {(onSearch || onReset) && (
@@ -90,7 +90,7 @@ export function GpsLogsToolbar({
       {actions && <div className="flex-1 min-w-0" />}
 
       {/* ── Actions ── */}
-      {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
+      {actions && <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto">{actions}</div>}
     </div>
   );
 

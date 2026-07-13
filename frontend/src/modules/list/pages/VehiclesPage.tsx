@@ -160,7 +160,7 @@ export function VehiclesPage({ searchQuery = '' }: VehiclesPageProps) {
       ) : (
         <>
           {/* ── Desktop Table ── */}
-          <div className={tableContainerClass}>
+          <div className={cn(tableContainerClass, 'hidden md:block')}>
             <table className={tableClass}>
               <thead>
                 <tr className={tableHeaderClass}>
@@ -241,7 +241,7 @@ export function VehiclesPage({ searchQuery = '' }: VehiclesPageProps) {
                 </div>
                 <button
                   onClick={() => handleViewDetails(vehicle)}
-                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-cream px-3 py-2 text-xs font-medium text-zinc-600 transition-all hover:bg-brand-moss/30 active:scale-[0.97]"
+                    className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg bg-brand-cream px-3 py-2 text-xs font-medium text-zinc-600 transition-all hover:bg-brand-moss/30 active:scale-[0.97]"
                 >
                   <Eye className="size-3.5" />
                   View Details

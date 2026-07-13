@@ -82,7 +82,7 @@ export function RequestTravelOrderPage() {
   // ---- Success State ----
   if (pageState === 'success') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-6">
+      <div className="flex min-h-dvh items-center justify-center bg-zinc-50 px-4 py-6">
         <div className="w-full max-w-md animate-in fade-in zoom-in-95">
           <div className="rounded-2xl bg-white p-8 shadow-brand-xl text-center">
             {/* Success Icon */}
@@ -112,7 +112,7 @@ export function RequestTravelOrderPage() {
 
   // ---- Form State ----
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-dvh bg-zinc-50">
       {/* Top bar with back button */}
       <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white">
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3 sm:px-6">

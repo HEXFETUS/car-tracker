@@ -17,12 +17,16 @@ import {
   Activity,
   ArrowUpRight,
   ArrowDownLeft,
+  Loader2,
+  Trash2,
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { cn } from '@/shared/lib/utils';
 import { formatDateTimeManila } from '@/shared/lib/date-utils';
-import { fetchNoToTripDetails, fetchTripDetails, updateGpsLogNotes, type TripDetailsResponse } from '../api/gps-logs-api';
+import { useAuth } from '@/modules/auth/context/auth-context';
+import { deleteGpsLog, fetchNoToTripDetails, fetchTripDetails, updateGpsLogNotes, type TripDetailsResponse } from '../api/gps-logs-api';
+import { useNotification } from '@/shared/context/NotificationContext';
 
 // Fix Leaflet default marker icon issue
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
@@ -36,6 +40,7 @@ interface TripDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenTrip?: (id: string) => void;
+  onDeleted?: () => void | Promise<void>;
   logId: string | null;
   source?: 'to' | 'no-to';
 }
@@ -95,7 +100,9 @@ function AnomalyBadge({ show }: { show: boolean }) {
   );
 }
 
-export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 'to' }: TripDetailsModalProps) {
+export function TripDetailsModal({ isOpen, onClose, onOpenTrip, onDeleted, logId, source = 'to' }: TripDetailsModalProps) {
+  const { confirm, toast } = useNotification();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<TripDetailsResponse['data'] | null>(null);
@@ -103,6 +110,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 
   const mapInstanceRef = useRef<L.Map | null>(null);
   const [notes, setNotes] = useState('');
   const [notesSaving, setNotesSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const loadDetails = useCallback(async () => {
     if (!logId) return;
@@ -218,6 +226,29 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 
     }
   };
 
+  const handleDelete = async () => {
+    if (!logId || source !== 'to' || user?.userType !== 'SUPERADMIN') return;
+
+    const confirmed = await confirm({
+      title: 'Delete TO Log?',
+      message: `Delete this TO log${data?.trip.linkedTO ? ` linked to ${data.trip.linkedTO}` : ''} permanently? This action cannot be undone.`,
+      type: 'danger',
+    });
+    if (!confirmed) return;
+
+    try {
+      setDeleting(true);
+      await deleteGpsLog(logId);
+      toast('TO log deleted successfully.', 'success');
+      await onDeleted?.();
+      onClose();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to delete TO log', 'error');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const trip = data?.trip;
@@ -235,11 +266,11 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 
           : 'Pending';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 pt-6 pb-6">
-      <div className="relative w-[90vw] max-w-5xl rounded-xl bg-white shadow-brand-xl">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 sm:px-4 sm:py-6">
+      <div className="relative min-h-dvh w-full max-w-5xl bg-white shadow-brand-xl sm:min-h-0 sm:w-[90vw] sm:rounded-xl">
         {/* Header */}
-        <div className="flex items-center justify-between rounded-t-xl bg-brand-cream px-6 py-4">
-          <div className="flex items-center gap-3">
+        <div className="flex items-start justify-between gap-3 bg-brand-cream px-4 py-4 sm:items-center sm:rounded-t-xl sm:px-6">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
             <Navigation className="size-5 text-brand-teal" />
             <div>
               <h2 className="text-lg font-bold text-zinc-800">{source === 'no-to' ? 'No TO Details' : 'Trip Details'}</h2>
@@ -259,7 +290,7 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
           >
             <X className="size-5" />
           </button>
@@ -291,11 +322,11 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 
 
         {/* Content */}
         {!loading && !error && data && (
-          <div className="px-6 py-5 space-y-6">
+          <div className="space-y-6 px-4 py-5 sm:px-6">
             {/* Interactive Map */}
             {data.route.length > 0 ? (
               <div className="rounded-xl overflow-hidden border border-zinc-200">
-                <div ref={mapRef} className="h-[400px] w-full" />
+                <div ref={mapRef} className="h-[45dvh] min-h-56 w-full sm:h-[400px]" />
                 <div className="flex items-center justify-between bg-zinc-50 px-4 py-2 text-xs text-zinc-500">
                   <span className="flex items-center gap-1">
                     <span className="inline-block size-2.5 rounded-full bg-green-500 ring-1 ring-green-700" /> Start
@@ -467,10 +498,22 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, logId, source = 
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-end border-t border-zinc-100 bg-white rounded-b-xl px-6 py-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 rounded-b-xl border-t border-zinc-100 bg-white px-4 py-3 sm:px-6">
+          {source === 'to' && user?.userType === 'SUPERADMIN' && (
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting || loading || !logId}
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 sm:mr-auto sm:flex-none"
+            >
+              {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              {deleting ? 'Deleting…' : 'Delete TO Log'}
+            </button>
+          )}
           <button
             onClick={onClose}
-            className="rounded-lg px-5 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100 transition-colors"
+            disabled={deleting}
+            className="min-h-11 flex-1 rounded-lg px-5 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 sm:flex-none"
           >
             Close
           </button>

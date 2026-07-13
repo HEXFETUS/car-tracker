@@ -155,7 +155,7 @@ export function TravelOrdersPage() {
       COMPLETED: 'bg-zinc-100 text-zinc-600 border-zinc-200',
       CANCELLED: 'bg-red-100 text-red-800 border-red-200',
     };
-    return `rounded-full px-2.5 py-0.5 text-xs font-medium border ${colors[status] || 'bg-zinc-100 text-zinc-600 border-zinc-200'}`;
+    return `shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium border ${colors[status] || 'bg-zinc-100 text-zinc-600 border-zinc-200'}`;
   };
 
   // ── Frontend-only filtering ──
@@ -265,23 +265,23 @@ export function TravelOrdersPage() {
         </div>
       ) : (
         /* ── Card View ── */
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {filteredOrders.map((order) => (
             <div
               key={order.id}
-              className="group flex flex-col rounded-xl border border-zinc-100 bg-white shadow-brand transition-all hover:-translate-y-0.5 hover:shadow-brand-lg"
+              className="group flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border border-zinc-100 bg-white shadow-brand transition-all hover:-translate-y-0.5 hover:shadow-brand-lg"
             >
               {/* Header: TO Number + Status + Purpose */}
-              <div className="flex items-start justify-between px-4 pt-3 pb-1.5">
+              <div className="flex min-w-0 items-start justify-between px-3 pb-2 pt-3 sm:px-4">
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-brand-teal truncate">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="min-w-0 truncate text-sm font-bold text-brand-teal">
                       {order.toNumber}
                     </span>
                     <span className={statusBadge(order.status)}>{order.status}</span>
                   </div>
                   {order.purpose && (
-                    <p className="mt-1 text-xs text-zinc-500 line-clamp-1">
+                    <p className="mt-1 line-clamp-2 break-words text-xs text-zinc-500 sm:line-clamp-1">
                       {order.purpose}
                     </p>
                   )}
@@ -289,7 +289,7 @@ export function TravelOrdersPage() {
               </div>
 
               {/* Body: Details */}
-              <div className="flex flex-1 flex-col gap-1.5 px-4 py-2">
+              <div className="flex min-w-0 flex-1 flex-col gap-2 px-3 py-2 sm:px-4">
                 <CompactRow icon={<User className="size-3.5" />} label={order.travelerName} />
                 <CompactRow
                   icon={<MapPin className="size-3.5" />}
@@ -314,9 +314,9 @@ export function TravelOrdersPage() {
               </div>
 
               {/* Footer: Approved by + View Details */}
-              <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5">
+              <div className="flex min-w-0 flex-col gap-2 border-t border-zinc-100 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-2.5">
                 {order.approvedByName ? (
-                  <span className="text-xs text-zinc-400 truncate">
+                  <span className="min-w-0 break-words text-xs text-zinc-400 sm:truncate">
                     Approved by <span className="font-medium text-zinc-600">{order.approvedByName}</span>
                   </span>
                 ) : (
@@ -324,7 +324,7 @@ export function TravelOrdersPage() {
                 )}
                 <button
                   onClick={() => handleViewDetails(order)}
-                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-brand-teal hover:bg-brand-teal/5 transition-colors"
+                  className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-1 rounded-lg bg-brand-teal/5 px-3 py-2 text-xs font-medium text-brand-teal transition-colors hover:bg-brand-teal/10 sm:min-h-0 sm:w-auto sm:bg-transparent sm:px-2.5 sm:py-1.5"
                 >
                   <Eye className="size-3.5" />
                   View Details
@@ -357,9 +357,9 @@ export function TravelOrdersPage() {
 /** Small helper to render a compact row with icon in the card body */
 function CompactRow({ icon, label }: { icon: React.ReactNode; label: string | null }) {
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="text-zinc-400 shrink-0">{icon}</span>
-      <span className="text-zinc-700 truncate" title={label || ''}>
+    <div className="flex min-w-0 items-start gap-2 text-sm">
+      <span className="mt-0.5 shrink-0 text-zinc-400">{icon}</span>
+      <span className="min-w-0 flex-1 break-words leading-5 text-zinc-700 sm:truncate" title={label || ''}>
         {label || '—'}
       </span>
     </div>

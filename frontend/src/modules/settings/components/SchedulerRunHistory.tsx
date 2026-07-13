@@ -69,7 +69,7 @@ export function SchedulerRunHistory() {
           setExpanded(!expanded);
           if (!expanded && !data) loadHistory();
         }}
-        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+        className="flex min-h-11 w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
       >
         <History className="size-4 text-brand-teal" />
         <span>Run History</span>
@@ -125,7 +125,8 @@ export function SchedulerRunHistory() {
 
           {/* Run history table */}
           {data && data.runs.length > 0 && (
-            <div className="overflow-x-auto">
+            <>
+            <div className="hidden overflow-x-auto md:block">
               <table className={tableClass}>
                 <thead>
                   <tr className={tableHeaderClass}>
@@ -178,6 +179,37 @@ export function SchedulerRunHistory() {
                 </tbody>
               </table>
             </div>
+            <div className="space-y-3 p-3 md:hidden">
+              {data.runs.slice(0, 20).map((run) => (
+                <article key={run.id} className="rounded-xl border border-zinc-100 bg-zinc-50/60 p-3">
+                  <div className="flex items-center justify-between gap-3 border-b border-zinc-100 pb-3">
+                    <p className="font-mono text-sm font-bold text-brand-teal">Run #{run.id}</p>
+                    <SettingsStatusBadge status={getRunStatusVariant(run.status)} />
+                  </div>
+                  <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                    <div><dt className="text-zinc-400">Started</dt><dd className="mt-0.5 break-words font-medium text-zinc-700">{formatDateTimeManila(run.started_at)}</dd></div>
+                    <div><dt className="text-zinc-400">Finished</dt><dd className="mt-0.5 break-words font-medium text-zinc-700">{run.finished_at ? formatDateTimeManila(run.finished_at) : '—'}</dd></div>
+                    <div><dt className="text-zinc-400">Duration</dt><dd className="mt-0.5 font-medium text-zinc-700">{formatDuration(run.started_at, run.finished_at)}</dd></div>
+                    <div><dt className="text-zinc-400">Cycles</dt><dd className="mt-0.5 font-medium text-zinc-700">{run.cycles_completed}</dd></div>
+                  </dl>
+                  {run.error_message && (
+                    <div className="mt-3 border-t border-zinc-100 pt-2">
+                      <button
+                        onClick={() => setExpandedError(expandedError === run.id ? null : run.id)}
+                        className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2 text-left text-xs font-medium text-red-600 hover:bg-red-50"
+                      >
+                        <span className="min-w-0 truncate">{run.error_message}</span>
+                        {expandedError === run.id ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
+                      </button>
+                      {expandedError === run.id && (
+                        <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-red-50 p-2 text-[11px] text-red-700">{run.error_message}</pre>
+                      )}
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+            </>
           )}
 
           {/* Empty state */}
@@ -205,7 +237,7 @@ export function SchedulerRunHistory() {
               <button
                 onClick={loadHistory}
                 disabled={loading}
-                className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-600 transition-colors"
+                className="inline-flex min-h-11 items-center gap-1 px-3 text-xs text-zinc-400 transition-colors hover:text-zinc-600"
               >
                 <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
                 Refresh

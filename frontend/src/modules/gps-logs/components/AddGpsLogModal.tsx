@@ -134,12 +134,12 @@ export function AddGpsLogModal({ isOpen, onClose, onSuccess }: AddGpsLogModalPro
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm transition-opacity"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 backdrop-blur-sm transition-opacity sm:px-4 sm:py-10"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl">
+      <div className="relative min-h-dvh w-full max-w-2xl animate-in fade-in zoom-in-95 bg-white shadow-brand-xl sm:min-h-0 sm:rounded-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5">
+        <div className="flex items-start justify-between gap-3 px-4 py-4 sm:items-center sm:px-6 sm:py-5">
           <div>
             <h2 className="text-lg font-bold text-zinc-900">Import / Add GPS Log</h2>
             <p className="text-sm text-zinc-400">
@@ -156,7 +156,7 @@ export function AddGpsLogModal({ isOpen, onClose, onSuccess }: AddGpsLogModalPro
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-5 px-4 py-5 sm:px-6">
           {submitError && (
             <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 border border-red-200">
               {submitError}

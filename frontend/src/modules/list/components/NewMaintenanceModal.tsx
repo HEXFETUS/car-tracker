@@ -205,11 +205,11 @@ export function NewMaintenanceModal({ isOpen, onClose, onSubmit, initialRecord }
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 py-10 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 backdrop-blur-sm sm:px-4 sm:py-10"
     >
-      <div className="relative w-full max-w-2xl animate-in fade-in zoom-in-95 rounded-2xl bg-white shadow-brand-xl overflow-hidden">
+      <div className="relative min-h-dvh w-full max-w-2xl animate-in fade-in zoom-in-95 overflow-hidden bg-white shadow-brand-xl sm:min-h-0 sm:rounded-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between rounded-t-2xl px-6 py-5">
+        <div className="flex items-start justify-between gap-3 px-4 py-4 sm:items-center sm:rounded-t-2xl sm:px-6 sm:py-5">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-full bg-brand-teal/20">
               <Wrench className="size-5 text-brand-teal" />
@@ -233,7 +233,7 @@ export function NewMaintenanceModal({ isOpen, onClose, onSubmit, initialRecord }
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6 px-4 py-5 sm:px-6">
           {/* Vehicle (searchable combobox) */}
           <div ref={dropdownRef} className="relative">
             <label className="block text-sm font-medium text-zinc-700 mb-1.5">

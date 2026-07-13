@@ -109,7 +109,7 @@ export function MonthlyReportPage({
 
       {/* Per-Vehicle Summary Table */}
       <div>
-        <div className={tableContainerClass}>
+        <div className={cn(tableContainerClass, 'hidden md:block')}>
           <table className={tableClass}>
             <thead>
               <tr className={tableHeaderClass}>
@@ -153,6 +153,35 @@ export function MonthlyReportPage({
               )}
             </tbody>
           </table>
+        </div>
+        <div className="space-y-3 md:hidden">
+          {vehicleSummaries.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-white px-4 py-10 text-center">
+              <Inbox className="mb-2 size-8 text-zinc-300" />
+              <p className="text-sm text-zinc-500">No data available for the selected month and year.</p>
+            </div>
+          ) : vehicleSummaries.map((vs) => (
+            <article key={vs.vehiclePlateNo} className="rounded-xl border border-zinc-100 bg-white p-4 shadow-brand">
+              <div className="flex items-center justify-between gap-3 border-b border-zinc-100 pb-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Vehicle</p>
+                  <p className="font-mono text-base font-bold text-brand-teal">{vs.vehiclePlateNo}</p>
+                </div>
+                <span className={cn(
+                  'rounded-full px-2.5 py-1 text-xs font-semibold',
+                  vs.unauthorizedTrips > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700',
+                )}>
+                  {vs.unauthorizedTrips} unauthorized
+                </span>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                <div><dt className="text-xs text-zinc-400">GPS trips</dt><dd className="font-semibold text-zinc-800">{vs.totalGpsTrips}</dd></div>
+                <div><dt className="text-xs text-zinc-400">Distance</dt><dd className="font-semibold text-zinc-800">{vs.totalGpsDistanceKm.toFixed(1)} km</dd></div>
+                <div><dt className="text-xs text-zinc-400">Approved TOs</dt><dd className="font-semibold text-zinc-800">{vs.totalApprovedTOs}</dd></div>
+                <div><dt className="text-xs text-zinc-400">Remarks</dt><dd className="break-words text-zinc-700">{vs.remarks || '—'}</dd></div>
+              </dl>
+            </article>
+          ))}
         </div>
       </div>
     </div>

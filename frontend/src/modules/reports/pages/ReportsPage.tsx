@@ -41,13 +41,13 @@ export function ReportsPage() {
       <div className="rounded-xl bg-white shadow-brand border border-zinc-100 p-3">
         <div className="flex items-center gap-2 flex-wrap">
           {/* Tabs on the left */}
-          <div className="flex items-center gap-0.5 shrink-0 overflow-x-auto">
+          <div className="flex w-full shrink-0 items-center gap-0.5 overflow-x-auto lg:w-auto">
             {TABS.map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
                 className={cn(
-                  'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap',
+                  'inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors sm:min-h-0',
                   activeTab === tab.key
                     ? 'bg-brand-teal/10 text-brand-teal'
                     : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100',
@@ -64,12 +64,12 @@ export function ReportsPage() {
 
           {/* ── Reconciliation: status filter + refresh (right side) ── */}
           {activeTab === 'reconciliation' && (
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
               <Filter className="size-4 text-zinc-500" />
               <select
                 value={reconStatusFilter}
                 onChange={(e) => setReconStatusFilter(e.target.value)}
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+                className="h-11 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30 sm:h-auto sm:flex-none"
               >
                 <option value="">All Statuses</option>
                 <option value="Matched">Matched</option>
@@ -89,12 +89,12 @@ export function ReportsPage() {
 
           {/* ── Monthly: period filter + refresh (right side) ── */}
           {activeTab === 'monthly' && (
-            <div className="flex items-center gap-2">
+            <div className="flex w-full items-center gap-2 sm:w-auto">
               <Calendar className="size-4 text-zinc-400 shrink-0" />
               <select
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(e.target.value)}
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+                className="h-11 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30 sm:h-auto sm:flex-none"
               >
                 {MONTHS.map((m) => (
                   <option key={m} value={m}>
@@ -105,7 +105,7 @@ export function ReportsPage() {
               <select
                 value={selectedYear}
                 onChange={(e) => setSelectedYear(Number(e.target.value))}
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+                className="h-11 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30 sm:h-auto sm:flex-none"
               >
                 {[2024, 2025, 2026, 2027].map((y) => (
                   <option key={y} value={y}>
@@ -124,7 +124,7 @@ export function ReportsPage() {
 
           {/* ── Yearly: year filter + refresh (right side) ── */}
           {activeTab === 'yearly' && (
-            <div className="flex items-center gap-2">
+            <div className="flex w-full items-center gap-2 sm:w-auto">
               <Calendar className="size-4 text-zinc-400 shrink-0" />
               <select
                 value={selectedYear}

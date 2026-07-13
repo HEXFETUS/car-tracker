@@ -79,18 +79,18 @@ export function SettingsCard({
   className,
 }: SettingsCardProps) {
   return (
-    <div className={cn('rounded-xl border border-zinc-100 bg-white p-4 shadow-brand', className)}>
+    <div className={cn('min-w-0 rounded-xl border border-zinc-100 bg-white p-3 shadow-brand sm:p-4', className)}>
       {/* Header: icon + title + status */}
       <div className="flex items-start gap-3">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand-teal/10 text-brand-teal">
           {icon}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="min-w-0 break-words text-sm font-semibold text-zinc-900">{title}</h3>
             <SettingsStatusBadge status={status} />
           </div>
-          <p className="mt-0.5 text-xs text-zinc-400 line-clamp-1">{description}</p>
+          <p className="mt-1 line-clamp-2 break-words text-xs text-zinc-400 sm:line-clamp-1">{description}</p>
         </div>
       </div>
 
@@ -98,9 +98,9 @@ export function SettingsCard({
       {details.length > 0 && (
         <div className="mt-3 space-y-1.5 border-t border-zinc-100 pt-3">
           {details.map((detail, i) => (
-            <div key={i} className="flex items-center justify-between text-xs">
-              <span className="text-zinc-400">{detail.label}</span>
-              <span className="font-medium text-zinc-700 truncate ml-2 text-right">
+            <div key={i} className="flex flex-col gap-0.5 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <span className="shrink-0 text-zinc-400">{detail.label}</span>
+              <span className="min-w-0 break-words font-medium text-zinc-700 sm:truncate sm:text-right">
                 {detail.value}
               </span>
             </div>
@@ -114,7 +114,7 @@ export function SettingsCard({
           <button
             onClick={action.onClick}
             disabled={action.loading || action.disabled}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60"
+            className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-teal/80 disabled:opacity-60 sm:w-auto"
           >
             {action.loading && <Loader2 className="size-3 animate-spin" />}
             {action.label}

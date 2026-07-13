@@ -162,7 +162,7 @@ export function ReconciliationPage({ statusFilter }: ReconciliationPageProps) {
 
       {/* ── Desktop data table ── */}
       {!loading && !error && records.length > 0 && (
-        <div className={tableContainerClass}>
+        <div className={cn(tableContainerClass, 'hidden md:block')}>
           <div className="overflow-x-auto">
             <table className={tableClass}>
               <thead>
@@ -272,7 +272,9 @@ export function ReconciliationPage({ statusFilter }: ReconciliationPageProps) {
       {/* ── Mobile cards ── */}
       {!loading && !error && records.length > 0 && (
         <div className="space-y-3 md:hidden">
-          {records.map((rec) => (
+          {records.map((rec) => {
+            const isEditing = editId === rec.id;
+            return (
             <div key={rec.id} className="rounded-xl bg-white p-4 shadow-brand border border-zinc-100">
               <div className="mb-3 flex items-center justify-between">
                 <div>
@@ -330,11 +332,31 @@ export function ReconciliationPage({ statusFilter }: ReconciliationPageProps) {
                 </div>
                 <div className="col-span-2">
                   <p className="text-xs text-zinc-400">Remarks</p>
-                  <p className="text-zinc-500">{rec.explanationRemarks || '—'}</p>
+                  {isEditing ? (
+                    <div className="mt-1 space-y-2">
+                      <input
+                        type="text"
+                        value={editRemarks}
+                        onChange={(e) => setEditRemarks(e.target.value)}
+                        className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/30"
+                        placeholder="Add remarks..."
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <button onClick={handleCancel} className="min-h-11 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-600">Cancel</button>
+                        <button onClick={handleSave} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand-teal text-sm font-medium text-white"><Save className="size-4" /> Save</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="min-w-0 flex-1 break-words text-zinc-500">{rec.explanationRemarks || '—'}</p>
+                      <button onClick={() => handleEdit(rec)} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-brand-teal hover:bg-brand-moss/30"><Pencil className="size-4" /> Edit</button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

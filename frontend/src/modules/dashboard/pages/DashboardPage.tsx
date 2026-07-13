@@ -66,6 +66,14 @@ const TO_STATUS_COLORS: Record<string, string> = {
 
 const DOUGHNUT_COLORS = [COLORS.teal, COLORS.blue, COLORS.red, COLORS.orange, COLORS.zinc];
 
+const VEHICLE_STATUS_COLORS: Record<string, string> = {
+  Moving: COLORS.teal,
+  Idling: COLORS.amber,
+  Parked: COLORS.blue,
+  Offline: COLORS.zinc,
+  'Under Repair': COLORS.red,
+};
+
 // Fix Leaflet default marker icon issue
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -177,7 +185,7 @@ function DashboardCard({ title, icon: Icon, children, className, actions }: {
   actions?: React.ReactNode;
 }) {
   return (
-    <div className={cn('rounded-2xl border border-zinc-100 bg-white p-6 shadow-sm', className)}>
+    <div className={cn('rounded-2xl border border-zinc-100 bg-white p-4 shadow-sm sm:p-6', className)}>
       <div className="mb-4 flex items-center justify-between">
         <h3 className="flex items-center gap-2 text-base font-bold text-zinc-900">
           {Icon && <Icon className="size-5 text-brand-teal" />}
@@ -303,8 +311,8 @@ function DoughnutChart({ data }: { data: { name: string; value: number }[] }) {
             nameKey="name"
             stroke="none"
           >
-            {data.map((_, i) => (
-              <Cell key={i} fill={DOUGHNUT_COLORS[i % DOUGHNUT_COLORS.length]} />
+            {data.map((item, i) => (
+              <Cell key={item.name} fill={VEHICLE_STATUS_COLORS[item.name] || DOUGHNUT_COLORS[i % DOUGHNUT_COLORS.length]} />
             ))}
           </Pie>
           <ReTooltip formatter={(value: any, name: any) => [`${value} (${total > 0 ? ((Number(value) / total) * 100).toFixed(1) : 0}%)`, name]} />
@@ -313,7 +321,7 @@ function DoughnutChart({ data }: { data: { name: string; value: number }[] }) {
       <div className="mt-2 flex flex-wrap justify-center gap-3">
         {data.map((d, i) => (
           <div key={d.name} className="flex items-center gap-1.5">
-            <div className="size-3 rounded-sm" style={{ backgroundColor: DOUGHNUT_COLORS[i % DOUGHNUT_COLORS.length] }} />
+            <div className="size-3 rounded-sm" style={{ backgroundColor: VEHICLE_STATUS_COLORS[d.name] || DOUGHNUT_COLORS[i % DOUGHNUT_COLORS.length] }} />
             <span className="text-xs text-zinc-600">{d.name}: {d.value}</span>
           </div>
         ))}
@@ -469,11 +477,42 @@ export function DashboardPage() {
 
   const quickStats = useMemo(() => ({
     totalDistanceToday: k.gps.total_distance_today,
-    averageSpeed: d.leaderboard.driverPerformance.reduce((sum, driver) => sum + driver.avg_speed, 0) / Math.max(d.leaderboard.driverPerformance.length, 1),
-    engineHoursToday: d.tables.recentlyCompleted.reduce((sum, trip) => sum + (trip.gps_distance_km ? trip.gps_distance_km / 10 : 0), 0),
-    movingHoursToday: d.tables.activeTrips.reduce((sum, trip) => sum + (trip.status === 'ACTIVE' ? 1 : 0), 0),
-    fuelAlerts: 0,
-  }), [d.leaderboard.driverPerformance, d.tables.activeTrips, d.tables.recentlyCompleted, k.gps.total_distance_today]);
+    averageSpeed: k.gps.average_speed_today,
+    engineHoursToday: k.gps.engine_hours_today,
+    movingHoursToday: k.gps.moving_hours_today,
+    fuelAlerts: k.gps.fuel_alerts_today,
+  }), [
+    k.gps.average_speed_today,
+    k.gps.engine_hours_today,
+    k.gps.fuel_alerts_today,
+    k.gps.moving_hours_today,
+    k.gps.total_distance_today,
+  ]);
+
+  const vehicleStatusDistribution = useMemo(() => {
+    const counts = new Map<string, number>();
+    const add = (status: string, amount = 1) => counts.set(status, (counts.get(status) ?? 0) + amount);
+
+    for (const vehicle of liveMonitoring) {
+      if (vehicle.under_repair) {
+        add('Under Repair');
+      } else if (Number(vehicle.speed_kmh ?? vehicle.speed ?? 0) > 0) {
+        add('Moving');
+      } else if (vehicle.ignition === true) {
+        add('Idling');
+      } else {
+        add('Parked');
+      }
+    }
+
+    // A registered vehicle absent from the current tracker snapshot is offline.
+    const offline = Math.max(0, k.fleet.total_vehicles - liveMonitoring.length);
+    if (offline > 0) add('Offline', offline);
+
+    return ['Moving', 'Idling', 'Parked', 'Offline', 'Under Repair']
+      .map((name) => ({ name, value: counts.get(name) ?? 0 }))
+      .filter((item) => item.value > 0);
+  }, [k.fleet.total_vehicles, liveMonitoring]);
 
   const activeTripCards = useMemo(() => d.tables.activeTrips.slice(0, 6), [d.tables.activeTrips]);
 
@@ -531,9 +570,7 @@ export function DashboardPage() {
         <KpiCard icon={Car} label="Active Vehicles" value={k.fleet.total_vehicles} status={`${k.fleet.available_vehicles} available`} gradient="bg-gradient-to-br from-brand-pastel/40 to-white" iconColor="bg-brand-teal" onClick={() => navigate('/list?tab=vehicles&filter=active')} />
         <KpiCard icon={Gauge} label="Vehicles Moving" value={realtimeData?.moving ?? d.realTime.vehiclesMoving} status="Currently on the road" gradient="bg-gradient-to-br from-emerald-50 to-white" iconColor="bg-emerald-500" onClick={() => navigate('/gps-logs?tab=tracking&filter=moving')} />
         <KpiCard icon={Radio} label="Vehicles Idling" value={realtimeData?.idling ?? d.realTime.vehiclesIdling} status="Engine running" gradient="bg-gradient-to-br from-amber-50 to-white" iconColor="bg-amber-500" onClick={() => navigate('/gps-logs?tab=tracking&filter=idling')} />
-        <KpiCard icon={Navigation} label="Active Trips" value={k.fleet.active_trips} status="In progress" gradient="bg-gradient-to-br from-brand-cream/60 to-white" iconColor="bg-brand-sage" onClick={() => navigate('/gps-logs?tab=tracking')} />
         <KpiCard icon={FileText} label="Travel Orders Today" value={k.travelOrders.completed_today} status={`${k.travelOrders.active_travel_orders} active`} gradient="bg-gradient-to-br from-brand-moss/40 to-white" iconColor="bg-brand-sage" onClick={() => navigate('/travel-orders')} />
-        <KpiCard icon={Wrench} label="Maintenance Due" value={k.fleet.maintenance_due} status={`${k.fleet.vehicles_under_repair} under repair`} gradient="bg-gradient-to-br from-orange-50 to-white" iconColor="bg-orange-500" onClick={() => navigate('/list?tab=maintenance')} />
       </div>
 
       <div className="grid gap-4 rounded-2xl border border-zinc-100 bg-white/80 p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-5">
@@ -597,8 +634,8 @@ export function DashboardPage() {
       {/* ── Charts Section ───────────────────────────── */}
       <div className="grid gap-6 lg:grid-cols-2">
         <DashboardCard title="Vehicle Status Distribution" icon={Car}>
-          {d.charts.vehicleStatusDistribution.length > 0 ? (
-            <DoughnutChart data={d.charts.vehicleStatusDistribution} />
+          {vehicleStatusDistribution.length > 0 ? (
+            <DoughnutChart data={vehicleStatusDistribution} />
           ) : (
             <EmptyState message="No vehicle status data" />
           )}
@@ -636,7 +673,8 @@ export function DashboardPage() {
 
         <DashboardCard title="Live Vehicle Monitoring" icon={Radio}>
           {d.tables.liveMonitoring.length > 0 ? (
-            <div className="overflow-x-auto">
+            <>
+            <div className="hidden overflow-x-auto md:block">
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-brand-cream text-xs font-bold uppercase tracking-wider text-zinc-500">
@@ -668,6 +706,40 @@ export function DashboardPage() {
                 </tbody>
               </table>
             </div>
+            <div className="space-y-3 md:hidden">
+              {d.tables.liveMonitoring.map((row) => (
+                <article key={row.vehicle_id} className="overflow-hidden rounded-xl border border-zinc-100 bg-zinc-50/60">
+                  <div className="flex items-start justify-between gap-3 border-b border-zinc-100 bg-brand-cream/50 px-3 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-base font-extrabold text-zinc-900">{row.plate_number}</p>
+                      <p className="mt-0.5 truncate text-xs text-zinc-500">{row.driver_name || 'Unassigned driver'}</p>
+                    </div>
+                    <StatusBadge status={row.trip_status || 'N/A'} />
+                  </div>
+                  <dl className="space-y-3 px-3 py-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="shrink-0 text-xs text-zinc-400">Travel order</dt>
+                      <dd className="min-w-0 truncate font-medium text-brand-teal">{row.current_travel_order || '—'}</dd>
+                    </div>
+                    <div className="grid grid-cols-[auto,minmax(0,1fr)] gap-x-3 gap-y-2">
+                      <dt className="text-xs text-zinc-400">From</dt>
+                      <dd className="min-w-0 break-words text-right text-zinc-700">{row.origin || '—'}</dd>
+                      <dt className="text-xs text-zinc-400">To</dt>
+                      <dd className="min-w-0 break-words text-right text-zinc-700">{row.destination || '—'}</dd>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 border-t border-zinc-100 pt-3">
+                      <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Departure</dt><dd className="mt-1 text-xs text-zinc-700">{formatDateTimeManila(row.departure_time)}</dd></div>
+                      <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Arrival</dt><dd className="mt-1 text-xs text-zinc-700">{formatDateTimeManila(row.arrival_time)}</dd></div>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-zinc-100 pt-3">
+                      <dt className="text-xs font-medium text-zinc-500">Distance traveled</dt>
+                      <dd className="font-mono font-bold text-zinc-900">{fmtKm(row.distance_traveled)}</dd>
+                    </div>
+                  </dl>
+                </article>
+              ))}
+            </div>
+            </>
           ) : (
             <EmptyState message="No active vehicles currently being monitored" />
           )}
@@ -676,7 +748,8 @@ export function DashboardPage() {
 
         <DashboardCard title="Recently Completed Trips" icon={CheckCircle2}>
           {d.tables.recentlyCompleted.length > 0 ? (
-            <div className={tableContainerClass}>
+            <>
+            <div className={cn(tableContainerClass, 'hidden md:block')}>
               <div className="overflow-x-auto">
                 <table className={tableClass}>
                   <thead>
@@ -708,6 +781,29 @@ export function DashboardPage() {
                 </table>
               </div>
             </div>
+            <div className="space-y-3 md:hidden">
+              {d.tables.recentlyCompleted.slice(0, 5).map((trip) => (
+                <article key={trip.id} className="rounded-xl border border-zinc-100 bg-zinc-50/60 p-3">
+                  <div className="flex items-start justify-between gap-3 border-b border-zinc-100 pb-3">
+                    <div className="min-w-0">
+                      <p className="font-mono text-sm font-bold text-brand-teal">{trip.id.slice(0, 8)}</p>
+                      <p className="mt-0.5 truncate text-xs text-zinc-500">{trip.driver_name || 'Unassigned driver'}</p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="font-mono text-sm font-bold text-zinc-900">{trip.plate_number}</p>
+                      <span className="mt-1 inline-flex rounded-full bg-brand-moss/30 px-2 py-0.5 text-[10px] font-bold text-brand-teal">GPS</span>
+                    </div>
+                  </div>
+                  <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 text-sm">
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Distance</dt><dd className="mt-0.5 font-medium text-zinc-800">{trip.gps_distance_km ? fmtKm(trip.gps_distance_km) : '—'}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Engine hours</dt><dd className="mt-0.5 font-medium text-zinc-800">{trip.max_speed_kph ? fmtDuration(trip.arrival_time_gps, trip.arrival_time_gps) : '—'}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Moving hours</dt><dd className="mt-0.5 font-medium text-zinc-800">{(trip as any).moving_hours ? `${(trip as any).moving_hours}h` : '—'}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Arrival</dt><dd className="mt-0.5 text-xs text-zinc-700">{formatDateTimeManila(trip.arrival_time_gps)}</dd></div>
+                  </dl>
+                </article>
+              ))}
+            </div>
+            </>
           ) : (
             <EmptyState message="No recently completed trips" />
           )}
@@ -715,7 +811,8 @@ export function DashboardPage() {
 
         <DashboardCard title="Driver Performance Leaderboard" icon={Users}>
           {d.leaderboard.driverPerformance.length > 0 ? (
-            <div className="overflow-x-auto">
+            <>
+            <div className="hidden overflow-x-auto md:block">
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-brand-cream text-xs font-bold uppercase tracking-wider text-zinc-500">
@@ -751,6 +848,28 @@ export function DashboardPage() {
                 </tbody>
               </table>
             </div>
+            <div className="space-y-3 md:hidden">
+              {d.leaderboard.driverPerformance.slice(0, 5).map((driver, idx) => (
+                <article key={driver.driver_id} className={cn('rounded-xl border border-zinc-100 p-3', idx < 3 ? 'bg-amber-50/40' : 'bg-zinc-50/60')}>
+                  <div className="flex items-center gap-3 border-b border-zinc-100 pb-3">
+                    <span className={cn('inline-flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-extrabold', idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-zinc-200 text-zinc-700' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-white text-zinc-500 ring-1 ring-zinc-200')}>
+                      {idx + 1}
+                    </span>
+                    <p className="min-w-0 flex-1 truncate font-bold text-zinc-900">{driver.driver_name}</p>
+                    <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold', driver.gps_violations > 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700')}>
+                      {driver.gps_violations} violations
+                    </span>
+                  </div>
+                  <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Trips</dt><dd className="mt-0.5 font-bold text-zinc-800">{driver.total_trips}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Distance</dt><dd className="mt-0.5 font-bold text-zinc-800">{fmtKm(driver.total_distance)}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Average speed</dt><dd className="mt-0.5 font-bold text-zinc-800">{fmtSpeed(driver.avg_speed)}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">On-time arrivals</dt><dd className="mt-0.5 font-bold text-zinc-800">{driver.on_time_arrivals}</dd></div>
+                  </dl>
+                </article>
+              ))}
+            </div>
+            </>
           ) : (
             <EmptyState message="No driver performance data" />
           )}

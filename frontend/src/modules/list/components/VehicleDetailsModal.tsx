@@ -204,7 +204,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
       <div
         className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
       >
-        <div className="relative w-full max-w-lg max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
+        <div className="relative flex max-h-dvh w-full max-w-lg flex-col bg-white shadow-brand-xl animate-in fade-in zoom-in-95 sm:max-h-[calc(100dvh-40px)] sm:rounded-2xl">
           <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
             <div className="flex items-center gap-3">
               <div className="flex size-10 items-center justify-center rounded-full bg-amber-100">
@@ -286,7 +286,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
       <div
         className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
       >
-        <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
+        <div className="relative flex max-h-dvh w-full max-w-2xl flex-col bg-white shadow-brand-xl animate-in fade-in zoom-in-95 sm:max-h-[calc(100dvh-40px)] sm:rounded-2xl">
           <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
             <div>
               <h2 className="text-lg font-bold text-zinc-900">Edit Vehicle</h2>
@@ -375,7 +375,7 @@ export function VehicleDetailsModal({ isOpen, onClose, onSuccess, vehicle }: Veh
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 py-0 sm:py-10 backdrop-blur-sm"
     >
-      <div className="relative w-full max-w-2xl max-h-[100svh] sm:max-h-[calc(100svh-40px)] bg-white rounded-2xl shadow-brand-xl animate-in fade-in zoom-in-95 flex flex-col">
+      <div className="relative flex max-h-dvh w-full max-w-2xl flex-col bg-white shadow-brand-xl animate-in fade-in zoom-in-95 sm:max-h-[calc(100dvh-40px)] sm:rounded-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-100">
           <div className="flex flex-col gap-1">

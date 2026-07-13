@@ -140,7 +140,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   }, [user]);
 
   return (
-    <div className="flex flex-row min-h-screen bg-brand-pastel text-zinc-900">
+    <div className="flex min-h-dvh flex-row bg-brand-pastel text-zinc-900">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -218,7 +218,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Main content wrapper — offset by sidebar width on desktop, independent scroll */}
-      <div className="flex flex-1 flex-col h-screen overflow-y-auto lg:ml-64">
+      <div className="flex h-dvh flex-1 flex-col overflow-y-auto lg:ml-64">
         {/* Top header */}
         <header className="flex h-14 shrink-0 items-center bg-white shadow-brand px-3 lg:h-16 lg:px-8">
           {/* Left: Hamburger (mobile only) + Branding */}
