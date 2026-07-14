@@ -15,7 +15,7 @@ import {
   getVehicleEmoji,
   IDLE_ALERT_THRESHOLDS_MINUTES,
 } from '@car-tracker/tracker';
-import { findVehicleByPlate } from './gpsLogService.js';
+import { findVehicleByPlate, syncGpsTripLogsFromTelemetry } from './gpsLogService.js';
 import { insertTelemetry, updateTelemetryTelegramDelivery, getLastIdlingThreshold } from './gpsTelemetryService.js';
 import { getPool } from '../db/db.js';
 import { SYNC_INTERVAL_SECONDS } from '../config/env.js';
@@ -26,6 +26,7 @@ import {
 } from './gpsVehicleStateService.js';
 import { createNotificationForRoles } from './notificationService.js';
 import { syncNoToLogsFromTelemetry } from './noToLifecycleService.js';
+import { syncUnlinkedGpsTripLogsToTravelOrders } from './travelOrderSyncService.js';
 
 type SendTelegramFn = typeof trackerSendTelegram;
 let sendTelegram: SendTelegramFn = trackerSendTelegram;
@@ -1169,7 +1170,27 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
       }
     }
 
-    // ── Step 4: Sync No-TO logs from telemetry ────────────────
+    // ── Step 4: Sync Travel Order logs from telemetry ─────────
+    // Build/update Travel Order GPS logs from telemetry saved in this cycle,
+    // then match any still-unlinked trip logs to a Travel Order.
+    let tripLogsCreated = 0;
+    let tripLogsUpdated = 0;
+    let tripLogsFailed = 0;
+    let tripLogsLinked = 0;
+    try {
+      const tripLogResult = await syncGpsTripLogsFromTelemetry();
+      tripLogsCreated = tripLogResult.created;
+      tripLogsUpdated = tripLogResult.updated;
+      tripLogsFailed = tripLogResult.failed;
+
+      const linkResult = await syncUnlinkedGpsTripLogsToTravelOrders();
+      tripLogsLinked = linkResult.linked;
+    } catch (tripLogError) {
+      tripLogsFailed = -1;
+      console.error('[scheduler] Travel Order log sync failed:', (tripLogError as Error).message);
+    }
+
+    // ── Step 5: Sync No-TO logs from telemetry ────────────────
     let noToCreated = 0;
     let noToUpdated = 0;
     let noToSkipped = 0;
@@ -1196,6 +1217,10 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
       `telemetry_skipped=${telemetrySkipped}`,
       `telegram_sent=${telegramSent}`,
       `telegram_failed=${telegramFailed}`,
+      `trip_logs_created=${tripLogsCreated}`,
+      `trip_logs_updated=${tripLogsUpdated}`,
+      `trip_logs_linked=${tripLogsLinked}`,
+      `trip_logs_failed=${tripLogsFailed}`,
       `no_to_created=${noToCreated}`,
       `no_to_updated=${noToUpdated}`,
       `no_to_skipped=${noToSkipped}`,
