@@ -44,6 +44,7 @@ router.get('/monthly', async (req: Request, res: Response) => {
         FROM gps_no_to_logs
         WHERE EXTRACT(MONTH FROM trip_date) = $1
           AND EXTRACT(YEAR FROM trip_date) = $2
+          AND parent_trip_id IS NULL
       ),
       vehicle_agg AS (
         SELECT
@@ -150,6 +151,7 @@ router.get('/yearly', async (req: Request, res: Response) => {
           trip_date
         FROM gps_no_to_logs
         WHERE EXTRACT(YEAR FROM trip_date) = $1
+          AND parent_trip_id IS NULL
       ),
       gps AS (
         SELECT

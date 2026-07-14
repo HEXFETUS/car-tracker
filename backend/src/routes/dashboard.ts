@@ -46,6 +46,7 @@ async function loadSummary(pool: QueryablePool) {
         SELECT distance_km, engine_hours, max_speed_kph, anomaly_flag
         FROM gps_no_to_logs, date_context
         WHERE trip_date = today
+          AND parent_trip_id IS NULL
           AND converted_gps_trip_log_id IS NULL
       ),
       telemetry_points AS (
@@ -83,7 +84,8 @@ async function loadSummary(pool: QueryablePool) {
           (SELECT COUNT(*) FROM gps_trip_logs, date_context WHERE anomaly_flag = TRUE AND trip_date >= today - 7)
           +
           (SELECT COUNT(*) FROM gps_no_to_logs, date_context
-            WHERE anomaly_flag = TRUE AND trip_date >= today - 7 AND converted_gps_trip_log_id IS NULL)
+            WHERE anomaly_flag = TRUE AND trip_date >= today - 7
+              AND parent_trip_id IS NULL AND converted_gps_trip_log_id IS NULL)
         ) AS gps_anomalies_detected
     `),
     timedQuery(pool, 'dashboard realTimeStatus', `
@@ -415,7 +417,8 @@ async function loadTables(pool: QueryablePool) {
           (SELECT COUNT(*) FROM gps_trip_logs WHERE travel_order_id IS NULL)
           +
           (SELECT COUNT(*) FROM gps_no_to_logs
-            WHERE status = 'unmatched' AND converted_gps_trip_log_id IS NULL)
+            WHERE status = 'unmatched' AND parent_trip_id IS NULL
+              AND converted_gps_trip_log_id IS NULL)
         ) AS gps_logs_without_to,
         (SELECT COUNT(*) FROM gps_trip_logs WHERE LOWER(to_status_auto) = 'matched') AS auto_matched_trips,
         (SELECT COUNT(*) FROM gps_trip_logs WHERE LOWER(to_status_auto) = 'manual') AS manual_corrections

@@ -286,7 +286,7 @@ router.get('/no-to', async (req: Request, res: Response) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
     const offset = (page - 1) * pageSize;
-    const conditions: string[] = [];
+    const conditions: string[] = ['n.parent_trip_id IS NULL'];
     const params: unknown[] = [];
 
     if (req.query.vehicleId) {
@@ -436,7 +436,11 @@ router.get('/no-to/:id/details', async (req: Request, res: Response) => {
          LEFT JOIN vehicles v ON v.id = n.vehicle_id
          LEFT JOIN drivers d ON d.id = n.driver_id
          LEFT JOIN travel_orders t ON t.id = n.travel_order_id
-        WHERE n.id = $1`,
+        WHERE n.id = (
+          SELECT COALESCE(parent_trip_id, id)
+            FROM gps_no_to_logs
+           WHERE id = $1
+        )`,
       [req.params.id],
     );
     const log = logResult.rows[0];
@@ -450,7 +454,7 @@ router.get('/no-to/:id/details', async (req: Request, res: Response) => {
          FROM gps_no_to_log_active_trips
         WHERE gps_no_to_log_id = $1
         ORDER BY start_time ASC NULLS LAST`,
-      [req.params.id],
+      [log.id],
     );
     const routeResult = await pool.query(
       `SELECT gt.latitude, gt.longitude, gt.recorded_at, gt.speed_kmh,
@@ -465,7 +469,7 @@ router.get('/no-to/:id/details', async (req: Request, res: Response) => {
           AND gt.latitude IS NOT NULL
           AND gt.longitude IS NOT NULL
         ORDER BY gt.recorded_at ASC`,
-      [log.vehicle_id, req.params.id],
+      [log.vehicle_id, log.id],
     );
 
     // ── Compute moving hours from route points ──
