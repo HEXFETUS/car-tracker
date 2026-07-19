@@ -19,11 +19,23 @@ router.get('/', async (req: Request, res: Response) => {
   const userId = getUserId(req, res);
   if (!userId) return;
 
+  const requestedPage = Number(req.query.page ?? 1);
+  const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+
   try {
-    res.json({ success: true, data: await listNotifications(userId) });
+    const result = await listNotifications(userId, page);
+    res.json({ success: true, ...result });
   } catch (error) {
     console.error('GET /api/notifications error:', (error as Error).message);
-    res.status(500).json({ success: false, data: [], error: 'Database error' });
+    res.status(500).json({
+      success: false,
+      data: [],
+      total: 0,
+      page,
+      pageSize: 20,
+      hasMore: false,
+      error: 'Database error',
+    });
   }
 });
 

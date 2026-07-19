@@ -208,3 +208,7 @@ export interface Notification {
   createdAt: string;
   readAt?: string;
 }
+
+export interface NotificationPageResponse extends PaginatedResponse<Notification> {
+  hasMore: boolean;
+}
