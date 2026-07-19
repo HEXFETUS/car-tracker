@@ -932,7 +932,7 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
   // SELECT ... FOR UPDATE + committed UPSERT would in Postgres.
   function makeIdlingMockPool() {
     const dedupRows: Array<{ vehicle_id: string; active_trip_id: string; last_alerted_duration_minutes: number }> = [];
-    const telemetryRows: Array<{ vehicle_id: string; active_trip_id: string; event_type: string; idling_threshold_minutes: number }> = [];
+    const telemetryRows: Array<{ vehicle_id: string; active_trip_id: string; event_type: string; idling_threshold_minutes: number; travel_order_id: string | null; driver_id: string | null }> = [];
     const sentTelegrams: string[] = [];
     const order: string[] = [];
     let dedupLock: Promise<void> = Promise.resolve();
@@ -981,9 +981,16 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
       if (sql.includes('INSERT INTO gps_telemetry')) {
         const p = params as unknown[];
         const vehicleId = String(p[0]);
-        const activeTripId = String(p[9]);
-        const threshold = Number(p[10]);
-        telemetryRows.push({ vehicle_id: vehicleId, active_trip_id: activeTripId, event_type: 'IDLING_TOO_LONG', idling_threshold_minutes: threshold });
+        const activeTripId = String(p[11]);
+        const threshold = Number(p[12]);
+        telemetryRows.push({
+          vehicle_id: vehicleId,
+          active_trip_id: activeTripId,
+          event_type: 'IDLING_TOO_LONG',
+          idling_threshold_minutes: threshold,
+          driver_id: p[8] == null ? null : String(p[8]),
+          travel_order_id: p[9] == null ? null : String(p[9]),
+        });
         order.push('INSERT_TELEMETRY');
         return { rows: [{ id: `tel-${telemetryRows.length}` }] };
       }
@@ -1076,6 +1083,8 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
       idlingStartedAt: '2026-07-06T04:00:00.000Z',
       thresholdMinutes: 10, // 11min elapsed → idlingMilestoneForMinutes(11) = 10
       telegramMessage: '⏱ Idling for 10 minutes',
+      travelOrderId: 'to-1',
+      driverId: 'driver-1',
     };
 
     // Simulate two scheduler executions overlapping at 11 minutes.
@@ -1086,6 +1095,8 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
 
     // Exactly one telemetry row, one telegram message.
     assert.equal(telemetryRows.length, 1, 'must insert exactly one IDLING_TOO_LONG telemetry row');
+    assert.equal(telemetryRows[0].travel_order_id, 'to-1');
+    assert.equal(telemetryRows[0].driver_id, 'driver-1');
     assert.equal(sentMessages.length, 1, 'must send exactly one Telegram message');
 
     // Exactly one dedup row, with last_alerted_duration_minutes = 10.
@@ -1121,6 +1132,8 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
       idlingStartedAt: '2026-07-06T04:00:00.000Z',
       thresholdMinutes: 25, // elapsed 26min → threshold 25
       telegramMessage: '⏱ Idling for 25 minutes',
+      travelOrderId: 'to-2',
+      driverId: 'driver-2',
     });
 
     assert.ok(sentMessages[0].includes('Idling for 25 minutes'), 'message must use threshold (25), not 26');

@@ -27,6 +27,8 @@ import {
 import { syncUnlinkedGpsTripLogsToTravelOrders } from '../services/travelOrderSyncService.js';
 import { syncNoToLogsFromTelemetry } from '../services/noToLifecycleService.js';
 import { mapGpsTripLogRow } from './gps-trip-log-serializer.js';
+import { deriveActualTripEndpoints } from '../services/tripDetailsRouteService.js';
+import { anchorNoToRouteAtOrigin, deriveNoToTripDetails } from '../services/noToTripDetailsService.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -436,11 +438,7 @@ router.get('/no-to/:id/details', async (req: Request, res: Response) => {
          LEFT JOIN vehicles v ON v.id = n.vehicle_id
          LEFT JOIN drivers d ON d.id = n.driver_id
          LEFT JOIN travel_orders t ON t.id = n.travel_order_id
-        WHERE n.id = (
-          SELECT COALESCE(parent_trip_id, id)
-            FROM gps_no_to_logs
-           WHERE id = $1
-        )`,
+        WHERE n.id = $1`,
       [req.params.id],
     );
     const log = logResult.rows[0];
@@ -466,122 +464,52 @@ router.get('/no-to/:id/details', async (req: Request, res: Response) => {
         WHERE gt.vehicle_id = $1
           AND (nat.start_time IS NULL OR gt.recorded_at >= nat.start_time)
           AND (nat.end_time IS NULL OR gt.recorded_at <= nat.end_time)
+          AND ($3::timestamptz IS NULL OR gt.recorded_at >= $3::timestamptz)
+          AND ($4::timestamptz IS NULL OR gt.recorded_at <= $4::timestamptz)
           AND gt.latitude IS NOT NULL
           AND gt.longitude IS NOT NULL
         ORDER BY gt.recorded_at ASC`,
-      [log.vehicle_id, log.id],
+      [log.vehicle_id, log.id, log.departure_time, log.end_time],
     );
 
-    // ── Compute moving hours from route points ──
-    // Sort route points by recorded_at ASC (they already are from SQL)
-    let computedMovingHours: number | null = null;
-    let computedMaxSpeed: number | null = null;
-    const routePoints = routeResult.rows;
-
-    if (routePoints.length > 0) {
-      // Max speed
-      computedMaxSpeed = routePoints.reduce((max: number, row: any) => {
-        const speed = Number(row.speed_kmh) || 0;
-        return speed > max ? speed : max;
-      }, 0);
-
-      // Moving hours: for each consecutive pair, count interval if either point had speed > 0
-      let movingMs = 0;
-      for (let i = 1; i < routePoints.length; i++) {
-        const prev = routePoints[i - 1];
-        const curr = routePoints[i];
-
-        const prevTime = new Date(prev.recorded_at).getTime();
-        const currTime = new Date(curr.recorded_at).getTime();
-
-        if (!Number.isFinite(prevTime) || !Number.isFinite(currTime)) continue;
-
-        const deltaMs = currTime - prevTime;
-        if (deltaMs <= 0) continue;
-        if (deltaMs > 10 * 60 * 1000) continue;
-
-        const wasMoving =
-          Number(prev.speed_kmh ?? 0) > 0 ||
-          Number(curr.speed_kmh ?? 0) > 0;
-
-        if (wasMoving) {
-          movingMs += deltaMs;
-        }
-      }
-      computedMovingHours = movingMs > 0 ? Number((movingMs / 3600000).toFixed(2)) : null;
-    }
-
-    // Use computed values, fallback to stored
-    const movingHours = computedMovingHours ?? (log.moving_hours == null ? null : Number(log.moving_hours));
-    const maxSpeed = computedMaxSpeed ?? (log.max_speed_kph == null ? null : Number(log.max_speed_kph));
-
-    // Use lifecycle fields for proper Origin / Arrival / End display
-    // Origin = origin_address (ignition ON location)
-    // Arrival = farthest confirmed destination (candidate_destination)
-    // End = end_address (return to base location)
-    const destinationAddress = log.arrived_location_name ?? log.destination_address ?? '';
-    const destinationCoordinates = log.arrived_coordinates ?? log.destination_coordinates ?? null;
-
-    // ── Compute destination_reached_at from telemetry ──
-    // Find the first gps_telemetry LOCATION_UPDATE (falling back to any point)
-    // for this vehicle/trip that is within the destination radius of
-    // gps_no_to_logs.destination_coordinates. Its recorded_at is the actual
-    // time the vehicle reached the destination. This is preferred over the
-    // stored arrival_time, which can be a fabricated candidate timestamp
-    // (often equal to departure_time). We never use returned_to_base_at /
-    // end_time as the arrival time here.
-    const destCoords = parseCoordinates(log.destination_coordinates ?? log.arrived_coordinates ?? null);
-    let computedReachedAt: string | null = null;
-    let computedLocUpdate: string | null = null;
-    if (destCoords && routeResult.rows.length > 0) {
-      for (const pt of routeResult.rows) {
-        const distKm = haversineDistance(
-          `${destCoords[0]},${destCoords[1]}`,
-          `${pt.latitude},${pt.longitude}`,
-        ) / 1000;
-        if (distKm <= 0.2) {
-          if (!computedReachedAt) computedReachedAt = pt.recorded_at;
-          if (!computedLocUpdate && pt.event_type === 'LOCATION_UPDATE') {
-            computedLocUpdate = pt.recorded_at;
-          }
-        }
-      }
-    }
-    const telemetryDestinationReachedAt = computedLocUpdate ?? computedReachedAt;
-
-    // Persist the computed arrival time back to the log when not already set.
-    if (telemetryDestinationReachedAt && !log.destination_reached_at) {
-      try {
-        await pool.query(
-          `UPDATE gps_no_to_logs SET destination_reached_at = $2 WHERE id = $1`,
-          [req.params.id, telemetryDestinationReachedAt],
-        );
-      } catch (persistErr) {
-        console.error('Failed to persist destination_reached_at:', (persistErr as Error).message);
-      }
-    }
-
-    // ── Arrival Time resolution (No TO) ──
-    // Priority: destination_reached_at → valid arrival_time → paused_at.
-    // arrival_time is only valid if it differs from departure_time
-    // (unless destination_reached_at proves actual arrival). This prevents
-    // showing a fabricated arrival copied from the destination-candidate
-    // LOCATION_UPDATE, which can coincide with departure_time.
-    const departureTime = log.departure_time ?? null;
-    const destinationReachedAt = log.destination_reached_at ?? telemetryDestinationReachedAt ?? null;
-    const arrivalTime = log.arrival_time ?? null;
-    const pausedAt = log.paused_at ?? null;
-    const validArrivalTime =
-      arrivalTime && (arrivalTime !== departureTime || destinationReachedAt)
-        ? arrivalTime
-        : null;
-    const arrivedTime = destinationReachedAt ?? validArrivalTime ?? pausedAt ?? null;
-
-    const endAddress = log.end_address ?? log.destination_address ?? '';
-    const endCoordinates = log.end_coordinates ?? log.destination_coordinates ?? null;
-    // End Time belongs to the End section. Use end_time, falling back to
-    // returned_to_base_at. Do NOT use returned_to_base_at as Arrived Time.
-    const endTime = log.end_time ?? log.returned_to_base_at ?? null;
+    const telemetryRoute = routeResult.rows.map((row: any) => ({
+      lat: Number(row.latitude),
+      lng: Number(row.longitude),
+      timestamp: row.recorded_at,
+      speed: Number(row.speed_kmh) || 0,
+      locationName: row.location_name || null,
+      ignition: row.ignition,
+      eventType: row.event_type,
+      activeTripId: row.active_trip_id,
+    }));
+    const route = anchorNoToRouteAtOrigin(
+      telemetryRoute,
+      log.origin_coordinates,
+      log.origin_address,
+      log.departure_time,
+    );
+    const activeTripSessions = sessions.rows.map((row: any) => ({
+      activeTripId: row.active_trip_id,
+      startTime: row.start_time,
+      endTime: row.end_time,
+    }));
+    const derived = deriveNoToTripDetails(route, activeTripSessions, log.business_trip_status);
+    const hasRoute = route.length > 0;
+    const destinationAddress = derived.arrivalAddress ?? log.destination_address ?? '';
+    const destinationCoordinates = derived.arrivalCoordinates ?? log.destination_coordinates ?? null;
+    const originAddress = log.origin_address ?? derived.originAddress ?? '';
+    const originCoordinates = log.origin_coordinates ?? derived.originCoordinates ?? null;
+    const startTime = log.departure_time ?? derived.startTime ?? null;
+    const arrivalTime = derived.arrivalTime;
+    const endAddress = derived.completed
+      ? (derived.endAddress ?? log.end_address ?? null)
+      : null;
+    const endCoordinates = derived.completed
+      ? (derived.endCoordinates ?? log.end_coordinates ?? null)
+      : null;
+    const endTime = derived.completed
+      ? (derived.endTime ?? log.end_time ?? log.returned_to_base_at ?? null)
+      : null;
 
     res.json({
       success: true,
@@ -591,34 +519,34 @@ router.get('/no-to/:id/details', async (req: Request, res: Response) => {
           vehicle: log.plate_number ?? 'Unknown',
           driver: log.driver_full_name ?? 'Unknown',
           linkedTO: log.linked_to_number ?? null,
-          status: log.status,
-          distance: log.distance_km == null ? null : Number(log.distance_km),
-          engineHours: log.engine_hours == null ? null : Number(log.engine_hours),
-          movingHours: movingHours,
-          maxSpeed: maxSpeed,
+          status: derived.status,
+          distance: hasRoute ? derived.distanceKm : (log.distance_km == null ? null : Number(log.distance_km)),
+          engineHours: hasRoute ? derived.engineHours : (log.engine_hours == null ? null : Number(log.engine_hours)),
+          movingHours: hasRoute ? derived.movingHours : (log.moving_hours == null ? null : Number(log.moving_hours)),
+          maxSpeed: hasRoute ? derived.maxSpeed : (log.max_speed_kph == null ? null : Number(log.max_speed_kph)),
           notes: log.notes,
           // Origin
-          origin: log.origin_address || '',
-          startTime: log.departure_time,
-          coordinatesOrigin: log.origin_coordinates,
-          // Arrival (farthest confirmed destination)
+          origin: originAddress,
+          startTime,
+          coordinatesOrigin: originCoordinates,
+          // Arrival (farthest telemetry point from this journey's origin)
           destination: destinationAddress,
           plannedDestinationAddress: destinationAddress,
           plannedDestinationCoordinates: destinationCoordinates,
-          arrivedLocation: log.arrived_location_name ?? null,
-          arrivedCoordinates: log.arrived_coordinates ?? null,
-          arrivedTime: arrivedTime,
+          arrivedLocation: destinationAddress || null,
+          arrivedCoordinates: destinationCoordinates,
+          arrivedTime: arrivalTime,
           // Explicit fields for the frontend Arrival/End mapping
-          arrivalDisplayTime: arrivedTime,
-          departureTime: departureTime,
-          destinationReachedAt: destinationReachedAt,
+          arrivalDisplayTime: arrivalTime,
+          departureTime: startTime,
+          destinationReachedAt: log.destination_reached_at ?? null,
           arrivalTime: arrivalTime,
-          pausedAt: pausedAt,
+          pausedAt: log.paused_at ?? null,
           // End (return to base)
           endAddress: endAddress,
           endCoordinates: endCoordinates,
           endTime: endTime,
-          returnedToBaseAt: log.returned_to_base_at ?? null,
+          returnedToBaseAt: derived.completed ? endTime : null,
           // No-TO specific
           routeRoadTaken: '',
           toOrigin: null,
@@ -632,22 +560,9 @@ router.get('/no-to/:id/details', async (req: Request, res: Response) => {
           // Lifecycle status
           businessTripStatus: log.business_trip_status ?? null,
         },
-        route: routeResult.rows.map((row: any) => ({
-          lat: Number(row.latitude),
-          lng: Number(row.longitude),
-          timestamp: row.recorded_at,
-          speed: Number(row.speed_kmh) || 0,
-          locationName: row.location_name || null,
-          ignition: row.ignition,
-          eventType: row.event_type,
-          activeTripId: row.active_trip_id,
-        })),
-        routeCount: routeResult.rows.length,
-        activeTripSessions: sessions.rows.map((row: any) => ({
-          activeTripId: row.active_trip_id,
-          startTime: row.start_time,
-          endTime: row.end_time,
-        })),
+        route,
+        routeCount: route.length,
+        activeTripSessions,
       },
     });
   } catch (error) {
@@ -1915,6 +1830,11 @@ router.get('/:id/details', async (req: Request, res: Response) => {
       eventType: row.event_type,
       activeTripId: row.active_trip_id ?? null,
     }));
+    const actualEndpoints = deriveActualTripEndpoints(
+      route,
+      trip.to_lat_long_origin || trip.coordinates_origin,
+      trip.trip_status_gps,
+    );
 
     const stopsResult = await pool.query(
       `SELECT id, gps_trip_log_id, active_trip_id, vehicle_id, stop_order,
@@ -2071,8 +1991,10 @@ router.get('/:id/details', async (req: Request, res: Response) => {
     let destinationMatch: any = null;
 
     if (route.length > 0) {
-      startTime = trip.departure_time_gps;
-      endTime = trip.returned_to_base_at || trip.arrival_time_gps || route[route.length - 1].timestamp;
+      startTime = actualEndpoints.startTime == null ? trip.departure_time_gps : String(actualEndpoints.startTime);
+      endTime = actualEndpoints.endTime == null
+        ? (trip.returned_to_base_at || trip.arrival_time_gps)
+        : String(actualEndpoints.endTime);
       const destCoords = parseCoordinates(trip.to_lat_long_destination || trip.coordinates_destination);
       if (destCoords) {
         destinationMatch = findDestinationTelemetryPoint(route, destCoords);
@@ -2096,7 +2018,7 @@ router.get('/:id/details', async (req: Request, res: Response) => {
           movingHours: movingHours,
           maxSpeed: maxSpeed,
           notes: tripData.notesRemarks,
-          origin: tripData.originGpsStartPoint || '',
+          origin: actualEndpoints.originAddress || tripData.originGpsStartPoint || '',
           destination: tripData.destinationGpsEndPoint || '',
           routeRoadTaken: tripData.actualRouteRoadTaken || '',
           toOrigin: tripData.toOrigin || null,
@@ -2111,10 +2033,13 @@ router.get('/:id/details', async (req: Request, res: Response) => {
           arrivedCoordinates: trip.arrived_coordinates || (destinationMatch ? `${destinationMatch.lat},${destinationMatch.lng}` : null),
           arrivedLocation: trip.arrived_location_name || destinationMatch?.locationName || null,
           matchedDestinationDistanceM: trip.matched_destination_distance_m == null ? null : Number(trip.matched_destination_distance_m),
-          endAddress: tripData.destinationGpsEndPoint || null,
-          endCoordinates: tripData.coordinatesDestination || null,
-          returnedToBaseAt: trip.returned_to_base_at || null,
-          matchedOriginDistanceM: trip.matched_origin_distance_m == null ? null : Number(trip.matched_origin_distance_m),
+          endAddress: actualEndpoints.endAddress || tripData.destinationGpsEndPoint || null,
+          endCoordinates: actualEndpoints.endCoordinates || tripData.coordinatesDestination || null,
+          returnedToBaseAt: actualEndpoints.returnedToBaseAt == null
+            ? (trip.returned_to_base_at || null)
+            : String(actualEndpoints.returnedToBaseAt),
+          matchedOriginDistanceM: actualEndpoints.matchedOriginDistanceM
+            ?? (trip.matched_origin_distance_m == null ? null : Number(trip.matched_origin_distance_m)),
           anomalyFlag: tripData.anomalyFlag,
           parentTripId: tripData.parentTripId,
           parentGpsRecordNo: tripData.parentGpsRecordNo,
@@ -2123,7 +2048,7 @@ router.get('/:id/details', async (req: Request, res: Response) => {
           missionDisplay,
           linkedOutboundTrip,
           linkedReturnTrip,
-          coordinatesOrigin: tripData.coordinatesOrigin || null,
+          coordinatesOrigin: actualEndpoints.originCoordinates || tripData.coordinatesOrigin || null,
           coordinatesDestination: tripData.coordinatesDestination || null,
           tripType: tripData.tripType || 'OUTBOUND',
         },

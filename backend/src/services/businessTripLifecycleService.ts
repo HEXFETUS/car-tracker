@@ -21,6 +21,7 @@ type TelemetryRow = {
   recorded_at: string | Date | null;
   active_trip_id: string | null;
   driver_id: string | null;
+  travel_order_id: string | null;
 };
 
 type TravelOrderRow = {
@@ -35,6 +36,7 @@ type TravelOrderRow = {
   origin_location: string | null;
   destination_target: string | null;
   to_number: string | null;
+  travel_date: string | null;
 };
 
 type LifecycleTrip = {
@@ -62,6 +64,9 @@ type LifecycleTrip = {
   points: TelemetryRow[];
   matchedDestinationDistanceM: number | null;
   matchedOriginDistanceM: number | null;
+  authoritativeTravelOrderLink: boolean;
+  anomalyReason: string | null;
+  travelDate: string;
 };
 
 const DEPARTURE_WINDOW_MS = Number(process.env.TO_SYNC_DEPARTURE_WINDOW_MINUTES ?? 120) * 60 * 1000;
@@ -140,8 +145,26 @@ function isMoving(row: TelemetryRow): boolean {
   return normalizeTelemetryEvent(row.event_type) === 'LOCATION_UPDATE' && Number(row.speed_kmh) > 0;
 }
 
+function isTripStartSignal(row: TelemetryRow): boolean {
+  const eventType = normalizeTelemetryEvent(row.event_type);
+  return eventType === 'MOTION_STARTED' || (eventType === 'LOCATION_UPDATE' && Number(row.speed_kmh) > 0);
+}
+
 function tripDateFromTimestamp(value: string): string {
   return value.slice(0, 10);
+}
+
+function manilaDateFromTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return tripDateFromTimestamp(value);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
 async function generateGpsRecordNo(departureTimeGps: string): Promise<string> {
@@ -154,6 +177,177 @@ async function generateGpsRecordNo(departureTimeGps: string): Promise<string> {
     [year],
   );
   return `GPS-${year}-${String(Number(result.rows[0]?.cnt ?? 0) + 1).padStart(4, '0')}`;
+}
+
+export async function syncTravelDateGpsLogs(): Promise<{ created: number; updated: number }> {
+  const pool = getPool();
+  const updatedResult = await pool.query(
+    `UPDATE gps_trip_logs g
+        SET trip_date = to_.scheduled_departure::date,
+            trip_status_gps = CASE
+              WHEN to_.status = 'CANCELLED' AND g.trip_status_gps = 'pending' THEN 'cancelled'
+              ELSE g.trip_status_gps
+            END
+       FROM travel_orders to_
+      WHERE to_.id = g.travel_order_id
+        AND to_.scheduled_departure IS NOT NULL
+        AND (
+          g.trip_date IS DISTINCT FROM to_.scheduled_departure::date
+          OR (to_.status = 'CANCELLED' AND g.trip_status_gps = 'pending')
+        )`,
+  );
+
+  const createdResult = await pool.query<{ id: string }>(
+    `WITH eligible_orders AS MATERIALIZED (
+       SELECT to_.id,
+              to_.vehicle_id,
+              to_.driver_id,
+              to_.scheduled_departure,
+              to_.scheduled_departure::date AS travel_date,
+              to_.origin_location,
+              to_.destination_target,
+              to_.lat_long_origin,
+              to_.lat_long_destination,
+              EXTRACT(YEAR FROM to_.scheduled_departure)::integer AS record_year
+         FROM travel_orders to_
+        WHERE to_.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+          AND to_.scheduled_departure IS NOT NULL
+          AND to_.scheduled_departure::date <= (NOW() AT TIME ZONE 'Asia/Manila')::date
+          AND to_.vehicle_id IS NOT NULL
+          AND to_.driver_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM gps_trip_logs g WHERE g.travel_order_id = to_.id
+          )
+     ), years AS (
+       SELECT DISTINCT record_year FROM eligible_orders
+     ), locks AS MATERIALIZED (
+       SELECT record_year, pg_advisory_xact_lock(730000 + record_year) AS locked
+         FROM years
+        ORDER BY record_year
+     ), max_sequences AS (
+       SELECT y.record_year,
+              COALESCE(MAX(
+                CASE
+                  WHEN g.gps_record_no ~ ('^GPS-' || y.record_year || '-[0-9]+$')
+                  THEN split_part(g.gps_record_no, '-', 3)::integer
+                END
+              ), 0) AS max_sequence
+         FROM years y
+         LEFT JOIN gps_trip_logs g ON true
+        GROUP BY y.record_year
+     ), numbered AS (
+       SELECT e.*,
+              m.max_sequence + ROW_NUMBER() OVER (
+                PARTITION BY e.record_year
+                ORDER BY e.travel_date ASC, e.scheduled_departure ASC, e.id ASC
+              ) AS record_sequence
+         FROM eligible_orders e
+         JOIN locks l USING (record_year)
+         JOIN max_sequences m USING (record_year)
+     )
+     INSERT INTO gps_trip_logs (
+       gps_record_no, trip_date, vehicle_id, driver_id,
+       origin_gps_start_point, destination_gps_end_point,
+       coordinates_origin, coordinates_destination,
+       actual_route_road_taken, departure_time_gps, arrival_time_gps,
+       gps_distance_km, engine_hours, max_speed_kph,
+       trip_status_gps, travel_order_id, to_status_auto,
+       anomaly_flag, notes_remarks, active_trip_id, trip_type,
+       destination_verified, business_trip_status
+     )
+     SELECT 'GPS-' || record_year || '-' || LPAD(record_sequence::text, 4, '0'),
+            travel_date, vehicle_id, driver_id,
+            COALESCE(origin_location, ''), COALESCE(destination_target, ''),
+            lat_long_origin, lat_long_destination,
+            '', NULL, NULL, 0, 0, 0,
+            'pending', id, 'matched', FALSE, NULL, NULL, 'OUTBOUND', FALSE, 'WAITING_AT_BASE'
+       FROM numbered
+     ON CONFLICT DO NOTHING
+     RETURNING id`,
+  );
+
+  return {
+    created: createdResult.rows.length,
+    updated: updatedResult.rowCount ?? 0,
+  };
+}
+
+export async function syncCompleteTravelOrderSessions(): Promise<{ sessions: number; points: number }> {
+  const pool = getPool();
+  const result = await pool.query<{ sessions: number; points: number }>(
+    `WITH session_stats AS MATERIALIZED (
+       SELECT gt.vehicle_id,
+              gt.active_trip_id,
+              MIN(gt.recorded_at) AS session_start,
+              MAX(gt.recorded_at) AS session_end,
+              (ARRAY_AGG(CONCAT(gt.latitude, ',', gt.longitude) ORDER BY gt.recorded_at ASC))[1] AS start_coordinates,
+              COUNT(*) FILTER (WHERE gt.travel_order_id IS NULL) AS unlinked_points,
+              COUNT(DISTINCT gt.travel_order_id) FILTER (WHERE gt.travel_order_id IS NOT NULL) AS linked_order_count,
+              (ARRAY_AGG(DISTINCT gt.travel_order_id) FILTER (WHERE gt.travel_order_id IS NOT NULL))[1] AS linked_travel_order_id
+         FROM gps_telemetry gt
+        WHERE gt.active_trip_id IS NOT NULL
+          AND gt.latitude IS NOT NULL
+          AND gt.longitude IS NOT NULL
+        GROUP BY gt.vehicle_id, gt.active_trip_id
+     ), validated AS MATERIALIZED (
+       SELECT stats.vehicle_id, stats.active_trip_id, stats.session_start, stats.session_end,
+              stats.linked_travel_order_id AS travel_order_id, target_order.driver_id,
+              target_log.id AS gps_trip_log_id
+         FROM session_stats stats
+         JOIN travel_orders target_order
+           ON target_order.id = stats.linked_travel_order_id
+          AND target_order.vehicle_id = stats.vehicle_id
+          AND target_order.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+          AND target_order.driver_id IS NOT NULL
+          AND target_order.scheduled_departure IS NOT NULL
+          AND target_order.lat_long_origin IS NOT NULL
+         JOIN gps_trip_logs target_log
+           ON target_log.travel_order_id = target_order.id
+          AND target_log.vehicle_id = stats.vehicle_id
+          AND COALESCE(target_log.to_status_auto, '') <> 'manual'
+         JOIN gps_trip_log_active_trips target_session
+           ON target_session.gps_trip_log_id = target_log.id
+          AND target_session.active_trip_id = stats.active_trip_id
+        WHERE stats.unlinked_points > 0
+          AND stats.linked_order_count = 1
+          AND (stats.session_start AT TIME ZONE 'Asia/Manila')::date = (stats.session_end AT TIME ZONE 'Asia/Manila')::date
+          AND target_order.scheduled_departure::date = (stats.session_start AT TIME ZONE 'Asia/Manila')::date
+          AND stats.session_start BETWEEN
+              (target_order.scheduled_departure AT TIME ZONE 'Asia/Manila') - INTERVAL '2 hours'
+              AND COALESCE(target_order.scheduled_arrival AT TIME ZONE 'Asia/Manila',
+                           (target_order.scheduled_departure AT TIME ZONE 'Asia/Manila') + INTERVAL '12 hours')
+          AND haversine_distance(target_order.lat_long_origin, stats.start_coordinates) <= 300
+          AND NOT EXISTS (
+            SELECT 1 FROM travel_orders competing_order
+             WHERE competing_order.id <> target_order.id
+               AND competing_order.vehicle_id = stats.vehicle_id
+               AND competing_order.status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+               AND competing_order.scheduled_departure::date = target_order.scheduled_departure::date
+               AND competing_order.lat_long_origin IS NOT NULL
+               AND haversine_distance(competing_order.lat_long_origin, stats.start_coordinates) <= 300
+          )
+     ), updated_telemetry AS (
+       UPDATE gps_telemetry telemetry
+          SET travel_order_id = validated.travel_order_id,
+              driver_id = COALESCE(telemetry.driver_id, validated.driver_id)
+         FROM validated
+        WHERE telemetry.vehicle_id = validated.vehicle_id
+          AND telemetry.active_trip_id = validated.active_trip_id
+          AND telemetry.travel_order_id IS NULL
+       RETURNING telemetry.id
+     ), updated_sessions AS (
+       UPDATE gps_trip_log_active_trips session
+          SET start_time = LEAST(COALESCE(session.start_time, validated.session_start), validated.session_start),
+              end_time = GREATEST(COALESCE(session.end_time, validated.session_end), validated.session_end)
+         FROM validated
+        WHERE session.gps_trip_log_id = validated.gps_trip_log_id
+          AND session.active_trip_id = validated.active_trip_id
+       RETURNING session.id
+     )
+     SELECT (SELECT COUNT(*)::integer FROM updated_sessions) AS sessions,
+            (SELECT COUNT(*)::integer FROM updated_telemetry) AS points`,
+  );
+  return result.rows[0] ?? { sessions: 0, points: 0 };
 }
 
 async function generateNoToRecordNo(departureTime: string): Promise<string> {
@@ -199,17 +393,129 @@ function findTravelOrderToStart(
     .sort((a, b) => Math.abs(rowMs - (parseTime(a.scheduled_departure) ?? rowMs)) - Math.abs(rowMs - (parseTime(b.scheduled_departure) ?? rowMs)))[0] ?? null;
 }
 
-function buildLifecycleTrips(rows: TelemetryRow[], orders: TravelOrderRow[]): LifecycleTrip[] {
+function findTravelOrderForSession(
+  row: TelemetryRow,
+  orders: TravelOrderRow[],
+  defaultBaseCoord: string,
+): TravelOrderRow | null {
+  const recordedAt = timestampToIso(row.recorded_at);
+  const coord = coordinate(row);
+  if (!recordedAt || !coord) return null;
+  const eventDate = manilaDateFromTimestamp(recordedAt);
+
+  return orders
+    .filter((order) => order.travel_date === eventDate && isNearBase(coord, order, defaultBaseCoord).near)
+    .sort((a, b) => {
+      const rowMs = parseTime(row.recorded_at) ?? 0;
+      return Math.abs(rowMs - (parseTime(a.scheduled_departure) ?? rowMs))
+        - Math.abs(rowMs - (parseTime(b.scheduled_departure) ?? rowMs));
+    })[0] ?? null;
+}
+
+function finalizeTripAtLastPoint(trip: LifecycleTrip, defaultBaseCoord: string): void {
+  const lastPoint = trip.points[trip.points.length - 1];
+  const lastRecordedAt = timestampToIso(lastPoint?.recorded_at) ?? trip.startedAt;
+  const lastCoord = coordinate(lastPoint) ?? trip.lastCoord;
+  const baseResult = isNearBase(lastCoord, trip.travelOrder, defaultBaseCoord);
+
+  trip.status = 'COMPLETED';
+  trip.endedAt = lastRecordedAt;
+  trip.destinationCoord = lastCoord;
+  trip.destinationName = lastPoint?.location_name || trip.lastLocationName || trip.destinationName;
+  if (baseResult.near && trip.hadLeftBase) {
+    trip.returnedToBaseAt = lastRecordedAt;
+    trip.matchedOriginDistanceM = baseResult.distanceM;
+  }
+}
+
+export function buildLifecycleTrips(rows: TelemetryRow[], orders: TravelOrderRow[]): LifecycleTrip[] {
   const fleetConfig = getFleetConfig();
   const defaultBaseCoord = `${fleetConfig.base.latitude},${fleetConfig.base.longitude}`;
   const completed: LifecycleTrip[] = [];
   let current: LifecycleTrip | null = null;
   let lastAtBase = new Map<string, boolean>();
+  let previousActiveTripId: string | null = null;
+
+  // An active_trip_id represents one continuous ignition session. A linked
+  // travel order is valid for the whole session only when that session began
+  // on the order's Manila travel date. This preserves genuine overnight
+  // sessions while preventing a new next-day ignition session from inheriting
+  // a stale travel-order link.
+  const sessionStarts = new Map<string, { timestamp: number; travelDate: string }>();
+  for (const row of rows) {
+    if (!row.active_trip_id) continue;
+    const recordedAt = timestampToIso(row.recorded_at);
+    if (!recordedAt) continue;
+    const timestamp = new Date(recordedAt).getTime();
+    const existing = sessionStarts.get(row.active_trip_id);
+    if (!Number.isFinite(timestamp) || (existing && existing.timestamp <= timestamp)) continue;
+    sessionStarts.set(row.active_trip_id, {
+      timestamp,
+      travelDate: manilaDateFromTimestamp(recordedAt),
+    });
+  }
+
+  const directlyLinkedOrder = (row: TelemetryRow): TravelOrderRow | null => {
+    if (!row.travel_order_id) return null;
+    const order = orders.find((candidate) =>
+      candidate.id === row.travel_order_id
+      && candidate.vehicle_id === row.vehicle_id
+      && ['APPROVED', 'ACTIVE', 'COMPLETED'].includes(String(candidate.status).toUpperCase())
+    ) ?? null;
+    if (!order) return null;
+
+    const recordedAt = timestampToIso(row.recorded_at);
+    if (!recordedAt) return null;
+    const sessionTravelDate = row.active_trip_id
+      ? sessionStarts.get(row.active_trip_id)?.travelDate
+      : manilaDateFromTimestamp(recordedAt);
+    const orderTravelDate = order.travel_date
+      ?? (order.scheduled_departure ? manilaDateFromTimestamp(timestampToIso(order.scheduled_departure) ?? '') : null);
+    return sessionTravelDate && orderTravelDate === sessionTravelDate ? order : null;
+  };
 
   for (const row of rows) {
     const recordedAt = timestampToIso(row.recorded_at);
     const coord = coordinate(row);
     if (!recordedAt || !coord) continue;
+
+    const directOrder = directlyLinkedOrder(row);
+    const newSession = Boolean(row.active_trip_id && row.active_trip_id !== previousActiveTripId);
+    previousActiveTripId = row.active_trip_id ?? previousActiveTripId;
+    const sessionOrder = !directOrder && newSession
+      ? findTravelOrderForSession(row, orders, defaultBaseCoord)
+      : null;
+    const eventTravelDate = manilaDateFromTimestamp(recordedAt);
+    const directOrderChanged = Boolean(current && directOrder && directOrder.id !== current.travelOrder.id);
+    if (current && directOrder?.id === current.travelOrder.id) {
+      current.authoritativeTravelOrderLink = true;
+    }
+    const inferredSessionChanged = Boolean(
+      current
+      && !directOrder
+      && !current.authoritativeTravelOrderLink
+      && newSession
+      && (
+        (sessionOrder && sessionOrder.id !== current.travelOrder.id)
+        || (!sessionOrder && eventTravelDate > current.travelDate)
+      ),
+    );
+    const authoritativeSessionChanged = Boolean(
+      current
+      && current.authoritativeTravelOrderLink
+      && newSession
+      && eventTravelDate > current.travelDate,
+    );
+
+    if (current && (directOrderChanged || inferredSessionChanged || authoritativeSessionChanged)) {
+      finalizeTripAtLastPoint(current, defaultBaseCoord);
+      if (directOrderChanged && directOrder) {
+        current.anomalyReason = `Telemetry travel order changed to ${directOrder.to_number || directOrder.id}.`;
+      }
+      completed.push(current);
+      current = null;
+      lastAtBase = new Map();
+    }
 
     if (current) {
       current.points.push(row);
@@ -235,7 +541,11 @@ function buildLifecycleTrips(rows: TelemetryRow[], orders: TravelOrderRow[]): Li
           sessions: current.activeTripIds.size,
         });
         current.status = 'COMPLETED';
-        current.matchedToTravelOrder = false;
+        if (!current.authoritativeTravelOrderLink) {
+          current.matchedToTravelOrder = false;
+        } else {
+          current.anomalyReason = 'Vehicle returned to base without reaching the planned destination.';
+        }
         current.returnedToBaseAt = recordedAt;
         current.endedAt = recordedAt;
         current.destinationCoord = coord;
@@ -289,16 +599,18 @@ function buildLifecycleTrips(rows: TelemetryRow[], orders: TravelOrderRow[]): Li
       lastAtBase.set(order.id, isNearBase(coord, order, defaultBaseCoord).near);
     }
 
-    if (!isMoving(row)) continue;
-    const order = findTravelOrderToStart(row, orders, defaultBaseCoord);
-    if (!order || !lastAtBase.get(order.id)) continue;
+    if (!isTripStartSignal(row)) continue;
+    const order: TravelOrderRow | null = directOrder
+      ?? sessionOrder
+      ?? findTravelOrderToStart(row, orders, defaultBaseCoord);
+    if (!order || (!directOrder && !lastAtBase.get(order.id))) continue;
 
-    const originCoord = chooseOriginCoord(order, defaultBaseCoord);
+    const originCoord = coord;
     current = {
       travelOrder: order,
       matchedToTravelOrder: true,
       status: 'OUTBOUND',
-      hadLeftBase: false,
+      hadLeftBase: !isNearBase(coord, order, defaultBaseCoord).near,
       startedAt: recordedAt,
       endedAt: null,
       destinationReachedAt: null,
@@ -308,7 +620,7 @@ function buildLifecycleTrips(rows: TelemetryRow[], orders: TravelOrderRow[]): Li
       resumedAt: null,
       originCoord,
       destinationCoord: coord,
-      originName: order.origin_location || fleetConfig.base.address,
+      originName: row.location_name || order.origin_location || fleetConfig.base.address,
       destinationName: row.location_name || order.destination_target || '',
       arrivedLocationName: null,
       arrivedCoordinates: null,
@@ -319,6 +631,9 @@ function buildLifecycleTrips(rows: TelemetryRow[], orders: TravelOrderRow[]): Li
       points: [row],
       matchedDestinationDistanceM: null,
       matchedOriginDistanceM: null,
+      authoritativeTravelOrderLink: Boolean(directOrder),
+      anomalyReason: null,
+      travelDate: order.travel_date ?? tripDateFromTimestamp(recordedAt),
     };
   }
 
@@ -353,12 +668,12 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
   // trips use gps_trip_log_active_trips because one physical session can span
   // multiple logical trips, and some databases still have a unique index here.
   const primaryActiveTripId = null;
-  const anomalyFlag = !trip.matchedToTravelOrder;
-  const notes = !trip.matchedToTravelOrder
+  const anomalyFlag = !trip.matchedToTravelOrder || Boolean(trip.anomalyReason);
+  const notes = trip.anomalyReason ?? (!trip.matchedToTravelOrder
     ? 'Vehicle completed trip without matching approved travel order.'
     : trip.status === 'PAUSED_AWAY_FROM_BASE'
       ? 'Trip paused away from base'
-      : null;
+      : null);
   const travelOrderId = trip.matchedToTravelOrder ? trip.travelOrder.id : null;
   const driverId = trip.matchedToTravelOrder ? trip.travelOrder.driver_id : trip.points[0]?.driver_id ?? null;
   const toStatusAuto = trip.matchedToTravelOrder ? 'matched' : 'no_to';
@@ -405,7 +720,8 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
               matched_destination_distance_m = $25,
               matched_origin_distance_m = $26,
               arrived_location_name = $28,
-              arrived_coordinates = $29
+              arrived_coordinates = $29,
+              trip_date = $30::date
         WHERE id = $1`,
       [
         gpsTripLogId,
@@ -417,7 +733,6 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
         trip.originCoord,
         trip.destinationCoord,
         trip.startedAt,
-        settled,
         trip.returnedToBaseAt,
         gpsDistanceKm,
         engineHours,
@@ -438,11 +753,12 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
         toStatusAuto,
         trip.arrivedLocationName,
         trip.arrivedCoordinates,
+        trip.travelDate,
       ],
     );
   } else {
     status = 'created';
-    const gpsRecordNo = await generateGpsRecordNo(trip.startedAt);
+    const gpsRecordNo = await generateGpsRecordNo(trip.travelDate);
     const insertColumns = [
       'gps_record_no',
       'trip_date',
@@ -479,7 +795,7 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
     ];
     const insertValues = [
       gpsRecordNo,
-      tripDateFromTimestamp(trip.startedAt),
+      trip.travelDate,
       trip.travelOrder.vehicle_id,
       driverId,
       trip.originName,
@@ -536,8 +852,23 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
 
   for (const activeTripId of trip.activeTripIds) {
     const activePoints = trip.points.filter((point) => point.active_trip_id === activeTripId);
-    const startTime = timestampToIso(activePoints[0]?.recorded_at);
-    const endTimeForSession = timestampToIso(activePoints[activePoints.length - 1]?.recorded_at);
+    let startTime = timestampToIso(activePoints[0]?.recorded_at);
+    let endTimeForSession = timestampToIso(activePoints[activePoints.length - 1]?.recorded_at);
+    if (trip.authoritativeTravelOrderLink && travelOrderId) {
+      const fullSession = await pool.query<{ start_time: string | Date; end_time: string | Date }>(
+        `SELECT MIN(recorded_at) AS start_time, MAX(recorded_at) AS end_time
+           FROM gps_telemetry
+          WHERE vehicle_id = $1
+            AND active_trip_id = $2
+          HAVING COUNT(DISTINCT travel_order_id) FILTER (WHERE travel_order_id IS NOT NULL) <= 1
+             AND BOOL_AND(travel_order_id IS NULL OR travel_order_id = $3)`,
+        [trip.travelOrder.vehicle_id, activeTripId, travelOrderId],
+      );
+      if (fullSession.rows[0]) {
+        startTime = timestampToIso(fullSession.rows[0].start_time) ?? startTime;
+        endTimeForSession = timestampToIso(fullSession.rows[0].end_time) ?? endTimeForSession;
+      }
+    }
     await pool.query(
       `INSERT INTO gps_trip_log_active_trips
          (gps_trip_log_id, active_trip_id, start_time, end_time)
@@ -550,15 +881,60 @@ async function upsertLifecycleTrip(trip: LifecycleTrip): Promise<'created' | 'up
     );
     await pool.query(
       `UPDATE gps_telemetry
-          SET travel_order_id = $1,
-              driver_id = COALESCE(driver_id, $2)
-        WHERE vehicle_id = $3
-          AND active_trip_id = $4
-          AND ($5::timestamptz IS NULL OR recorded_at >= $5::timestamptz)
-          AND ($6::timestamptz IS NULL OR recorded_at <= $6::timestamptz)`,
-      [travelOrderId, driverId, trip.travelOrder.vehicle_id, activeTripId, startTime, endTimeForSession],
+          SET driver_id = COALESCE(driver_id, $1)
+        WHERE vehicle_id = $2
+          AND active_trip_id = $3
+          AND ($4::timestamptz IS NULL OR recorded_at >= $4::timestamptz)
+          AND ($5::timestamptz IS NULL OR recorded_at <= $5::timestamptz)`,
+      [driverId, trip.travelOrder.vehicle_id, activeTripId, startTime, endTimeForSession],
     );
   }
+
+  await pool.query(
+    `WITH bounded_route AS (
+       SELECT g.id,
+              g.trip_status_gps,
+              to_.lat_long_origin AS planned_origin_coordinates,
+              (ARRAY_AGG(gt.recorded_at ORDER BY gt.recorded_at ASC))[1] AS first_at,
+              (ARRAY_AGG(gt.location_name ORDER BY gt.recorded_at ASC))[1] AS first_address,
+              (ARRAY_AGG(CONCAT(gt.latitude, ',', gt.longitude) ORDER BY gt.recorded_at ASC))[1] AS first_coordinates,
+              (ARRAY_AGG(gt.recorded_at ORDER BY gt.recorded_at DESC))[1] AS last_at,
+              (ARRAY_AGG(gt.location_name ORDER BY gt.recorded_at DESC))[1] AS last_address,
+              (ARRAY_AGG(CONCAT(gt.latitude, ',', gt.longitude) ORDER BY gt.recorded_at DESC))[1] AS last_coordinates
+         FROM gps_trip_logs g
+         JOIN travel_orders to_ ON to_.id = g.travel_order_id
+         JOIN gps_trip_log_active_trips session ON session.gps_trip_log_id = g.id
+         JOIN gps_telemetry gt
+           ON gt.vehicle_id = g.vehicle_id
+          AND gt.active_trip_id = session.active_trip_id
+          AND (session.start_time IS NULL OR gt.recorded_at >= session.start_time)
+          AND (session.end_time IS NULL OR gt.recorded_at <= session.end_time)
+        WHERE g.id = $1
+          AND gt.latitude IS NOT NULL
+          AND gt.longitude IS NOT NULL
+        GROUP BY g.id, to_.lat_long_origin
+     ), canonical AS (
+       SELECT route.*,
+              CASE WHEN route.planned_origin_coordinates IS NULL THEN NULL
+                   ELSE haversine_distance(route.planned_origin_coordinates, route.last_coordinates)
+              END AS end_distance_from_origin_m
+         FROM bounded_route route
+     )
+     UPDATE gps_trip_logs g
+        SET origin_gps_start_point = COALESCE(canonical.first_address, g.origin_gps_start_point),
+            coordinates_origin = canonical.first_coordinates,
+            departure_time_gps = canonical.first_at,
+            destination_gps_end_point = COALESCE(canonical.last_address, g.destination_gps_end_point),
+            coordinates_destination = canonical.last_coordinates,
+            arrival_time_gps = CASE WHEN LOWER(canonical.trip_status_gps) = 'completed' THEN canonical.last_at ELSE g.arrival_time_gps END,
+            returned_to_base_at = CASE
+              WHEN LOWER(canonical.trip_status_gps) = 'completed' AND canonical.end_distance_from_origin_m <= $2
+              THEN canonical.last_at ELSE g.returned_to_base_at END,
+            matched_origin_distance_m = canonical.end_distance_from_origin_m
+       FROM canonical
+      WHERE g.id = canonical.id`,
+    [gpsTripLogId, BASE_RADIUS_M],
+  );
 
   return status;
 }
@@ -693,10 +1069,13 @@ export async function syncBusinessTripLogsFromTelemetry(): Promise<{
   failed: number;
 }> {
   const pool = getPool();
+  const travelDateSync = await syncTravelDateGpsLogs();
+  await syncCompleteTravelOrderSessions();
   const [telemetryResult, ordersResult] = await Promise.all([
     pool.query<TelemetryRow>(
       `SELECT id, vehicle_id, plate_number, event_type, latitude, longitude,
-              speed_kmh, location_name, recorded_at, active_trip_id, driver_id
+              speed_kmh, location_name, recorded_at, active_trip_id, driver_id,
+              travel_order_id
          FROM gps_telemetry
         WHERE recorded_at IS NOT NULL
           AND vehicle_id IS NOT NULL
@@ -707,10 +1086,10 @@ export async function syncBusinessTripLogsFromTelemetry(): Promise<{
     pool.query<TravelOrderRow>(
       `SELECT id, vehicle_id, driver_id, status, scheduled_departure,
               scheduled_arrival, lat_long_origin, lat_long_destination,
-              origin_location, destination_target, to_number
+              origin_location, destination_target, to_number,
+              scheduled_departure::date::text AS travel_date
          FROM travel_orders
         WHERE vehicle_id IS NOT NULL
-          AND scheduled_departure IS NOT NULL
           AND status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
         ORDER BY vehicle_id, scheduled_departure ASC`,
     ),
@@ -728,7 +1107,7 @@ export async function syncBusinessTripLogsFromTelemetry(): Promise<{
     rowsByVehicle.get(row.vehicle_id)!.push(row);
   }
 
-  let created = 0;
+  let created = travelDateSync.created;
   let updated = 0;
   let skipped = 0;
   let failed = 0;
@@ -747,6 +1126,15 @@ export async function syncBusinessTripLogsFromTelemetry(): Promise<{
     }
 
     for (const trip of trips) {
+      // No-TO persistence is owned exclusively by noToLifecycleService. Having
+      // both lifecycle services write gps_no_to_logs in the same scheduler
+      // cycle exposes partially rebuilt rows and lets the TO-oriented state
+      // machine overwrite the canonical fleet-base completion result.
+      if (!trip.matchedToTravelOrder) {
+        skipped += trip.points.length;
+        continue;
+      }
+
       try {
         const result = await upsertLifecycleTrip(trip);
         if (result === 'created') created += 1;

@@ -61,6 +61,63 @@ export interface SchedulerCycleSummary {
   durationSeconds: number;
 }
 
+export type TelemetryTravelOrderCandidate = {
+  id: string;
+  vehicle_id: string;
+  driver_id: string | null;
+  to_number: string;
+  travel_date: string;
+  scheduled_departure_local: string;
+  scheduled_arrival_local: string | null;
+};
+
+function manilaDateTimeParts(value: string): { date: string; minuteOfDay: number } | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? '';
+  return {
+    date: `${part('year')}-${part('month')}-${part('day')}`,
+    minuteOfDay: Number(part('hour')) * 60 + Number(part('minute')),
+  };
+}
+
+function localMinuteOfDay(value: string | null): number | null {
+  if (!value) return null;
+  const match = value.match(/(?:T|\s)(\d{2}):(\d{2})/);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+export function resolveTelemetryTravelOrderForEvent(
+  vehicleId: string,
+  recordedAt: string,
+  candidates: TelemetryTravelOrderCandidate[],
+): TelemetryTravelOrderCandidate | null {
+  const event = manilaDateTimeParts(recordedAt);
+  if (!event) return null;
+  const matches = candidates.filter((candidate) =>
+    candidate.vehicle_id === vehicleId && candidate.travel_date === event.date,
+  );
+  return matches.sort((a, b) => {
+    const aDeparture = localMinuteOfDay(a.scheduled_departure_local) ?? event.minuteOfDay;
+    const bDeparture = localMinuteOfDay(b.scheduled_departure_local) ?? event.minuteOfDay;
+    const aArrival = localMinuteOfDay(a.scheduled_arrival_local);
+    const bArrival = localMinuteOfDay(b.scheduled_arrival_local);
+    const aContains = event.minuteOfDay >= aDeparture && (aArrival == null || event.minuteOfDay <= aArrival);
+    const bContains = event.minuteOfDay >= bDeparture && (bArrival == null || event.minuteOfDay <= bArrival);
+    if (aContains !== bContains) return aContains ? -1 : 1;
+    return Math.abs(event.minuteOfDay - aDeparture) - Math.abs(event.minuteOfDay - bDeparture);
+  })[0] ?? null;
+}
+
 // ── Mutable current interval (initialised from env, but can be
 // changed at runtime via updateInterval()) ──────────────────────
 
@@ -497,7 +554,7 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
          FROM travel_orders
          WHERE status = 'APPROVED'
            AND vehicle_id IS NOT NULL
-           AND DATE(scheduled_departure) = CURRENT_DATE
+           AND scheduled_departure::date = (NOW() AT TIME ZONE 'Asia/Manila')::date
            AND to_number IS NOT NULL
          ORDER BY vehicle_id, scheduled_departure DESC`,
       );
@@ -509,23 +566,25 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
       console.error('[scheduler] Failed to fetch TO numbers:', (err as Error).message);
     }
 
-    // Pre-fetch travel_order_id UUIDs and driver_id keyed by toNumber for quick lookup
-    const travelOrderIdByToNumber = new Map<string, string>();
-    const driverIdByToNumber = new Map<string, string | null>();
+    // Resolve every telemetry event against the travel date carried by the
+    // device packet. This remains correct for delayed packets and UTC date
+    // boundaries, and does not depend on tracker display metadata.
+    let telemetryTravelOrders: TelemetryTravelOrderCandidate[] = [];
     try {
-      const toIdResult = await getPool().query<{ to_number: string; id: string; driver_id: string | null }>(
-        `SELECT DISTINCT ON (to_number) to_number, id, driver_id
-         FROM travel_orders
-         WHERE status = 'APPROVED'
-           AND to_number IS NOT NULL
-           AND DATE(scheduled_departure) = CURRENT_DATE
-         ORDER BY to_number, id DESC`,
+      const toIdResult = await getPool().query<TelemetryTravelOrderCandidate>(
+        `SELECT id, vehicle_id, driver_id, to_number,
+                scheduled_departure::date::text AS travel_date,
+                scheduled_departure::text AS scheduled_departure_local,
+                scheduled_arrival::text AS scheduled_arrival_local
+          FROM travel_orders
+          WHERE status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+            AND vehicle_id IS NOT NULL
+            AND to_number IS NOT NULL
+            AND scheduled_departure IS NOT NULL
+          ORDER BY vehicle_id, scheduled_departure ASC, id ASC`,
       );
-      console.log('[scheduler] Travel order IDs loaded:', toIdResult.rows.length, 'entries');
-      for (const row of toIdResult.rows) {
-        travelOrderIdByToNumber.set(row.to_number, row.id);
-        driverIdByToNumber.set(row.to_number, row.driver_id);
-      }
+      telemetryTravelOrders = toIdResult.rows;
+      console.log('[scheduler] Travel orders loaded for event-date resolution:', telemetryTravelOrders.length);
     } catch (err) {
       console.error('[scheduler] Failed to fetch travel order IDs:', (err as Error).message);
     }
@@ -600,6 +659,13 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           const speedKmh = Number(v.speed ?? 0);
           const fuelLiters = v.fuel ?? null;
           const recordedAt = v.eventTime || new Date().toISOString();
+          const snapshotOrder = resolveTelemetryTravelOrderForEvent(
+            vehicleId,
+            recordedAt,
+            telemetryTravelOrders,
+          );
+          const snapshotTravelOrderId = snapshotOrder?.id ?? null;
+          const snapshotDriverId = snapshotOrder?.driver_id ?? null;
 
           const previousState = await loadVehicleState(vehicleId);
           let action: string;
@@ -650,6 +716,9 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               const saveResult = await saveTelemetryAndSendTelegram(
                 EVENT_TYPE.LOCATION_UPDATE, vehicleId, plateNumber, reloadedState.activeTripId,
                 latitude, longitude, speedKmh, fuelLiters, true, locationName, recordedAt, null, emittedAlerts ?? [],
+                null,
+                snapshotTravelOrderId,
+                snapshotDriverId,
               );
               if (saveResult.saved) {
                 telemetrySaved += 1;
@@ -672,6 +741,9 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.IGNITION_ON, vehicleId, plateNumber, newTripId,
               latitude, longitude, speedKmh, fuelLiters, true, locationName, recordedAt, null, emittedAlerts ?? [],
+              null,
+              snapshotTravelOrderId,
+              snapshotDriverId,
             );
             if (!saveResult.saved) {
               console.error(`[scheduler-state] CRITICAL: IGNITION_ON insert failed vehicle=${vehicleId}`);
@@ -762,12 +834,13 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             }
 
             // Resolve travel order for LOCATION_UPDATE
-            const locationUpdateTravelOrderId = v.toNumber
-              ? (travelOrderIdByToNumber.get(v.toNumber) ?? null)
-              : null;
-            const locationUpdateDriverId = v.toNumber
-              ? (driverIdByToNumber.get(v.toNumber) ?? null)
-              : null;
+            const locationUpdateOrder = resolveTelemetryTravelOrderForEvent(
+              vehicleId,
+              recordedAt,
+              telemetryTravelOrders,
+            );
+            const locationUpdateTravelOrderId = locationUpdateOrder?.id ?? null;
+            const locationUpdateDriverId = locationUpdateOrder?.driver_id ?? null;
 
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.LOCATION_UPDATE, vehicleId, plateNumber, activeTripId,
@@ -826,12 +899,13 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             }
 
             // Resolve travel order for IGNITION_OFF
-            const ignitionOffTravelOrderId = v.toNumber
-              ? (travelOrderIdByToNumber.get(v.toNumber) ?? null)
-              : null;
-            const ignitionOffDriverId = v.toNumber
-              ? (driverIdByToNumber.get(v.toNumber) ?? null)
-              : null;
+            const ignitionOffOrder = resolveTelemetryTravelOrderForEvent(
+              vehicleId,
+              recordedAt,
+              telemetryTravelOrders,
+            );
+            const ignitionOffTravelOrderId = ignitionOffOrder?.id ?? null;
+            const ignitionOffDriverId = ignitionOffOrder?.driver_id ?? null;
 
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.IGNITION_OFF, vehicleId, plateNumber, activeTripId,
@@ -951,6 +1025,13 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           // For non-ignition events, load vehicle state
           const vs = await loadVehicleState(vehicleId);
           const activeTripId = vs.activeTripId;
+          const resolvedOrder = resolveTelemetryTravelOrderForEvent(
+            vehicleId,
+            recordedAt,
+            telemetryTravelOrders,
+          );
+          const resolvedTravelOrderId = resolvedOrder?.id ?? null;
+          const resolvedDriverId = resolvedOrder?.driver_id ?? null;
 
           // IDLING_TOO_LONG
           if (finalEventType === EVENT_TYPE.IDLING) {
@@ -982,6 +1063,8 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               idlingStartedAt,
               thresholdMinutes,
               telegramMessage: telegramMessage || '',
+              travelOrderId: resolvedTravelOrderId,
+              driverId: resolvedDriverId,
             });
             if (txResult.skipped) {
               telemetrySkipped += 1;
@@ -1012,16 +1095,8 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             continue;
           }
 
-          // Resolve toNumber to travel_order_id UUID and driver_id
-          const resolvedTravelOrderId = alert.toNumber
-            ? (travelOrderIdByToNumber.get(alert.toNumber) ?? null)
-            : null;
-          const resolvedDriverId = alert.toNumber
-            ? (driverIdByToNumber.get(alert.toNumber) ?? null)
-            : null;
-
-          if (alert.toNumber && !resolvedTravelOrderId) {
-            console.warn(`[scheduler] Travel order not found for toNumber=${alert.toNumber} vehicle=${vehicleId}`);
+          if (alert.toNumber && !resolvedOrder) {
+            console.warn(`[scheduler] Travel order not found for event date toNumber=${alert.toNumber} vehicle=${vehicleId} recordedAt=${recordedAt}`);
           }
 
           // LOCATION_UPDATE / MOTION_STARTED
@@ -1474,6 +1549,8 @@ export interface HandleIdlingAlertTxParams {
   idlingStartedAt: string;
   thresholdMinutes: number;
   telegramMessage: string;
+  travelOrderId: string | null;
+  driverId: string | null;
 }
 
 export interface HandleIdlingAlertTxResult {
@@ -1539,10 +1616,10 @@ export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTx
     const telemResult = await client.query<{ id: string }>(
       `INSERT INTO gps_telemetry
          (vehicle_id, plate_number, event_type, latitude, longitude, speed_kmh, fuel_liters,
-          ignition, location_name, recorded_at, active_trip_id, idling_threshold_minutes, telegram_message,
-          telegram_status)
-       VALUES ($1, $2, 'IDLING_TOO_LONG', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL)
-       RETURNING id`,
+           ignition, location_name, driver_id, travel_order_id, recorded_at, active_trip_id,
+           idling_threshold_minutes, telegram_message, telegram_status)
+        VALUES ($1, $2, 'IDLING_TOO_LONG', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULL)
+        RETURNING id`,
       [
         params.vehicleId,
         params.plateNumber,
@@ -1552,6 +1629,8 @@ export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTx
         params.fuelLiters,
         params.ignition,
         params.locationName,
+        params.driverId,
+        params.travelOrderId,
         params.recordedAt,
         params.activeTripId,
         params.thresholdMinutes,

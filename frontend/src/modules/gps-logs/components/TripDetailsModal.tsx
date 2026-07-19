@@ -56,10 +56,11 @@ function TripStatusBadge({ status }: { status: string }) {
     arrived: { label: 'Trip Completed', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
     'en-route': { label: 'Ongoing', className: 'border-amber-200 bg-amber-50 text-amber-700' },
     departed: { label: 'Ongoing', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+    ongoing: { label: 'Ongoing', className: 'border-amber-200 bg-amber-50 text-amber-700' },
     cancelled: { label: 'Cancelled', className: 'border-zinc-200 bg-zinc-50 text-zinc-500' },
   };
 
-  const match = config[status];
+  const match = config[status.toLowerCase()];
   if (match) {
     return (
       <span className={cn('inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold', match.className)}>
@@ -254,10 +255,12 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, onDeleted, logId
   const trip = data?.trip;
 
   // Compute display status for the modal badge
-  const modalStatus =
-    trip?.status === 'completed' ||
-      trip?.status === 'arrived' ||
-      (trip?.startTime && trip?.arrivedTime)
+  const noToCompleted = String(trip?.businessTripStatus ?? '').toUpperCase() === 'COMPLETED';
+  const modalStatus = source === 'no-to'
+    ? (noToCompleted ? 'Completed' : 'Ongoing')
+    : trip?.status === 'completed' ||
+        trip?.status === 'arrived' ||
+        (trip?.startTime && trip?.arrivedTime)
       ? 'Completed'
       : trip?.status === 'cancelled'
         ? 'Cancelled'
@@ -380,9 +383,9 @@ export function TripDetailsModal({ isOpen, onClose, onOpenTrip, onDeleted, logId
 
                   <InfoSection title="End" icon={<MapPin className="size-4 text-brand-teal" />}>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                      <InfoField label="End Address" value={trip.endAddress || trip.destination || '—'} />
+                      <InfoField label="End Address" value={source === 'no-to' ? (trip.endAddress || '—') : (trip.endAddress || trip.destination || '—')} />
                       <InfoField label="End Time" value={source === 'no-to' ? formatDateTimeManila(trip.endTime ?? trip.returnedToBaseAt) : formatDateTimeManila(trip.returnedToBaseAt || trip.endTime)} />
-                      <InfoField label="End Coordinates" value={trip.endCoordinates || trip.coordinatesDestination || '—'} />
+                      <InfoField label="End Coordinates" value={source === 'no-to' ? (trip.endCoordinates || '—') : (trip.endCoordinates || trip.coordinatesDestination || '—')} />
                       {source !== 'no-to' && (
                         <InfoField label="Returned to Base Distance" value={trip.matchedOriginDistanceM != null ? `${formatNumber(trip.matchedOriginDistanceM, 0)} m` : '—'} />
                       )}
