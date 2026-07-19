@@ -122,13 +122,17 @@ export interface FleetUtilization {
 
 export interface RecentlyCompletedRow {
   id: string;
+  record_no: string;
+  trip_type: 'travel_order' | 'no_travel_order';
   trip_date: string;
-  plate_number: string;
-  driver_name: string;
-  origin: string;
-  destination: string;
+  plate_number: string | null;
+  driver_name: string | null;
+  origin: string | null;
+  destination: string | null;
   arrival_time_gps: string | null;
   gps_distance_km: number | null;
+  engine_hours: number | null;
+  moving_hours: number | null;
   max_speed_kph: number | null;
 }
 
@@ -273,6 +277,8 @@ function normalizeDashboardData(data: DashboardData): DashboardData {
       recentlyCompleted: data.tables.recentlyCompleted.map((row) => ({
         ...row,
         gps_distance_km: row.gps_distance_km === null ? null : toNumber(row.gps_distance_km),
+        engine_hours: row.engine_hours === null ? null : toNumber(row.engine_hours),
+        moving_hours: row.moving_hours === null ? null : toNumber(row.moving_hours),
         max_speed_kph: row.max_speed_kph === null ? null : toNumber(row.max_speed_kph),
       })),
       activeTrips: data.tables.activeTrips,
@@ -364,6 +370,8 @@ function normalizeDashboardTables(data: DashboardTablesData): DashboardTablesDat
       recentlyCompleted: data.tables.recentlyCompleted.map((row) => ({
         ...row,
         gps_distance_km: row.gps_distance_km === null ? null : toNumber(row.gps_distance_km),
+        engine_hours: row.engine_hours === null ? null : toNumber(row.engine_hours),
+        moving_hours: row.moving_hours === null ? null : toNumber(row.moving_hours),
         max_speed_kph: row.max_speed_kph === null ? null : toNumber(row.max_speed_kph),
       })),
     },
