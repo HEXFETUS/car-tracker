@@ -7,17 +7,12 @@ import {
 } from '../services/notificationService.js';
 
 const router: ExpressRouter = express.Router();
+import { validateUuidParam } from '../middleware/validate-uuid.js';
 
-function getUserId(req: Request, res: Response): string | null {
-  const userId = req.headers['x-user-id'];
-  if (typeof userId === 'string' && userId.length > 0) return userId;
-  res.status(401).json({ success: false, data: null, error: 'Authentication required' });
-  return null;
-}
+router.param('id', validateUuidParam);
 
 router.get('/', async (req: Request, res: Response) => {
-  const userId = getUserId(req, res);
-  if (!userId) return;
+  const userId = req.auth!.id;
 
   const requestedPage = Number(req.query.page ?? 1);
   const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -40,8 +35,7 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 router.get('/unread-count', async (req: Request, res: Response) => {
-  const userId = getUserId(req, res);
-  if (!userId) return;
+  const userId = req.auth!.id;
 
   try {
     res.json({ success: true, data: { count: await getUnreadNotificationCount(userId) } });
@@ -52,8 +46,7 @@ router.get('/unread-count', async (req: Request, res: Response) => {
 });
 
 router.patch('/read-all', async (req: Request, res: Response) => {
-  const userId = getUserId(req, res);
-  if (!userId) return;
+  const userId = req.auth!.id;
 
   try {
     await markAllNotificationsRead(userId);
@@ -65,8 +58,7 @@ router.patch('/read-all', async (req: Request, res: Response) => {
 });
 
 router.patch('/:id/read', async (req: Request, res: Response) => {
-  const userId = getUserId(req, res);
-  if (!userId) return;
+  const userId = req.auth!.id;
 
   try {
     await markNotificationRead(userId, req.params.id);

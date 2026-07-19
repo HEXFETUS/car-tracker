@@ -1,11 +1,13 @@
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
+import { validateUuidParam } from '../middleware/validate-uuid.js';
 import { DEFAULT_ORIGIN_ADDRESS, DEFAULT_ORIGIN_LATLONG } from '../config/constants.js';
 import { syncTravelOrderToActiveTrip } from '../services/travelOrderSyncService.js';
 import { createNotificationForRoles } from '../services/notificationService.js';
 
 const router: ExpressRouter = express.Router();
+router.param('id', validateUuidParam);
 
 interface TravelOrderRow {
   id: string;
@@ -700,10 +702,10 @@ router.patch('/:id', async (req: Request, res: Response) => {
 
   // When transitioning to FOR_REQUEST, stamp the requesting user and signature
   if (req.body.status === 'FOR_REQUEST') {
-    const requestingUserId = req.headers['x-user-id'];
+    const requestingUserId = req.auth?.id;
     if (requestingUserId) {
       updates.push(`requested_by = $${idx++}`);
-      values.push(requestingUserId as string);
+      values.push(requestingUserId);
     }
     if (req.body.requestedBySignature !== undefined) {
       updates.push(`requested_by_signature = $${idx++}`);
@@ -713,10 +715,10 @@ router.patch('/:id', async (req: Request, res: Response) => {
 
   // When transitioning to APPROVED, stamp the approving user and signature
   if (req.body.status === 'APPROVED') {
-    const approvingUserId = req.headers['x-user-id'];
+    const approvingUserId = req.auth?.id;
     if (approvingUserId) {
       updates.push(`approved_by = $${idx++}`);
-      values.push(approvingUserId as string);
+      values.push(approvingUserId);
     }
     if (req.body.approvedBySignature !== undefined) {
       updates.push(`approved_by_signature = $${idx++}`);

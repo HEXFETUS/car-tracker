@@ -2,6 +2,7 @@ import express, { type Request, type Response, type Router as ExpressRouter } fr
 import type { ApiResponse } from '@car-tracker/shared';
 import { syncTrackingHistory, type TrackingHistorySyncResult } from '../services/trackingHistorySyncService.js';
 import { resolveCartrackUnitId } from '../services/cartrackHistoryService.js';
+import { expensiveOperationRateLimit } from '../middleware/rate-limit.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -9,7 +10,7 @@ const router: ExpressRouter = express.Router();
 // Triggers full fleet tracking-history sync for a date range.
 // Reconstructs trips from raw GPS breadcrumbs, detects return trips,
 // matches to Travel Orders, and persists to gps_trip_logs.
-router.post('/sync-tracking-history', async (req: Request, res: Response) => {
+router.post('/sync-tracking-history', expensiveOperationRateLimit, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {

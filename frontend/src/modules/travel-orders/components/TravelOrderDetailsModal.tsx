@@ -415,7 +415,8 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
   }
 
   const canAssign = order?.status === 'PENDING';
-  const canEditDelete = canAssign || order?.status === 'CANCELLED' || (order?.status === 'APPROVED' && user?.userType === 'SUPERADMIN');
+  const isReadOnly = user?.userType === 'VIEWER';
+  const canEditDelete = !isReadOnly && (canAssign || order?.status === 'CANCELLED' || (order?.status === 'APPROVED' && user?.userType === 'SUPERADMIN'));
 
   if (!isOpen || !order) return null;
 
@@ -812,7 +813,9 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
         {/* ── Sticky Footer ── */}
         <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-100 bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:rounded-b-2xl sm:px-6 sm:py-4 [&_button]:min-h-11">
           <div className="flex w-full flex-wrap items-center gap-2 [&>button]:min-w-0 [&>button]:flex-1 sm:w-auto sm:[&>button]:flex-none">
-            {isEditing ? (
+            {isReadOnly ? (
+              <span className="text-sm text-zinc-400 italic">Read-only access</span>
+            ) : isEditing ? (
               <>
                 <button
                   type="button"
@@ -890,7 +893,7 @@ export function TravelOrderDetailsModal({ isOpen, onClose, order, onSuccess }: T
                 {saving ? 'Resetting...' : 'Reset to For Approval'}
               </button>
             )}
-            {order.status === 'CANCELLED' && (
+            {!isReadOnly && order.status === 'CANCELLED' && (
               <button
                 type="button"
                 onClick={handleResetCancelledToPending}

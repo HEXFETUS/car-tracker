@@ -1,6 +1,8 @@
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
+import { validateUuidParam } from '../middleware/validate-uuid.js';
+import { expensiveOperationRateLimit } from '../middleware/rate-limit.js';
 import { syncFleetAndAlert } from '@car-tracker/tracker';
 import {
   saveGpsTripLog,
@@ -31,6 +33,8 @@ import { deriveActualTripEndpoints } from '../services/tripDetailsRouteService.j
 import { anchorNoToRouteAtOrigin, deriveNoToTripDetails } from '../services/noToTripDetailsService.js';
 
 const router: ExpressRouter = express.Router();
+router.param('id', validateUuidParam);
+router.param('travelOrderId', validateUuidParam);
 
 function parseCoordinates(value: string | null | undefined): [number, number] | null {
   if (!value) return null;
@@ -360,7 +364,7 @@ router.get('/no-to', async (req: Request, res: Response) => {
 });
 
 // POST /api/gps-logs/no-to/sync — Manually trigger No TO Logs sync
-router.post('/no-to/sync', async (_req: Request, res: Response) => {
+router.post('/no-to/sync', expensiveOperationRateLimit, async (_req: Request, res: Response) => {
   try {
     const result = await syncNoToLogsFromTelemetry();
     res.json({
@@ -873,7 +877,7 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // POST /api/gps-logs/sync — Trigger fleet sync and persist GPS trip logs
-router.post('/sync', async (req: Request, res: Response) => {
+router.post('/sync', expensiveOperationRateLimit, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -2121,7 +2125,7 @@ router.get('/:id/stops', async (req: Request, res: Response) => {
 // This is the preferred sync method for LogsPage — reads from the
 // telemetry table rather than scanning live fleet state.
 // ─────────────────────────────────────────────────────────────────
-router.post('/sync-from-telemetry', async (req: Request, res: Response) => {
+router.post('/sync-from-telemetry', expensiveOperationRateLimit, async (req: Request, res: Response) => {
   try {
     const result = await syncGpsTripLogsFromTelemetry();
     const travelOrderSync = await syncUnlinkedGpsTripLogsToTravelOrders();

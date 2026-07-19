@@ -5,6 +5,7 @@
 
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import { getPool } from '../db/db.js';
+import { expensiveOperationRateLimit } from '../middleware/rate-limit.js';
 import {
   BOT_TOKEN,
   CHAT_ID,
@@ -549,7 +550,7 @@ async function checkSchedulerStatus(): Promise<ConnectionCheckResult> {
 // ── POST /api/settings/telegram-test ────────────────────────────
 // Sends a test message to verify Telegram connectivity.
 
-router.post('/telegram-test', async (_req: Request, res: Response) => {
+router.post('/telegram-test', expensiveOperationRateLimit, async (_req: Request, res: Response) => {
   try {
     if (!BOT_TOKEN || !CHAT_ID) {
       res.status(400).json({
@@ -659,7 +660,7 @@ interface TestResult {
   error?: string;
 }
 
-router.post('/run-telemetry-tests', async (_req: Request, res: Response) => {
+router.post('/run-telemetry-tests', expensiveOperationRateLimit, async (_req: Request, res: Response) => {
   try {
     const pool = getPool();
     const results: TestResult[] = [];
@@ -1111,7 +1112,7 @@ router.get('/scheduler-runs', async (_req: Request, res: Response) => {
 // endpoint internally. Protected by CRON_SECRET.
 // This allows the dashboard to have a "Run Once" button.
 
-router.post('/scheduler-run-now', async (req: Request, res: Response) => {
+router.post('/scheduler-run-now', expensiveOperationRateLimit, async (req: Request, res: Response) => {
   try {
     // Build an internal URL to the cron endpoint
     const protocol = req.protocol;

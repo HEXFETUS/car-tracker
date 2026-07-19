@@ -11,6 +11,7 @@ interface TravelOrdersToolbarProps {
   onSearchChange: (value: string) => void;
   onRefresh: () => void;
   onNewOrder: () => void;
+  canCreate?: boolean;
   loading?: boolean;
 }
 
@@ -29,6 +30,7 @@ export function TravelOrdersToolbar({
   onSearchChange,
   onRefresh,
   onNewOrder,
+  canCreate = true,
   loading = false,
 }: TravelOrdersToolbarProps) {
   return (
@@ -87,13 +89,15 @@ export function TravelOrdersToolbar({
             <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
             <span className="hidden sm:inline">Refresh</span>
           </button>
-          <button
-            onClick={onNewOrder}
-            className="inline-flex h-11 flex-[3] items-center justify-center gap-1.5 rounded-lg bg-brand-teal px-4 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97] sm:h-10 sm:flex-none"
-          >
-            <Plus className="size-4" />
-            <span>New Travel Order</span>
-          </button>
+          {canCreate && (
+            <button
+              onClick={onNewOrder}
+              className="inline-flex h-11 flex-[3] items-center justify-center gap-1.5 rounded-lg bg-brand-teal px-4 text-sm font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97] sm:h-10 sm:flex-none"
+            >
+              <Plus className="size-4" />
+              <span>New Travel Order</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

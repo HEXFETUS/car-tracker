@@ -40,6 +40,7 @@ const TABS: { key: TabKey; label: string }[] = [
 export function TravelOrdersPage() {
   const { toast, confirm } = useNotification();
   const { user } = useAuth();
+  const canWrite = user?.userType !== 'VIEWER';
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabKey>(() => {
     const tab = searchParams.get('tab');
@@ -214,6 +215,7 @@ export function TravelOrdersPage() {
         onSearchChange={setSearchQuery}
         onRefresh={loadOrders}
         onNewOrder={() => setIsModalOpen(true)}
+        canCreate={canWrite}
         loading={loading}
       />
 
@@ -253,13 +255,15 @@ export function TravelOrdersPage() {
               </div>
               <p className="text-sm font-medium text-zinc-700">{emptyMessages[safeActiveTab].title}</p>
               <p className="mt-0.5 text-xs text-zinc-400 max-w-sm">{emptyMessages[safeActiveTab].description}</p>
-              <button
-                onClick={() => setIsModalOpen(true)}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
-              >
-                <Plus className="size-3.5" />
-                New Travel Order
-              </button>
+              {canWrite && (
+                <button
+                  onClick={() => setIsModalOpen(true)}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand-teal px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:bg-brand-teal/80 active:scale-[0.97]"
+                >
+                  <Plus className="size-3.5" />
+                  New Travel Order
+                </button>
+              )}
             </>
           )}
         </div>
@@ -336,12 +340,14 @@ export function TravelOrdersPage() {
       )}
 
       {/* New Travel Order Modal */}
-      <NewTravelOrderModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSubmit={handleCreate}
-        existingCount={orders.length}
-      />
+      {canWrite && (
+        <NewTravelOrderModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onSubmit={handleCreate}
+          existingCount={orders.length}
+        />
+      )}
 
       {/* Travel Order Details Modal */}
       <TravelOrderDetailsModal
