@@ -106,6 +106,8 @@ export function syncFleetAndAlert(options?: {
   toDestinationOverrides?: Record<string, string>;
   noToVehicleIds?: string[];
   dispatchAlerts?: boolean;
+  /** Disable writes to shared alert/trip detection state for read-only snapshots. */
+  mutateState?: boolean;
 }): Promise<SyncResult>;
 
 export function sendTelegram(message: string): Promise<{ ok: boolean; error?: string }>;
@@ -116,6 +118,7 @@ export function formatVehicleHeader(name: string, toNumber?: string | null): str
 
 export function formatIgnitionAlert(name: string, ignition: boolean, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
 export function formatSpeedingAlert(name: string, speed: number, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
+export function formatLocationUpdateAlert(name: string, speed: number, fuel: number | null | undefined, location: string, eventTime: string, toNumber?: string | null, driver?: string | null, driverId?: string | null): string;
 export function formatIdlingTooLongAlert(name: string, idleMinutes: number, fuel: number | null | undefined, location: string, eventTime: string, toNumber?: string | null, driver?: string | null): string;
 
 export function getVehicleDriver(vehicle: any): string | null;

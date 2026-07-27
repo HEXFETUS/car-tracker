@@ -872,6 +872,7 @@ export async function syncFleetAndAlert(options = {}) {
     noToVehicleIds = [],
     toDestinationOverrides = {},
     dispatchAlerts = true,
+    mutateState = true,
     driverIdOverrides = {},
   } = options;
   const data = await getFleetDataCached();
@@ -1020,7 +1021,9 @@ export async function syncFleetAndAlert(options = {}) {
     // ── Trip State Alerts (origin/destination tracking, ignition/idling) ──
     const coordinates_ = getVehicleCoordinates(vehicle);
     const toDestCoord = toDestinationOverrides[vid] || null;
-    const tripStateAlerts = await processTripState(vehicle, vid, coordinates_?.latitude ?? null, coordinates_?.longitude ?? null, toDestCoord);
+    const tripStateAlerts = mutateState
+      ? await processTripState(vehicle, vid, coordinates_?.latitude ?? null, coordinates_?.longitude ?? null, toDestCoord)
+      : [];
     let tripStateFiredIgnition = false;
     const tripStateIgnitionOn = tripStateAlerts.some((a) => a.type === 'IGNITION_ON');
     const tripStateIgnitionOff = tripStateAlerts.some((a) => a.type === 'IGNITION_OFF');
@@ -1039,8 +1042,8 @@ export async function syncFleetAndAlert(options = {}) {
       tripAlerts.push({ ...a, vehicle_id: vid, message });
     });
 
-    const originData = consumeOrigin(vid);
-    const destinationData = consumeDestination(vid);
+    const originData = mutateState ? consumeOrigin(vid) : null;
+    const destinationData = mutateState ? consumeDestination(vid) : null;
 
     if (hasPreviousState) {
       const ignitionChanged = ignition !== prevIgnition;
@@ -1136,7 +1139,9 @@ export async function syncFleetAndAlert(options = {}) {
     // across sync cycles. Using the default TTL (600s) would cause
     // the state to expire before the idling-too-long threshold (10min
     // or more) is reached, breaking idle alerts.
-    await setJson(`vehicle:${vid}`, state, 86400);
+    if (mutateState) {
+      await setJson(`vehicle:${vid}`, state, 86400);
+    }
 
     vehicleStatuses.push({
       id: vid,

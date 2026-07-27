@@ -515,7 +515,7 @@ describe('idling dedup UPSERT (fix for threshold spam)', () => {
     ]);
   });
 
-  it('MOTION_STARTED suppresses same-cycle LOCATION_UPDATE in hasHigherPriorityTelemetryEventForSnapshot', () => {
+  it('keeps same-cycle LOCATION_UPDATE when MOTION_STARTED is emitted', () => {
     const alerts = [
       { vehicleId: baseTelemetry.vehicleId, eventType: 'MOTION_STARTED' },
       { vehicleId: baseTelemetry.vehicleId, eventType: 'LOCATION_UPDATE' },
@@ -523,7 +523,7 @@ describe('idling dedup UPSERT (fix for threshold spam)', () => {
 
     assert.equal(
       hasHigherPriorityTelemetryEventForSnapshot(alerts, baseTelemetry.vehicleId, 'LOCATION_UPDATE'),
-      true,
+      false,
     );
   });
 });
@@ -748,7 +748,7 @@ describe('speeding telemetry rules', () => {
     assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO gps_telemetry')).length, 1);
   });
 
-  it('does not allow LOCATION_UPDATE for the same snapshot when SPEEDING is emitted', () => {
+  it('suppresses LOCATION_UPDATE for the same snapshot when SPEEDING is emitted', () => {
     const alerts = [
       { vehicleId: baseTelemetry.vehicleId, eventType: 'SPEEDING' },
       { vehicleId: baseTelemetry.vehicleId, eventType: 'LOCATION_UPDATE' },

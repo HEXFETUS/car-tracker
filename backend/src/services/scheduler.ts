@@ -12,9 +12,11 @@ import { randomUUID } from 'node:crypto';
 import {
   syncFleetAndAlert,
   sendTelegram as trackerSendTelegram,
+  formatLocationUpdateAlert,
   getVehicleEmoji,
   IDLE_ALERT_THRESHOLDS_MINUTES,
   LOW_FUEL_LITERS,
+  SPEED_LIMIT_KMH,
 } from '@car-tracker/tracker';
 import { findVehicleByPlate, syncGpsTripLogsFromTelemetry } from './gpsLogService.js';
 import { insertTelemetry, updateTelemetryTelegramDelivery, getLastIdlingThreshold } from './gpsTelemetryService.js';
@@ -829,10 +831,10 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
               continue;
             }
 
-            // Skip LOCATION_UPDATE if there's a higher-priority alert for this vehicle
-            // (e.g. MOTION_STARTED, SPEEDING) - those will be handled by the emitted
-            // alerts processing loop below instead, preventing duplicate telemetry entries.
-            if (hasHigherPriorityTelemetryEventForSnapshot(emittedAlerts ?? [], vehicleId, 'LOCATION_UPDATE')) {
+            // A speeding alert owns this snapshot. The emitted-alert pass
+            // persists and sends SPEEDING; normal location updates resume
+            // once the reported speed drops below the configured limit.
+            if (speedKmh >= SPEED_LIMIT_KMH) {
               telemetrySkipped += 1;
               console.log('[scheduler-state]', {
                 plateNumber,
@@ -840,7 +842,7 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
                 currentIgnition,
                 wasOn,
                 activeTripId,
-                action: 'location_update_skipped_higher_priority',
+                action: 'location_update_skipped_speeding',
               });
               continue;
             }
@@ -853,10 +855,20 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             );
             const locationUpdateTravelOrderId = locationUpdateOrder?.id ?? null;
             const locationUpdateDriverId = locationUpdateOrder?.driver_id ?? null;
+            const locationUpdateMessage = formatLocationUpdateAlert(
+              plateNumber,
+              speedKmh,
+              fuelLiters,
+              locationName ?? 'Unknown location',
+              recordedAt,
+              locationUpdateOrder?.to_number ?? v.toNumber ?? null,
+              v.driver ?? null,
+              locationUpdateDriverId,
+            );
 
             const saveResult = await saveTelemetryAndSendTelegram(
               EVENT_TYPE.LOCATION_UPDATE, vehicleId, plateNumber, activeTripId,
-              latitude, longitude, speedKmh, fuelLiters, true, locationName, recordedAt, null, emittedAlerts ?? [],
+              latitude, longitude, speedKmh, fuelLiters, true, locationName, recordedAt, locationUpdateMessage, emittedAlerts ?? [],
               null,
               locationUpdateTravelOrderId,
               locationUpdateDriverId,
@@ -1111,8 +1123,15 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             console.warn(`[scheduler] Travel order not found for event date toNumber=${alert.toNumber} vehicle=${vehicleId} recordedAt=${recordedAt}`);
           }
 
-          // LOCATION_UPDATE / MOTION_STARTED
-          if (finalEventType === EVENT_TYPE.LOCATION_UPDATE || finalEventType === EVENT_TYPE.MOTION_STARTED) {
+          // LOCATION_UPDATE is owned by the fleet-snapshot pass above so its
+          // Telegram message is sent exactly once. Emitted MOTION_STARTED
+          // remains an independently persisted transition alert.
+          if (finalEventType === EVENT_TYPE.LOCATION_UPDATE) {
+            telemetrySkipped += 1;
+            continue;
+          }
+
+          if (finalEventType === EVENT_TYPE.MOTION_STARTED) {
             if (!activeTripId) {
               telemetrySkipped += 1;
               console.log(`[scheduler] ${finalEventType} SKIPPED vehicle=${vehicleId} reason=no_active_trip`);
@@ -1374,9 +1393,7 @@ export function hasHigherPriorityTelemetryEventForSnapshot(
       return candidateEventType === 'IGNITION_ON' || candidateEventType === 'MOTION_STARTED';
     }
     if (currentEventType === 'LOCATION_UPDATE') {
-      return candidateEventType === 'IGNITION_ON' ||
-        candidateEventType === 'MOTION_STARTED' ||
-        candidateEventType === 'SPEEDING';
+      return candidateEventType === 'SPEEDING';
     }
     return false;
   });

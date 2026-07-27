@@ -271,7 +271,10 @@ async function loadLive(pool: QueryablePool) {
 
   // Try current fleet snapshot from Cartrack first
   try {
-    const fleetResult = await syncFleetAndAlert({ dispatchAlerts: false });
+    const fleetResult = await syncFleetAndAlert({
+      dispatchAlerts: false,
+      mutateState: false,
+    });
     const mapped = (fleetResult.data || [])
       .map((v: any) => {
         const coordinates = v.coordinates || {};
