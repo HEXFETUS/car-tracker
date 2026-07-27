@@ -1,7 +1,9 @@
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import { getPool } from '../db/db.js';
+import { validateUuidParam } from '../middleware/validate-uuid.js';
 
 const router: ExpressRouter = express.Router();
+router.param('id', validateUuidParam);
 
 // GET /api/vehicles/:id/detail — Vehicle detail for the dashboard drawer
 // Supports both vehicle UUID and plate_number lookup

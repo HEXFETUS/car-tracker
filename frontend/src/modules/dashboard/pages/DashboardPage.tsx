@@ -754,7 +754,7 @@ export function DashboardPage() {
                 <table className={tableClass}>
                   <thead>
                     <tr className={tableHeaderClass}>
-                      <th className={tableHeaderCellClass}>GPS No.</th>
+                      <th className={tableHeaderCellClass}>Record No.</th>
                       <th className={tableHeaderCellClass}>Vehicle</th>
                       <th className={tableHeaderCellClass}>Driver</th>
                       <th className={tableHeaderCellClass}>Type</th>
@@ -765,15 +765,24 @@ export function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {d.tables.recentlyCompleted.slice(0, 5).map((trip) => (
+                    {d.tables.recentlyCompleted.map((trip) => (
                       <tr key={trip.id} className={tableRowClass}>
-                        <td className={tableCellClass}>{trip.id.slice(0, 8)}</td>
-                        <td className={tableCellClass}>{trip.plate_number}</td>
-                        <td className={tableCellClass}>{trip.driver_name}</td>
-                        <td className={tableCellClass}><span className="rounded-full bg-brand-moss/30 px-2 py-0.5 text-xs font-bold text-brand-teal">GPS</span></td>
-                        <td className={tableCellClass}>{trip.gps_distance_km ? fmtKm(trip.gps_distance_km) : '—'}</td>
-                        <td className={tableCellClass}>{trip.max_speed_kph ? fmtDuration(trip.arrival_time_gps, trip.arrival_time_gps) : '—'}</td>
-                        <td className={tableCellClass}>{(trip as any).moving_hours ? `${(trip as any).moving_hours}h` : '—'}</td>
+                        <td className={tableCellClass}>{trip.record_no}</td>
+                        <td className={tableCellClass}>{trip.plate_number || 'Unknown vehicle'}</td>
+                        <td className={tableCellClass}>{trip.driver_name || 'Unassigned driver'}</td>
+                        <td className={tableCellClass}>
+                          <span className={cn(
+                            'rounded-full px-2 py-0.5 text-xs font-bold',
+                            trip.trip_type === 'travel_order'
+                              ? 'bg-brand-moss/30 text-brand-teal'
+                              : 'bg-amber-100 text-amber-700',
+                          )}>
+                            {trip.trip_type === 'travel_order' ? 'Travel Order' : 'No Travel Order'}
+                          </span>
+                        </td>
+                        <td className={tableCellClass}>{trip.gps_distance_km !== null ? fmtKm(trip.gps_distance_km) : '—'}</td>
+                        <td className={tableCellClass}>{trip.engine_hours !== null ? `${trip.engine_hours.toFixed(1)}h` : '—'}</td>
+                        <td className={tableCellClass}>{trip.moving_hours !== null ? `${trip.moving_hours.toFixed(1)}h` : '—'}</td>
                         <td className={tableCellClass}>{formatDateTimeManila(trip.arrival_time_gps)}</td>
                       </tr>
                     ))}
@@ -782,22 +791,29 @@ export function DashboardPage() {
               </div>
             </div>
             <div className="space-y-3 md:hidden">
-              {d.tables.recentlyCompleted.slice(0, 5).map((trip) => (
+              {d.tables.recentlyCompleted.map((trip) => (
                 <article key={trip.id} className="rounded-xl border border-zinc-100 bg-zinc-50/60 p-3">
                   <div className="flex items-start justify-between gap-3 border-b border-zinc-100 pb-3">
                     <div className="min-w-0">
-                      <p className="font-mono text-sm font-bold text-brand-teal">{trip.id.slice(0, 8)}</p>
+                      <p className="font-mono text-sm font-bold text-brand-teal">{trip.record_no}</p>
                       <p className="mt-0.5 truncate text-xs text-zinc-500">{trip.driver_name || 'Unassigned driver'}</p>
                     </div>
                     <div className="shrink-0 text-right">
-                      <p className="font-mono text-sm font-bold text-zinc-900">{trip.plate_number}</p>
-                      <span className="mt-1 inline-flex rounded-full bg-brand-moss/30 px-2 py-0.5 text-[10px] font-bold text-brand-teal">GPS</span>
+                      <p className="font-mono text-sm font-bold text-zinc-900">{trip.plate_number || 'Unknown vehicle'}</p>
+                      <span className={cn(
+                        'mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold',
+                        trip.trip_type === 'travel_order'
+                          ? 'bg-brand-moss/30 text-brand-teal'
+                          : 'bg-amber-100 text-amber-700',
+                      )}>
+                        {trip.trip_type === 'travel_order' ? 'Travel Order' : 'No Travel Order'}
+                      </span>
                     </div>
                   </div>
                   <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 text-sm">
-                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Distance</dt><dd className="mt-0.5 font-medium text-zinc-800">{trip.gps_distance_km ? fmtKm(trip.gps_distance_km) : '—'}</dd></div>
-                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Engine hours</dt><dd className="mt-0.5 font-medium text-zinc-800">{trip.max_speed_kph ? fmtDuration(trip.arrival_time_gps, trip.arrival_time_gps) : '—'}</dd></div>
-                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Moving hours</dt><dd className="mt-0.5 font-medium text-zinc-800">{(trip as any).moving_hours ? `${(trip as any).moving_hours}h` : '—'}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Distance</dt><dd className="mt-0.5 font-medium text-zinc-800">{trip.gps_distance_km !== null ? fmtKm(trip.gps_distance_km) : '—'}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Engine hours</dt><dd className="mt-0.5 font-medium text-zinc-800">{trip.engine_hours !== null ? `${trip.engine_hours.toFixed(1)}h` : '—'}</dd></div>
+                    <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Moving hours</dt><dd className="mt-0.5 font-medium text-zinc-800">{trip.moving_hours !== null ? `${trip.moving_hours.toFixed(1)}h` : '—'}</dd></div>
                     <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Arrival</dt><dd className="mt-0.5 text-xs text-zinc-700">{formatDateTimeManila(trip.arrival_time_gps)}</dd></div>
                   </dl>
                 </article>
@@ -826,7 +842,7 @@ export function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {d.leaderboard.driverPerformance.slice(0, 5).map((driver, idx) => (
+                  {d.leaderboard.driverPerformance.map((driver, idx) => (
                     <tr key={driver.driver_id} className={cn('border-b border-brand-cream/60 hover:bg-brand-cream/20', idx < 3 && 'bg-amber-50/20')}>
                       <td className="py-2.5 pr-3">
                         <span className={cn('inline-flex size-7 items-center justify-center rounded-full text-xs font-bold', idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-zinc-100 text-zinc-600' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'text-zinc-400')}>
@@ -849,7 +865,7 @@ export function DashboardPage() {
               </table>
             </div>
             <div className="space-y-3 md:hidden">
-              {d.leaderboard.driverPerformance.slice(0, 5).map((driver, idx) => (
+              {d.leaderboard.driverPerformance.map((driver, idx) => (
                 <article key={driver.driver_id} className={cn('rounded-xl border border-zinc-100 p-3', idx < 3 ? 'bg-amber-50/40' : 'bg-zinc-50/60')}>
                   <div className="flex items-center gap-3 border-b border-zinc-100 pb-3">
                     <span className={cn('inline-flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-extrabold', idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-zinc-200 text-zinc-700' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-white text-zinc-500 ring-1 ring-zinc-200')}>

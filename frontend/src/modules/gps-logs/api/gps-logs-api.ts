@@ -530,8 +530,7 @@ export interface TripDetails {
   arrivalTime?: string | null;
   departureTime?: string | null;
   pausedAt?: string | null;
-  // Backend-computed arrival time (validated: rejects arrival == departure
-  // unless destination_reached_at proves actual arrival; falls back to pausedAt)
+  // Backend-computed time of the farthest telemetry point from origin.
   arrivalDisplayTime?: string | null;
   matchedOriginDistanceM?: number | null;
   travelOrderStatus?: string | null;
@@ -540,6 +539,7 @@ export interface TripDetails {
   coordinatesOrigin: string | null;
   coordinatesDestination: string | null;
   tripType?: string | null;
+  businessTripStatus?: string | null;
 }
 
 export interface TripDetailsResponse {

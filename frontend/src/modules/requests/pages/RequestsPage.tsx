@@ -132,7 +132,11 @@ export function RequestsPage() {
   // For Request tab - opens AssignModal
   function handleViewDetails(order: PendingTravelOrder) {
     setSelectedOrder(order);
-    setIsAssignOpen(true);
+    if (user?.userType === 'VIEWER') {
+      setIsDetailsOpen(true);
+    } else {
+      setIsAssignOpen(true);
+    }
   }
 
   // For Schedule tab side table - opens ScheduleModal

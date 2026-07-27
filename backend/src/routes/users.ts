@@ -2,8 +2,10 @@ import express, { type Request, type Response, type Router as ExpressRouter } fr
 import bcrypt from 'bcrypt';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
+import { validateUuidParam } from '../middleware/validate-uuid.js';
 
 const router: ExpressRouter = express.Router();
+router.param('id', validateUuidParam);
 
 const SALT_ROUNDS = 12;
 

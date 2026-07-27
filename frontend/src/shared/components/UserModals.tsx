@@ -346,7 +346,6 @@ export function AccountModal({ open, currentUser, onClose }: AccountModalProps) 
         return;
       }
 
-      localStorage.setItem('car-tracker-user', JSON.stringify(json.data));
       window.location.reload();
     } catch (err) {
       setError('Network error. Please try again.');

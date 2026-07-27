@@ -1,39 +1,10 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import type { AppUser, ApiResponse } from '@car-tracker/shared';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { ApiResponse, AppUser } from '@car-tracker/shared';
 import { API_BASE } from '@/shared/api';
 
-const STORAGE_KEY = 'car-tracker-user';
 const LAST_ACTIVITY_KEY = 'car-tracker-last-activity';
-const INACTIVITY_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
-const CHECK_INTERVAL_MS = 60 * 1000; // check every 60 seconds
-
-function loadUser(): AppUser | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as AppUser;
-  } catch {
-    // corrupted data — ignore
-  }
-  return null;
-}
-
-function saveUser(user: AppUser | null) {
-  if (user) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-  } else {
-    localStorage.removeItem(STORAGE_KEY);
-  }
-}
-
-function getLastActivity(): number {
-  try {
-    const raw = localStorage.getItem(LAST_ACTIVITY_KEY);
-    if (raw) return Number(raw);
-  } catch {
-    // ignore
-  }
-  return Date.now(); // default to now if missing
-}
+const INACTIVITY_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+const CHECK_INTERVAL_MS = 60 * 1000;
 
 function updateLastActivity() {
   localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
@@ -46,103 +17,96 @@ function clearLastActivity() {
 interface AuthContextValue {
   user: AppUser | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AppUser | null>(() => {
-    const loadedUser = loadUser();
-    // On initial load, check if the user has been inactive for too long
-    if (loadedUser) {
-      const lastActivity = getLastActivity();
-      const elapsed = Date.now() - lastActivity;
-      if (elapsed >= INACTIVITY_TIMEOUT_MS) {
-        clearLastActivity();
-        return null; // expired session
-      }
-    }
-    return loadedUser;
-  });
+async function readJson<T>(response: Response): Promise<ApiResponse<T>> {
+  try {
+    return await response.json() as ApiResponse<T>;
+  } catch {
+    throw new Error(`Request failed (${response.status})`);
+  }
+}
 
-  const activityEventsRef = useRef<(() => void)[]>([]);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const logout = useCallback(async () => {
+    setUser(null);
+    clearLastActivity();
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch {
+      // Local state is cleared even if the network is unavailable. The server
+      // cookie will expire and protected endpoints still verify it.
+    }
+  }, []);
 
   useEffect(() => {
-    saveUser(user);
+    let cancelled = false;
+    localStorage.removeItem('car-tracker-user');
+    fetch(`${API_BASE}/api/auth/session`, { credentials: 'include' })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const json = await readJson<AppUser>(response);
+        return json.success ? json.data : null;
+      })
+      .then((restoredUser) => {
+        if (!cancelled) {
+          setUser(restoredUser);
+          if (restoredUser) updateLastActivity();
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
-    if (user) {
-      // Ensure last activity timestamp is set when user logs in
-      updateLastActivity();
-
-      // Set up activity listeners to track user interaction
-      const events = ['mousedown', 'keydown', 'touchstart', 'scroll', 'mousemove', 'click'];
-      const handler = () => updateLastActivity();
-
-      events.forEach((event) => window.addEventListener(event, handler, { passive: true }));
-      activityEventsRef.current = events.map((event) => () => window.removeEventListener(event, handler));
-
-      return () => {
-        activityEventsRef.current.forEach((cleanup) => cleanup());
-        activityEventsRef.current = [];
-      };
-    } else {
-      // Clear activity tracking when logged out
-      clearLastActivity();
-    }
-  }, [user]);
-
-  // Periodic inactivity check — only runs when user is authenticated
   useEffect(() => {
     if (!user) return;
-
-    const interval = setInterval(() => {
-      const lastActivity = getLastActivity();
-      const elapsed = Date.now() - lastActivity;
-      if (elapsed >= INACTIVITY_TIMEOUT_MS) {
-        // Auto-logout due to inactivity
-        setUser(null);
-      }
+    updateLastActivity();
+    const events = ['mousedown', 'keydown', 'touchstart', 'scroll', 'mousemove', 'click'];
+    const handler = () => updateLastActivity();
+    events.forEach((event) => window.addEventListener(event, handler, { passive: true }));
+    const interval = window.setInterval(() => {
+      const lastActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY) ?? Date.now());
+      if (Date.now() - lastActivity >= INACTIVITY_TIMEOUT_MS) void logout();
     }, CHECK_INTERVAL_MS);
-
-    return () => clearInterval(interval);
-  }, [user]);
+    return () => {
+      events.forEach((event) => window.removeEventListener(event, handler));
+      window.clearInterval(interval);
+    };
+  }, [user, logout]);
 
   const login = useCallback(async (username: string, password: string) => {
     const response = await fetch(`${API_BASE}/api/auth/login`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: username.trim(), password }),
     });
-
-    let json: ApiResponse<AppUser>;
-    try {
-      json = await response.json();
-    } catch {
-      throw new Error(`Login request failed (${response.status})`);
-    }
-
-    if (!json.success || !json.data) {
+    const json = await readJson<AppUser>(response);
+    if (!response.ok || !json.success || !json.data) {
       throw new Error(json.error || 'Invalid credentials');
     }
-
     setUser(json.data);
-  }, []);
-
-  const logout = useCallback(() => {
-    setUser(null);
+    updateLastActivity();
   }, []);
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated: user !== null,
-        login,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={{ user, isAuthenticated: user !== null, isLoading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

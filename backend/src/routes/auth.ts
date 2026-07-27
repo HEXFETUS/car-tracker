@@ -2,6 +2,9 @@ import express, { type Request, type Response, type Router as ExpressRouter } fr
 import bcrypt from 'bcrypt';
 import type { AppUser } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
+import { clearSessionCookie, createSessionToken, setSessionCookie } from '../security/session.js';
+import { toPublicUser } from '../middleware/auth.js';
+import { loginIpRateLimit, loginUsernameRateLimit } from '../middleware/rate-limit.js';
 
 console.log('[auth-router] module loaded');
 const router: ExpressRouter = express.Router();
@@ -33,7 +36,7 @@ function sanitise(row: UserRow): AppUser {
 }
 
 // POST /api/auth/login — Authenticate with username + password
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginIpRateLimit, loginUsernameRateLimit, async (req: Request, res: Response) => {
   console.log('[auth-login] route hit');
   const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -75,6 +78,8 @@ router.post('/login', async (req: Request, res: Response) => {
       return;
     }
 
+    setSessionCookie(res, createSessionToken(user.id));
+
     res.json({
       success: true,
       data: sanitise(user),
@@ -84,6 +89,21 @@ router.post('/login', async (req: Request, res: Response) => {
     console.error('POST /api/auth/login error:', (error as Error).message);
     res.status(500).json({ success: false, data: null, error: 'Database error' });
   }
+});
+
+// GET /api/auth/session — Restore the current server-verified session.
+router.get('/session', (req: Request, res: Response) => {
+  if (!req.auth) {
+    res.status(401).json({ success: false, data: null, error: 'Authentication required' });
+    return;
+  }
+  res.json({ success: true, data: toPublicUser(req.auth) });
+});
+
+// POST /api/auth/logout — Invalidate the browser cookie.
+router.post('/logout', (_req: Request, res: Response) => {
+  clearSessionCookie(res);
+  res.json({ success: true, data: null, message: 'Logged out' });
 });
 
 export default router;

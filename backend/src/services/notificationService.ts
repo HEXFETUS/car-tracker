@@ -83,13 +83,34 @@ export async function createNotificationForRoles(
   await Promise.all(users.rows.map((user) => createNotification({ ...input, userId: user.id })));
 }
 
-export async function listNotifications(userId: string) {
+const NOTIFICATION_PAGE_SIZE = 20;
+
+export async function listNotifications(userId: string, page: number) {
   const pool = getPool();
-  const result = await pool.query<NotificationRow>(
-    `SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
-    [userId],
-  );
-  return result.rows.map(mapNotification);
+  const offset = (page - 1) * NOTIFICATION_PAGE_SIZE;
+  const [notifications, countResult] = await Promise.all([
+    pool.query<NotificationRow>(
+      `SELECT *
+       FROM notifications
+       WHERE user_id = $1
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, NOTIFICATION_PAGE_SIZE, offset],
+    ),
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM notifications WHERE user_id = $1`,
+      [userId],
+    ),
+  ]);
+  const total = Number(countResult.rows[0]?.count ?? 0);
+
+  return {
+    data: notifications.rows.map(mapNotification),
+    total,
+    page,
+    pageSize: NOTIFICATION_PAGE_SIZE,
+    hasMore: offset + notifications.rows.length < total,
+  };
 }
 
 export async function getUnreadNotificationCount(userId: string) {

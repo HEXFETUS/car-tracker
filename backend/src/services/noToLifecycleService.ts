@@ -48,6 +48,7 @@ type TelemetryRow = {
   recorded_at: string | Date | null;
   active_trip_id: string | null;
   driver_id: string | null;
+  is_to_linked?: boolean;
 };
 
 type NoToLifecycleTrip = {
@@ -56,6 +57,7 @@ type NoToLifecycleTrip = {
   startedAt: string;
   endedAt: string | null;
   destinationReachedAt: string | null;
+  arrivalAt: string | null;
   returnedToBaseAt: string | null;
   pausedAt: string | null;
   pauseLocation: string | null;
@@ -89,6 +91,7 @@ const BASE_RADIUS_M = Number(process.env.BUSINESS_TRIP_BASE_RADIUS_METERS ?? 300
 const PAUSE_RESUME_RADIUS_M = Number(process.env.BUSINESS_TRIP_PAUSE_RESUME_RADIUS_METERS ?? 300);
 const RETURN_DIRECTION_MARGIN_M = Number(process.env.RETURN_DIRECTION_MARGIN_METERS ?? 100);
 const CONTINUATION_MAX_GAP_MS = Number(process.env.NO_TO_CONTINUATION_MAX_HOURS ?? 24) * 60 * 60 * 1000;
+const BASE_ANCHOR_MAX_GAP_MS = Number(process.env.NO_TO_BASE_ANCHOR_MAX_MINUTES ?? 120) * 60 * 1000;
 
 // ── Utility Functions ─────────────────────────────────────────────
 
@@ -154,7 +157,9 @@ function calculateRouteDistanceKm(points: TelemetryRow[]): number {
 }
 
 function isMoving(row: TelemetryRow): boolean {
-  return normalizeTelemetryEvent(row.event_type) === 'LOCATION_UPDATE' && Number(row.speed_kmh) > 0;
+  const eventType = normalizeTelemetryEvent(row.event_type);
+  return (eventType === 'LOCATION_UPDATE' || eventType === 'MOTION_STARTED')
+    && Number(row.speed_kmh) > 0;
 }
 
 function isIdling(row: TelemetryRow): boolean {
@@ -201,14 +206,16 @@ function isNearOrigin(coord: string, originCoord: string): { near: boolean; dist
  */
 export function buildNoToLifecycleTrips(
   rows: TelemetryRow[],
-  _defaultBaseCoord: string,
+  defaultBaseCoord: string,
   idleLimitMs: number,
 ): NoToLifecycleTrip[] {
   const completed: NoToLifecycleTrip[] = [];
   let current: NoToLifecycleTrip | null = null;
+  let lastBaseRow: TelemetryRow | null = null;
 
   // Track idling at candidate destination for arrival detection
   let idleStartAt: number | null = null;
+  let baseIdleStartAt: number | null = null;
   let lastMovingCoord: string | null = null;
   let lastMovingTime: number | null = null;
   // Track return trend — monitor if distance is decreasing
@@ -224,6 +231,29 @@ export function buildNoToLifecycleTrips(
     const eventType = normalizeTelemetryEvent(row.event_type);
     const speed = Number(row.speed_kmh) || 0;
     const rowMs = parseTime(recordedAt) ?? 0;
+    const fleetBaseResult = isNearOrigin(coord, defaultBaseCoord);
+
+    // A TO-linked telemetry interval is a hard journey boundary. The same
+    // tracker active_trip_id may continue before or after that bounded window.
+    if (row.is_to_linked) {
+      if (current) completed.push(current);
+      current = null;
+      lastBaseRow = null;
+      idleStartAt = null;
+      baseIdleStartAt = null;
+      lastMovingCoord = null;
+      lastMovingTime = null;
+      previousDistanceFromOrigin = Infinity;
+      returnDistanceImprovementCount = 0;
+      continue;
+    }
+
+    // Keep the most recent real telemetry point at the configured fleet base.
+    // When polling misses the exact departure, this becomes the canonical
+    // Origin instead of the first point received several kilometres away.
+    if (!current && fleetBaseResult.near) {
+      lastBaseRow = row;
+    }
 
     // A tracker may allocate a new active_trip_id after an ignition cycle
     // while the vehicle is still away from its original origin. It is a
@@ -248,6 +278,7 @@ export function buildNoToLifecycleTrips(
       if (!isContinuous) {
         current = null;
         idleStartAt = null;
+        baseIdleStartAt = null;
         lastMovingCoord = null;
         lastMovingTime = null;
         previousDistanceFromOrigin = Infinity;
@@ -258,31 +289,60 @@ export function buildNoToLifecycleTrips(
     // ── Start a new trip when ignition ON or movement detected ──
     if (!current) {
       const isIgnitionOn = eventType === 'IGNITION_ON';
-      const isMovingEvent = eventType === 'LOCATION_UPDATE' && speed > 0;
+      const isMovingEvent = isMoving(row);
 
       if (!isIgnitionOn && !isMovingEvent) continue;
 
+      const lastBaseAt = parseTime(lastBaseRow?.recorded_at);
+      const canUseLastBase = !fleetBaseResult.near
+        && lastBaseRow != null
+        && lastBaseAt != null
+        && rowMs >= lastBaseAt
+        && rowMs - lastBaseAt <= BASE_ANCHOR_MAX_GAP_MS;
+      const configuredBase = parseCoord(defaultBaseCoord);
+      const syntheticBaseRow: TelemetryRow | null = !fleetBaseResult.near && !canUseLastBase && configuredBase
+        ? {
+            ...row,
+            id: null,
+            event_type: 'ORIGIN_ANCHOR',
+            latitude: configuredBase.lat,
+            longitude: configuredBase.lng,
+            speed_kmh: 0,
+            location_name: 'Fleet base',
+          }
+        : null;
+      const originRow = canUseLastBase ? lastBaseRow! : (syntheticBaseRow ?? row);
+      const originCoord = coordinate(originRow) ?? coord;
+      const originAt = canUseLastBase
+        ? (timestampToIso(originRow.recorded_at) ?? recordedAt)
+        : recordedAt;
+      const initialPoints = originRow === row ? [row] : [originRow, row];
+      const initialActiveTripIds = new Set(
+        initialPoints.flatMap((point) => point.active_trip_id ? [point.active_trip_id] : []),
+      );
+
       current = {
         status: 'OUTBOUND',
-        hadLeftBase: false,
-        startedAt: recordedAt,
+        hadLeftBase: !fleetBaseResult.near,
+        startedAt: originAt,
         endedAt: null,
         destinationReachedAt: null,
+        arrivalAt: null,
         returnedToBaseAt: null,
         pausedAt: null,
         pauseLocation: null,
         resumedAt: null,
-        originCoord: coord,
+        originCoord,
         destinationCoord: coord,
-        originName: row.location_name ?? 'Unknown',
+        originName: originRow.location_name ?? 'Fleet base',
         destinationName: row.location_name ?? '',
         arrivedLocationName: null,
         arrivedCoordinates: null,
         lastCoord: coord,
         lastLocationName: row.location_name,
         maxSpeedKph: speed,
-        activeTripIds: new Set(row.active_trip_id ? [row.active_trip_id] : []),
-        points: [row],
+        activeTripIds: initialActiveTripIds,
+        points: initialPoints,
         // No-TO specific
         farthestDistanceM: 0,
         candidateDestinationAddress: null,
@@ -297,9 +357,11 @@ export function buildNoToLifecycleTrips(
 
       lastMovingCoord = coord;
       lastMovingTime = rowMs;
-      previousDistanceFromOrigin = 0;
+      previousDistanceFromOrigin = haversineDistance(coord, originCoord);
       returnDistanceImprovementCount = 0;
       idleStartAt = null;
+      baseIdleStartAt = null;
+      lastBaseRow = null;
       continue;
     }
 
@@ -312,9 +374,9 @@ export function buildNoToLifecycleTrips(
 
     const distanceFromOrigin = haversineDistance(coord, current.originCoord);
 
-    // The return target is always the first coordinate of this logical
-    // journey. The configured fleet base is not a substitute for its origin.
-    const baseResult = isNearOrigin(coord, current.originCoord);
+    // Arrival remains relative to the journey's actual origin, while trip
+    // departure/completion is relative to the configured fleet base.
+    const baseResult = fleetBaseResult;
 
     // ── Track whether vehicle has left base ──
     if (!baseResult.near && current.hadLeftBase === false) {
@@ -332,6 +394,7 @@ export function buildNoToLifecycleTrips(
         current.farthestDistanceM = distanceFromOrigin;
         current.candidateDestinationAddress = row.location_name ?? null;
         current.candidateDestinationCoordinates = coord;
+        current.arrivalAt = recordedAt;
         current.destinationCoord = coord;
         current.destinationName = row.location_name ?? current.destinationName;
       }
@@ -412,66 +475,33 @@ export function buildNoToLifecycleTrips(
 
     previousDistanceFromOrigin = distanceFromOrigin;
 
-    // ── Trip Completion: Returned near base + idle or ignition OFF ──
-    if (baseResult.near && current.hadLeftBase && current.destinationReachedAt) {
-      const isTripped = eventType === 'IGNITION_OFF' || (isIdling(row) && current.status === 'RETURNING');
-
-      if (isTripped) {
-        // Check idle duration at base
-        if (isIdling(row)) {
-          if (idleStartAt === null) {
-            idleStartAt = rowMs;
-          } else if (rowMs - idleStartAt >= idleLimitMs) {
-            // Idle long enough at base — complete trip
-            current.status = 'COMPLETED';
-            current.endedAt = recordedAt;
-            current.returnedToBaseAt = recordedAt;
-            current.endAddress = row.location_name ?? current.originName;
-            current.endCoordinates = coord;
-            current.endTime = recordedAt;
-            completed.push(current);
-            current = null;
-            idleStartAt = null;
-            returnDistanceImprovementCount = 0;
-            continue;
-          }
-        } else {
-          idleStartAt = null;
-        }
-
-        if (eventType === 'IGNITION_OFF') {
-          // Immediate completion on ignition OFF at base
-          current.status = 'COMPLETED';
-          current.endedAt = recordedAt;
-          current.returnedToBaseAt = recordedAt;
-          current.endAddress = row.location_name ?? current.originName;
-          current.endCoordinates = coord;
-          current.endTime = recordedAt;
-          completed.push(current);
-          current = null;
-          idleStartAt = null;
-          returnDistanceImprovementCount = 0;
-          continue;
-        }
+    // ── Trip Completion: Returned to configured base ──
+    if (baseResult.near && current.hadLeftBase) {
+      const ignitionOffAtBase = eventType === 'IGNITION_OFF';
+      if (isIdling(row)) {
+        baseIdleStartAt ??= rowMs;
+      } else {
+        baseIdleStartAt = null;
       }
-    }
+      const idledAtBaseLongEnough = baseIdleStartAt !== null && rowMs - baseIdleStartAt >= idleLimitMs;
 
-    // ── Returned near base without reaching destination → complete as unmatched ──
-    if (baseResult.near && current.hadLeftBase && !current.destinationReachedAt) {
-      // A location update back within the original origin radius completes
-      // the whole logical journey, even when it spans active_trip_id values.
-      current.status = 'COMPLETED';
-      current.endedAt = recordedAt;
-      current.returnedToBaseAt = recordedAt;
-      current.endAddress = row.location_name ?? current.originName;
-      current.endCoordinates = coord;
-      current.endTime = recordedAt;
-      // destination is the farthest point reached
-      completed.push(current);
-      current = null;
-      idleStartAt = null;
-      returnDistanceImprovementCount = 0;
-      continue;
+      if (ignitionOffAtBase || idledAtBaseLongEnough) {
+        current.status = 'COMPLETED';
+        current.endedAt = recordedAt;
+        current.returnedToBaseAt = recordedAt;
+        current.endAddress = row.location_name ?? current.originName;
+        current.endCoordinates = coord;
+        current.endTime = recordedAt;
+        completed.push(current);
+        lastBaseRow = row;
+        current = null;
+        idleStartAt = null;
+        baseIdleStartAt = null;
+        returnDistanceImprovementCount = 0;
+        continue;
+      }
+    } else {
+      baseIdleStartAt = null;
     }
 
     // ── Ignition OFF away from base → PAUSED_AWAY_FROM_BASE ──
@@ -505,12 +535,8 @@ export function buildNoToLifecycleTrips(
 
   // ── Finalize any remaining active trip ──
   if (current) {
-    if (current.destinationReachedAt) {
-      current.endTime = timestampToIso(current.points[current.points.length - 1]?.recorded_at) ?? current.startedAt;
-      current.endAddress = current.lastLocationName ?? current.originName;
-      current.endCoordinates = current.lastCoord;
-      current.endedAt = current.endTime;
-    }
+    // The latest point is not an End until the lifecycle reaches COMPLETED.
+    // Details may show it as the map's current red marker, but End stays blank.
     completed.push(current);
   }
 
@@ -518,7 +544,8 @@ export function buildNoToLifecycleTrips(
   // A trip with only IGNITION_ON → IGNITION_OFF and no actual movement
   // (no LOCATION_UPDATE events) should not create a no-TO log.
   return completed.filter((trip) =>
-    trip.points.some((p) => normalizeTelemetryEvent(p.event_type) === 'LOCATION_UPDATE'),
+    trip.hadLeftBase
+    && trip.points.some((p) => normalizeTelemetryEvent(p.event_type) === 'LOCATION_UPDATE'),
   );
 }
 
@@ -530,41 +557,30 @@ export function buildNoToLifecycleTrips(
  */
 export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<'created' | 'updated'> {
   const pool = getPool();
-  const fleetConfig = getFleetConfig();
   const gpsDistanceKm = calculateRouteDistanceKm(trip.points);
-  const endTime = trip.endTime ?? trip.startedAt;
-  const engineHours = Math.max(0, (new Date(endTime).getTime() - new Date(trip.startedAt).getTime()) / 3600000);
+  const lastTelemetryAt = timestampToIso(trip.points[trip.points.length - 1]?.recorded_at);
+  const metricsEndTime = trip.endTime ?? lastTelemetryAt ?? trip.startedAt;
+  const engineHours = Math.max(0, (new Date(metricsEndTime).getTime() - new Date(trip.startedAt).getTime()) / 3600000);
   const anomalyReason = 'Vehicle completed trip without matching approved travel order.';
 
-  // ── Find existing no-TO log by active_trip_id directly ──
-  // Uses the new active_trip_id column for direct lookup (faster, more reliable)
-  // rather than joining through gps_no_to_log_active_trips.
-  // This prevents duplicates when PAUSED/RESUMED introduces new active_trip_ids
-  // that don't yet exist in the junction table.
+  // A tracker session can contain several origin-to-return journeys. The first
+  // telemetry timestamp is the stable identity within a vehicle; active-trip
+  // IDs remain route membership metadata only.
   const activeTripIdArray = Array.from(trip.activeTripIds);
   let noToLogId: string | null = null;
   let status: 'created' | 'updated' = 'created';
 
-  if (activeTripIdArray.length > 0) {
-    const existing = await pool.query<{ id: string }>(
-      `SELECT COALESCE(n.parent_trip_id, n.id) AS id
-         FROM gps_no_to_logs n
-         LEFT JOIN gps_no_to_log_active_trips nat
-           ON nat.gps_no_to_log_id = n.id
-        WHERE n.vehicle_id = $1
-          AND (
-            n.active_trip_id = ANY($2::uuid[])
-            OR nat.active_trip_id = ANY($2::uuid[])
-          )
-        GROUP BY COALESCE(n.parent_trip_id, n.id)
-        ORDER BY COUNT(DISTINCT nat.active_trip_id) DESC,
-                 MIN(n.created_at) ASC
-        LIMIT 1`,
-      [trip.vehicleId, activeTripIdArray],
-    );
-    noToLogId = existing.rows[0]?.id ?? null;
-    if (noToLogId) status = 'updated';
-  }
+  const existing = await pool.query<{ id: string }>(
+    `SELECT id
+       FROM gps_no_to_logs
+      WHERE vehicle_id = $1
+        AND departure_time = $2::timestamptz AT TIME ZONE 'UTC'
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1`,
+    [trip.vehicleId, trip.startedAt],
+  );
+  noToLogId = existing.rows[0]?.id ?? null;
+  if (noToLogId) status = 'updated';
 
   if (noToLogId) {
     // ── UPDATE existing log ──
@@ -600,7 +616,14 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
               farthest_distance_m = $24,
               candidate_destination_address = $25,
               candidate_destination_coordinates = $26,
-              active_trip_id = COALESCE(active_trip_id, $27),
+              active_trip_id = $27,
+              parent_trip_id = CASE
+                WHEN status = 'unmatched'
+                 AND converted_gps_trip_log_id IS NULL
+                 AND travel_order_id IS NULL
+                THEN NULL
+                ELSE parent_trip_id
+              END,
               updated_at = current_timestamp
         WHERE id = $1`,
       [
@@ -611,7 +634,7 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
         trip.destinationName,
         trip.destinationCoord,
         trip.startedAt,
-        endTime,
+        trip.arrivalAt,
         Number(gpsDistanceKm.toFixed(2)),
         Number(engineHours.toFixed(2)),
         Number(trip.maxSpeedKph.toFixed(2)),
@@ -680,7 +703,7 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
       trip.destinationName,
       trip.destinationCoord,
       trip.startedAt,
-      endTime,
+      trip.arrivalAt,
       Number(gpsDistanceKm.toFixed(2)),
       Number(engineHours.toFixed(2)),
       Number(trip.maxSpeedKph.toFixed(2)),
@@ -743,24 +766,6 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
     return status;
   }
 
-  // Older fragments that share a continuation session point to this
-  // canonical journey and no longer appear as independent logs.
-  await pool.query(
-    `UPDATE gps_no_to_logs child
-        SET parent_trip_id = $1,
-            updated_at = current_timestamp
-      WHERE child.id <> $1
-        AND child.parent_trip_id IS NULL
-        AND EXISTS (
-          SELECT 1
-            FROM gps_no_to_log_active_trips child_session
-           WHERE child_session.gps_no_to_log_id = child.id
-             AND child_session.active_trip_id = ANY($2::uuid[])
-        )`,
-    [noToLogId, activeTripIdArray],
-  );
-  await pool.query(`UPDATE gps_no_to_logs SET parent_trip_id = NULL WHERE id = $1`, [noToLogId]);
-
   await pool.query(`DELETE FROM gps_no_to_log_active_trips WHERE gps_no_to_log_id = $1`, [noToLogId]);
 
   for (const activeTripId of trip.activeTripIds) {
@@ -780,8 +785,7 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
 
     await pool.query(
       `UPDATE gps_telemetry
-          SET travel_order_id = NULL,
-              driver_id = COALESCE(driver_id, $2)
+          SET driver_id = COALESCE(driver_id, $2)
         WHERE vehicle_id = $1
           AND active_trip_id = $3
           AND ($4::timestamptz IS NULL OR recorded_at >= $4::timestamptz)
@@ -801,13 +805,18 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
  * Scans telemetry for each vehicle, builds logical No-TO lifecycle trips
  * (with dynamic destination detection), and persists them.
  */
-export async function syncNoToLogsFromTelemetry(): Promise<{
+type NoToSyncResult = {
   created: number;
   updated: number;
   skipped: number;
   failed: number;
-}> {
+};
+
+async function syncNoToLogsFromTelemetryUnlocked(
+  options: { notifyNewTrips?: boolean } = {},
+): Promise<NoToSyncResult> {
   const pool = getPool();
+  const notifyNewTrips = options.notifyNewTrips ?? true;
   const fleetConfig = getFleetConfig();
   const defaultBaseCoord = `${fleetConfig.base.latitude},${fleetConfig.base.longitude}`;
   const idleLimitMs = (fleetConfig.trip.idleLimitMinutes ?? 10) * 60 * 1000;
@@ -816,15 +825,27 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
 
   // ── Fetch telemetry rows ────────────────────────────────────
   const telemetryResult = await pool.query<TelemetryRow>(
-    `SELECT id, vehicle_id, plate_number, event_type, latitude, longitude,
-            speed_kmh, location_name, recorded_at, active_trip_id, driver_id
-       FROM gps_telemetry
-      WHERE recorded_at IS NOT NULL
-        AND vehicle_id IS NOT NULL
-        AND active_trip_id IS NOT NULL
-        AND latitude IS NOT NULL
-        AND longitude IS NOT NULL
-      ORDER BY vehicle_id, recorded_at ASC`,
+    `SELECT telemetry.id, telemetry.vehicle_id, telemetry.plate_number,
+            telemetry.event_type, telemetry.latitude, telemetry.longitude,
+            telemetry.speed_kmh, telemetry.location_name, telemetry.recorded_at,
+            telemetry.active_trip_id, telemetry.driver_id,
+            (telemetry.travel_order_id IS NOT NULL OR EXISTS (
+              SELECT 1
+                FROM gps_trip_log_active_trips linked_session
+                JOIN gps_trip_logs linked_log
+                  ON linked_log.id = linked_session.gps_trip_log_id
+                 AND linked_log.travel_order_id IS NOT NULL
+               WHERE linked_session.active_trip_id = telemetry.active_trip_id
+                 AND (linked_session.start_time IS NULL OR telemetry.recorded_at >= linked_session.start_time)
+                 AND (linked_session.end_time IS NULL OR telemetry.recorded_at <= linked_session.end_time)
+            )) AS is_to_linked
+       FROM gps_telemetry telemetry
+      WHERE telemetry.recorded_at IS NOT NULL
+        AND telemetry.vehicle_id IS NOT NULL
+        AND telemetry.active_trip_id IS NOT NULL
+        AND telemetry.latitude IS NOT NULL
+        AND telemetry.longitude IS NOT NULL
+      ORDER BY telemetry.vehicle_id, telemetry.recorded_at ASC`,
   );
 
   // ── Fetch all vehicles ──────────────────────────────────────
@@ -833,47 +854,75 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
   );
   const allVehicleIds = new Set(vehicleResult.rows.map((v) => v.id));
 
-  // ── Build excluded active_trip_id set (TO-linked sessions) ──
-  const excludedActiveTripIds = new Set<string>();
-
-  const toLinkedTelemetry = await pool.query<{ active_trip_id: string }>(
-    `SELECT DISTINCT active_trip_id
-       FROM gps_telemetry
-      WHERE active_trip_id IS NOT NULL
-        AND travel_order_id IS NOT NULL`,
-  );
-  for (const row of toLinkedTelemetry.rows) {
-    excludedActiveTripIds.add(row.active_trip_id);
-  }
-
-  const toLinkedSessions = await pool.query<{ active_trip_id: string }>(
-    `SELECT DISTINCT glat.active_trip_id
-       FROM gps_trip_log_active_trips glat
-       JOIN gps_trip_logs gl ON gl.id = glat.gps_trip_log_id
-      WHERE gl.travel_order_id IS NOT NULL`,
-  );
-  for (const row of toLinkedSessions.rows) {
-    excludedActiveTripIds.add(row.active_trip_id);
-  }
-
-  console.log('[no-to-lifecycle-sync] Excluding TO-linked active trips', {
-    excludedActiveTripCount: excludedActiveTripIds.size,
-  });
-
-  // ── Delete stale no-TO logs whose active_trip_id is now TO-linked ──
-  if (excludedActiveTripIds.size > 0) {
-    const deleteResult = await pool.query(
-      `DELETE FROM gps_no_to_logs
-        WHERE id IN (
-          SELECT n.id
-            FROM gps_no_to_logs n
-            JOIN gps_no_to_log_active_trips nat ON nat.gps_no_to_log_id = n.id
-           WHERE nat.active_trip_id = ANY($1::uuid[])
+  // Delete only a No-TO journey whose own bounded telemetry windows no longer
+  // contain an unlinked point. Other journeys may legitimately reuse the same
+  // tracker active_trip_id outside those windows.
+  const staleLinkedResult = await pool.query(
+    `DELETE FROM gps_no_to_logs no_to_log
+      WHERE EXISTS (
+        SELECT 1
+          FROM gps_no_to_log_active_trips session
+         WHERE session.gps_no_to_log_id = no_to_log.id
+      )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM gps_no_to_log_active_trips session
+            JOIN gps_telemetry telemetry
+              ON telemetry.vehicle_id = no_to_log.vehicle_id
+             AND telemetry.active_trip_id = session.active_trip_id
+             AND (session.start_time IS NULL OR telemetry.recorded_at >= session.start_time)
+             AND (session.end_time IS NULL OR telemetry.recorded_at <= session.end_time)
+           WHERE session.gps_no_to_log_id = no_to_log.id
+             AND telemetry.travel_order_id IS NULL
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM gps_trip_log_active_trips linked_session
+                 JOIN gps_trip_logs linked_log
+                   ON linked_log.id = linked_session.gps_trip_log_id
+                  AND linked_log.travel_order_id IS NOT NULL
+                WHERE linked_session.active_trip_id = telemetry.active_trip_id
+                  AND (linked_session.start_time IS NULL OR telemetry.recorded_at >= linked_session.start_time)
+                  AND (linked_session.end_time IS NULL OR telemetry.recorded_at <= linked_session.end_time)
+             )
         )`,
-      [Array.from(excludedActiveTripIds)],
-    );
-    console.log('[no-to-lifecycle-sync] Deleted stale TO-linked no-TO logs', {
-      deleted: deleteResult.rowCount,
+  );
+  if ((staleLinkedResult.rowCount ?? 0) > 0) {
+    console.log('[no-to-lifecycle-sync] Deleted fully TO-linked No-TO journeys', {
+      deleted: staleLinkedResult.rowCount,
+    });
+  }
+
+  // Remove unmatched tracker sessions that never became a trip because every
+  // bounded telemetry point remained inside the configured fleet-base radius.
+  const nonTripResult = await pool.query(
+    `DELETE FROM gps_no_to_logs no_to_log
+      WHERE no_to_log.status = 'unmatched'
+        AND EXISTS (
+          SELECT 1
+            FROM gps_no_to_log_active_trips session
+           WHERE session.gps_no_to_log_id = no_to_log.id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM gps_no_to_log_active_trips session
+            JOIN gps_telemetry telemetry
+              ON telemetry.vehicle_id = no_to_log.vehicle_id
+             AND telemetry.active_trip_id = session.active_trip_id
+             AND (session.start_time IS NULL OR telemetry.recorded_at >= session.start_time)
+             AND (session.end_time IS NULL OR telemetry.recorded_at <= session.end_time)
+           WHERE session.gps_no_to_log_id = no_to_log.id
+             AND telemetry.latitude IS NOT NULL
+             AND telemetry.longitude IS NOT NULL
+             AND haversine_distance(
+               $1,
+               telemetry.latitude::text || ',' || telemetry.longitude::text
+             ) > $2
+        )`,
+    [defaultBaseCoord, BASE_RADIUS_M],
+  );
+  if ((nonTripResult.rowCount ?? 0) > 0) {
+    console.log('[no-to-lifecycle-sync] Deleted stationary base non-trips', {
+      deleted: nonTripResult.rowCount,
     });
   }
 
@@ -900,22 +949,13 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
     });
   }
 
-  // Parent links are valid only while child and parent share an active-trip
-  // session. Detach links left behind by an earlier, overly broad merge so
-  // independent completed journeys become visible again.
+  // Shared active_trip_id values do not make two logical journeys a parent and
+  // child. Remove legacy links so every stable journey remains visible.
   const detachedParentResult = await pool.query(
     `UPDATE gps_no_to_logs child
         SET parent_trip_id = NULL,
             updated_at = current_timestamp
-      WHERE child.parent_trip_id IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1
-            FROM gps_no_to_log_active_trips child_session
-            JOIN gps_no_to_log_active_trips parent_session
-              ON parent_session.gps_no_to_log_id = child.parent_trip_id
-             AND parent_session.active_trip_id = child_session.active_trip_id
-           WHERE child_session.gps_no_to_log_id = child.id
-        )`,
+      WHERE child.parent_trip_id IS NOT NULL`,
   );
   if ((detachedParentResult.rowCount ?? 0) > 0) {
     console.log('[no-to-lifecycle-sync] Detached stale parent links', {
@@ -929,8 +969,6 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
 
   for (const row of telemetryResult.rows) {
     if (!row.active_trip_id || !row.vehicle_id) continue;
-
-    if (excludedActiveTripIds.has(row.active_trip_id)) continue;
 
     if (!rowsByVehicle.has(row.vehicle_id)) {
       rowsByVehicle.set(row.vehicle_id, []);
@@ -952,10 +990,10 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
 
     try {
       const trips = buildNoToLifecycleTrips(rows, defaultBaseCoord, idleLimitMs);
+      let vehiclePersistFailed = false;
 
       if (trips.length === 0) {
         skipped += rows.length;
-        continue;
       }
 
       for (const trip of trips) {
@@ -965,15 +1003,17 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
             created += 1;
             // Create notification for all roles when a new no-TO trip is detected
             try {
-              const plate = trip.plateNumber ?? trip.vehicleId;
-              await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'], {
-                type: 'gps_alert',
-                title: 'No Travel Order Alert',
-                message: `Vehicle ${plate} completed a trip without an approved travel order.\nOrigin: ${trip.originName}\nDestination: ${trip.destinationName}`,
-                targetUrl: '/gps-logs',
-                targetTab: 'alerts',
-                entityId: trip.vehicleId,
-              });
+              if (notifyNewTrips) {
+                const plate = trip.plateNumber ?? trip.vehicleId;
+                await createNotificationForRoles(['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'], {
+                  type: 'gps_alert',
+                  title: 'No Travel Order Alert',
+                  message: `Vehicle ${plate} completed a trip without an approved travel order.\nOrigin: ${trip.originName}\nDestination: ${trip.destinationName}`,
+                  targetUrl: '/gps-logs',
+                  targetTab: 'alerts',
+                  entityId: trip.vehicleId,
+                });
+              }
             } catch (notifError) {
               console.error(`[no-to-lifecycle-sync] Failed to create notification for vehicle=${trip.vehicleId}:`, (notifError as Error).message);
             }
@@ -981,8 +1021,34 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
             updated += 1;
           }
         } catch (error) {
+          vehiclePersistFailed = true;
           failed += 1;
           console.error('[no-to-lifecycle-sync] Failed to persist trip:', (error as Error).message);
+        }
+      }
+
+      // The full telemetry history was rebuilt successfully for this vehicle.
+      // Remove unmatched legacy identities that the current lifecycle no
+      // longer produces (for example, a paused fragment superseded by a
+      // completed base-return journey). Linked/converted records are retained.
+      if (!vehiclePersistFailed) {
+        const tripStarts = trips.map((trip) => trip.startedAt);
+        const reconciled = await pool.query(
+          `DELETE FROM gps_no_to_logs no_to_log
+            WHERE no_to_log.vehicle_id = $1
+              AND no_to_log.status = 'unmatched'
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM unnest($2::timestamptz[]) produced(started_at)
+                 WHERE no_to_log.departure_time = produced.started_at AT TIME ZONE 'UTC'
+              )`,
+          [vehicleId, tripStarts],
+        );
+        if ((reconciled.rowCount ?? 0) > 0) {
+          console.log('[no-to-lifecycle-sync] Deleted superseded No-TO journeys', {
+            vehicleId,
+            deleted: reconciled.rowCount,
+          });
         }
       }
     } catch (error) {
@@ -993,4 +1059,22 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
 
   console.log(`[no-to-lifecycle-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped, ${failed} failed`);
   return { created, updated, skipped, failed };
+}
+
+let noToSyncQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Serialize full-history No-TO reconstruction within the backend process.
+ * Session advisory locks cannot be used through a transaction-mode pooler:
+ * the lock can survive after the pooled connection is returned.
+ */
+export async function syncNoToLogsFromTelemetry(
+  options: { notifyNewTrips?: boolean } = {},
+): Promise<NoToSyncResult> {
+  const queuedSync = noToSyncQueue.then(() => syncNoToLogsFromTelemetryUnlocked(options));
+  noToSyncQueue = queuedSync.then(
+    () => undefined,
+    () => undefined,
+  );
+  return queuedSync;
 }

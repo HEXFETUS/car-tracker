@@ -1,8 +1,10 @@
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
+import { validateUuidParam } from '../middleware/validate-uuid.js';
 
 const router: ExpressRouter = express.Router();
+router.param('id', validateUuidParam);
 
 export interface VehicleRow {
   id: string;

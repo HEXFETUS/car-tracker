@@ -21,6 +21,26 @@ function num(key: string, fallback: number): number {
 // ── System / Server ───────────────────────────────────────────
 
 export const PORT = num('PORT', 3500);
+export const NODE_ENV = str('NODE_ENV', 'development');
+
+// Authentication and browser origins. Production must provide a secret with
+// enough entropy to prevent session-token forgery.
+export const AUTH_SECRET = str('AUTH_SECRET');
+export const APP_ORIGINS = str('APP_ORIGINS')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+if (NODE_ENV === 'production' && AUTH_SECRET.length < 32) {
+  throw new Error('AUTH_SECRET must be configured with at least 32 characters in production');
+}
+if (NODE_ENV === 'production' && APP_ORIGINS.length === 0) {
+  throw new Error('APP_ORIGINS must list at least one trusted browser origin in production');
+}
+
+if (NODE_ENV !== 'production' && AUTH_SECRET.length < 32) {
+  console.warn('[security] AUTH_SECRET is missing or shorter than 32 characters; using a development-only secret');
+}
 
 // ── Telegram ──────────────────────────────────────────────────
 

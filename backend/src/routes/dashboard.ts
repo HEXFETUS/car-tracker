@@ -389,9 +389,9 @@ async function loadTables(pool: QueryablePool) {
       LEFT JOIN travel_orders to_
         ON to_.driver_id = d.id
        AND to_.scheduled_departure >= CURRENT_DATE - INTERVAL '90 days'
+      WHERE d.status = 'active'
       GROUP BY d.id, d.full_name
-      ORDER BY total_trips DESC
-      LIMIT 20
+      ORDER BY total_trips DESC, d.full_name ASC
     `),
     timedQuery(pool, 'dashboard maintenanceOverview', `
       SELECT
@@ -425,23 +425,208 @@ async function loadTables(pool: QueryablePool) {
     `),
     timedQuery(pool, 'dashboard totalVehicles', `SELECT COUNT(*) AS cnt FROM vehicles`),
     timedQuery(pool, 'dashboard recentlyCompleted', `
+      WITH eligible_trips AS (
+        SELECT
+          g.id,
+          'gps_trip_log'::text AS log_source,
+          g.vehicle_id,
+          g.gps_record_no AS record_no,
+          CASE
+            WHEN g.travel_order_id IS NULL THEN 'no_travel_order'::text
+            ELSE 'travel_order'::text
+          END AS trip_type,
+          g.trip_date,
+          v.plate_number,
+          d.full_name AS driver_name,
+          g.origin_gps_start_point AS origin,
+          g.destination_gps_end_point AS destination,
+          g.departure_time_gps AS departure_time,
+          g.arrival_time_gps,
+          g.gps_distance_km,
+          g.engine_hours AS stored_engine_hours,
+          NULL::numeric AS stored_moving_hours,
+          g.max_speed_kph
+        FROM gps_trip_logs g
+        LEFT JOIN vehicles v ON v.id = g.vehicle_id
+        LEFT JOIN drivers d ON d.id = g.driver_id
+        WHERE g.trip_status_gps IN ('arrived', 'completed')
+          AND g.arrival_time_gps IS NOT NULL
+
+        UNION ALL
+
+        SELECT
+          n.id,
+          'gps_no_to_log'::text AS log_source,
+          n.vehicle_id,
+          n.no_to_record_no AS record_no,
+          'no_travel_order'::text AS trip_type,
+          n.trip_date,
+          v.plate_number,
+          d.full_name AS driver_name,
+          n.origin_address AS origin,
+          COALESCE(n.end_address, n.destination_address) AS destination,
+          n.departure_time AT TIME ZONE 'UTC' AS departure_time,
+          COALESCE(
+            n.end_time,
+            n.returned_to_base_at,
+            n.arrival_time AT TIME ZONE 'UTC'
+          ) AS arrival_time_gps,
+          n.distance_km AS gps_distance_km,
+          n.engine_hours AS stored_engine_hours,
+          n.moving_hours AS stored_moving_hours,
+          n.max_speed_kph
+        FROM gps_no_to_logs n
+        LEFT JOIN vehicles v ON v.id = n.vehicle_id
+        LEFT JOIN drivers d ON d.id = n.driver_id
+        WHERE n.business_trip_status = 'COMPLETED'
+          AND n.parent_trip_id IS NULL
+          AND n.converted_gps_trip_log_id IS NULL
+          AND COALESCE(
+            n.end_time,
+            n.returned_to_base_at,
+            n.arrival_time AT TIME ZONE 'UTC'
+          ) IS NOT NULL
+      ),
+      latest_day AS (
+        SELECT MAX(trip_date) AS trip_date
+        FROM eligible_trips
+      ),
+      recent_trips AS (
+        SELECT trip.*
+        FROM eligible_trips trip
+        JOIN latest_day latest ON latest.trip_date = trip.trip_date
+      ),
+      trip_sessions AS (
+        SELECT
+          trip.log_source,
+          trip.id AS trip_id,
+          session.active_trip_id,
+          session.start_time,
+          session.end_time
+        FROM recent_trips trip
+        JOIN gps_trip_log_active_trips session
+          ON trip.log_source = 'gps_trip_log'
+         AND session.gps_trip_log_id = trip.id
+
+        UNION ALL
+
+        SELECT
+          trip.log_source,
+          trip.id AS trip_id,
+          session.active_trip_id,
+          session.start_time,
+          session.end_time
+        FROM recent_trips trip
+        JOIN gps_no_to_log_active_trips session
+          ON trip.log_source = 'gps_no_to_log'
+         AND session.gps_no_to_log_id = trip.id
+      ),
+      session_points AS (
+        SELECT
+          session.log_source,
+          session.trip_id,
+          session.active_trip_id,
+          telemetry.recorded_at,
+          telemetry.speed_kmh,
+          LAG(telemetry.recorded_at) OVER (
+            PARTITION BY session.log_source, session.trip_id, session.active_trip_id
+            ORDER BY telemetry.recorded_at
+          ) AS previous_at,
+          LAG(telemetry.speed_kmh) OVER (
+            PARTITION BY session.log_source, session.trip_id, session.active_trip_id
+            ORDER BY telemetry.recorded_at
+          ) AS previous_speed
+        FROM trip_sessions session
+        JOIN recent_trips trip
+          ON trip.log_source = session.log_source
+         AND trip.id = session.trip_id
+        JOIN gps_telemetry telemetry
+          ON telemetry.vehicle_id = trip.vehicle_id
+         AND telemetry.active_trip_id = session.active_trip_id
+         AND (session.start_time IS NULL OR telemetry.recorded_at >= session.start_time)
+         AND (session.end_time IS NULL OR telemetry.recorded_at <= session.end_time)
+      ),
+      session_metrics AS (
+        SELECT
+          log_source,
+          trip_id,
+          active_trip_id,
+          COUNT(*) AS telemetry_point_count,
+          EXTRACT(EPOCH FROM (MAX(recorded_at) - MIN(recorded_at))) / 3600.0 AS engine_hours,
+          COALESCE(SUM(
+            CASE
+              WHEN previous_at IS NOT NULL
+                AND recorded_at > previous_at
+                AND recorded_at - previous_at <= INTERVAL '10 minutes'
+                AND (COALESCE(speed_kmh, 0) > 0 OR COALESCE(previous_speed, 0) > 0)
+              THEN EXTRACT(EPOCH FROM (recorded_at - previous_at)) / 3600.0
+              ELSE 0
+            END
+          ), 0) AS moving_hours
+        FROM session_points
+        GROUP BY log_source, trip_id, active_trip_id
+      ),
+      trip_metrics AS (
+        SELECT
+          log_source,
+          trip_id,
+          SUM(telemetry_point_count) AS telemetry_point_count,
+          SUM(engine_hours) AS engine_hours,
+          SUM(moving_hours) AS moving_hours
+        FROM session_metrics
+        GROUP BY log_source, trip_id
+      ),
+      resolved_metrics AS (
+        SELECT
+          trip.*,
+          CASE
+            WHEN metrics.telemetry_point_count > 0
+              THEN GREATEST(metrics.engine_hours, metrics.moving_hours, 0)
+            ELSE COALESCE(
+              trip.stored_engine_hours,
+              CASE
+                WHEN trip.departure_time IS NOT NULL
+                  AND trip.arrival_time_gps > trip.departure_time
+                THEN EXTRACT(EPOCH FROM (trip.arrival_time_gps - trip.departure_time)) / 3600.0
+                ELSE NULL
+              END,
+              trip.stored_moving_hours
+            )
+          END AS resolved_engine_hours,
+          CASE
+            WHEN metrics.telemetry_point_count > 0 THEN GREATEST(metrics.moving_hours, 0)
+            ELSE trip.stored_moving_hours
+          END AS candidate_moving_hours
+        FROM recent_trips trip
+        LEFT JOIN trip_metrics metrics
+          ON metrics.log_source = trip.log_source
+         AND metrics.trip_id = trip.id
+      )
       SELECT
-        g.id,
-        g.trip_date,
-        v.plate_number,
-        d.full_name AS driver_name,
-        g.origin_gps_start_point AS origin,
-        g.destination_gps_end_point AS destination,
-        g.arrival_time_gps,
-        g.gps_distance_km,
-        g.max_speed_kph
-      FROM gps_trip_logs g
-      LEFT JOIN vehicles v ON v.id = g.vehicle_id
-      LEFT JOIN drivers d ON d.id = g.driver_id
-      WHERE g.trip_status_gps = 'arrived'
-        AND g.arrival_time_gps >= NOW() - INTERVAL '24 hours'
-      ORDER BY g.arrival_time_gps DESC
-      LIMIT 20
+        trip.id,
+        trip.record_no,
+        trip.trip_type,
+        trip.trip_date,
+        trip.plate_number,
+        trip.driver_name,
+        trip.origin,
+        trip.destination,
+        trip.arrival_time_gps,
+        trip.gps_distance_km,
+        trip.resolved_engine_hours AS engine_hours,
+        CASE
+          WHEN trip.candidate_moving_hours IS NULL THEN NULL
+          WHEN trip.resolved_engine_hours IS NULL THEN GREATEST(trip.candidate_moving_hours, 0)
+          ELSE LEAST(
+            GREATEST(trip.candidate_moving_hours, 0),
+            GREATEST(trip.resolved_engine_hours, 0)
+          )
+        END AS moving_hours,
+        trip.max_speed_kph
+      FROM resolved_metrics trip
+      ORDER BY
+        COALESCE((substring(trip.record_no FROM '([0-9]+)$'))::bigint, 9223372036854775807),
+        trip.record_no ASC
     `),
   ]);
 

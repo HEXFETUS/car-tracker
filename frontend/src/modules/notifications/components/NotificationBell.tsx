@@ -46,6 +46,9 @@ export function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
 
   const sortedNotifications = useMemo(
     () =>
@@ -56,8 +59,10 @@ export function NotificationBell() {
   );
 
   const refresh = useCallback(async () => {
-    const [items, count] = await Promise.all([fetchNotifications(), fetchUnreadCount()]);
-    setNotifications(items);
+    const [result, count] = await Promise.all([fetchNotifications(1), fetchUnreadCount()]);
+    setNotifications(result.data);
+    setPage(result.page);
+    setHasMore(result.hasMore);
     setUnreadCount(count);
   }, []);
 
@@ -101,6 +106,23 @@ export function NotificationBell() {
     setNotifications((items) => items.map((item) => ({ ...item, isRead: true })));
     setUnreadCount(0);
     await markAllAsRead().catch(() => {});
+  }
+
+  async function handleShowMore() {
+    if (loadingMore || !hasMore) return;
+
+    setLoadingMore(true);
+    try {
+      const result = await fetchNotifications(page + 1);
+      setNotifications((items) => {
+        const existingIds = new Set(items.map((item) => item.id));
+        return [...items, ...result.data.filter((item) => !existingIds.has(item.id))];
+      });
+      setPage(result.page);
+      setHasMore(result.hasMore);
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   return (
@@ -173,12 +195,15 @@ export function NotificationBell() {
             })}
           </div>
 
-          <button
-            onClick={() => setOpen(false)}
-            className="block w-full border-t border-zinc-100 px-4 py-3 text-center text-xs font-semibold text-brand-teal hover:bg-brand-cream"
-          >
-            View all notifications
-          </button>
+          {hasMore && (
+            <button
+              onClick={handleShowMore}
+              disabled={loadingMore}
+              className="block w-full border-t border-zinc-100 px-4 py-3 text-center text-xs font-semibold text-brand-teal hover:bg-brand-cream disabled:cursor-wait disabled:text-zinc-400"
+            >
+              {loadingMore ? 'Loading...' : 'Show more'}
+            </button>
+          )}
         </div>
       )}
     </div>

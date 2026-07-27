@@ -1,6 +1,7 @@
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { ApiResponse } from '@car-tracker/shared';
 import { getPool } from '../db/db.js';
+import { publicSubmissionRateLimit } from '../middleware/rate-limit.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -39,7 +40,7 @@ router.get('/next-number', async (_req: Request, res: Response) => {
  * Public endpoint — no auth required.
  * Creates a new travel order with status PENDING.
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', publicSubmissionRateLimit, async (req: Request, res: Response) => {
   const {
     toNumber,
     originLocation,

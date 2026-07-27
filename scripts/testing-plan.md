@@ -149,28 +149,33 @@ Verify role-based access control works correctly after adding `requireRole` midd
 | Role | Expected Access | Expected Deny |
 |------|----------------|---------------|
 | SUPERADMIN | All routes | None |
-| ADMIN | Travel orders, vehicles, drivers, dashboard, reports, gps-logs, settings | None |
+| ADMIN | Travel orders, vehicles, drivers, dashboard, reports, gps-logs, maintenance, users | Settings, admin sync |
 | DISPATCHER | Travel orders, vehicles, drivers, dashboard, gps-logs | Settings, users |
-| HR | Travel orders, dashboard | Settings, users, gps-logs |
-| VIEWER | Dashboard, travel orders, reports | Settings, users, gps-logs, maintenance |
-| Public (no header) | `/api/auth/login`, `/api/public/travel-orders`, `/api/health`, `/api/cron` | All others |
+| HR | Travel orders, vehicles, drivers, dashboard, gps-logs, maintenance | Settings, users, reports |
+| VIEWER | Read-only dashboard, travel orders, reports | All protected mutations, settings, users, gps-logs, maintenance |
+| Public (no session) | `/api/auth/login`, `/api/public/travel-orders`, `/api/health`, `/api/cron` | All others |
 
 ### Test Procedure
 
 #### For Each Role:
-1. Set `x-user-type` header to role name
+1. Sign in as a real test account for the role and retain the session cookie
 2. Test access to each endpoint category
-3. Verify 200 for allowed, 403 for denied
+3. Verify 200 for allowed, 403 for denied, and that forged identity headers have no effect
 
 #### Quick Smoke Test
 ```bash
-# Should succeed
-curl -H "x-user-type: VIEWER" http://localhost:3000/api/dashboard/summary
+# Sign in and save the HttpOnly session cookie
+curl -c cookies.txt -H "Content-Type: application/json" \
+  -d '{"username":"viewer","password":"test-password"}' \
+  http://localhost:3000/api/auth/login
 
-# Should fail with 403
-curl -H "x-user-type: VIEWER" http://localhost:3000/api/settings/connection-status
+# Should succeed with the verified VIEWER session
+curl -b cookies.txt http://localhost:3000/api/dashboard/summary
 
-# Should fail with 401 (no header)
+# Should fail with 403 for VIEWER
+curl -b cookies.txt http://localhost:3000/api/settings/connection-status
+
+# Should fail with 401 (no session)
 curl http://localhost:3000/api/travel-orders
 ```
 
