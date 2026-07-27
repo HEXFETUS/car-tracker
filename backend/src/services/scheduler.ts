@@ -63,6 +63,20 @@ export interface SchedulerCycleSummary {
   telegramSent: number;
   telegramFailed: number;
   durationSeconds: number;
+  batch: {
+    offset: number;
+    examined: number;
+    remaining: number;
+    nextOffset: number;
+    passComplete: boolean;
+    deadlineReached: boolean;
+  } | null;
+}
+
+export interface SchedulerCycleOptions {
+  batchOffset?: number;
+  batchLimit?: number;
+  deadlineAtMs?: number;
 }
 
 export type TelemetryTravelOrderCandidate = {
@@ -163,6 +177,16 @@ const state: SchedulerState = {
 // Mutex to prevent overlapping cycle executions
 let cycleLock = false;
 
+function executeScheduledCycle(): void {
+  void runCycle().catch((error) => {
+    console.error(JSON.stringify({
+      event: 'scheduler_cycle_recovered',
+      timestamp: new Date().toISOString(),
+      error: errorMessage(error),
+    }));
+  });
+}
+
 // ── Event Type Constants ───────────────────────────────────────
 
 const EVENT_TYPE = {
@@ -256,7 +280,7 @@ export function updateInterval(seconds: number): void {
   state.intervalId = null;
 
   const intervalMs = clamped * 1000;
-  state.intervalId = setInterval(runCycle, intervalMs);
+  state.intervalId = setInterval(executeScheduledCycle, intervalMs);
 
   console.log(`[scheduler] Interval changed to ${clamped}s`);
 }
@@ -282,8 +306,8 @@ export function startScheduler(): void {
 
   console.log(`[scheduler] Starting fleet sync every ${Math.max(currentIntervalSeconds, 10)}s`);
 
-  void runCycle();
-  state.intervalId = setInterval(runCycle, intervalMs);
+  executeScheduledCycle();
+  state.intervalId = setInterval(executeScheduledCycle, intervalMs);
 }
 
 /**
@@ -527,12 +551,17 @@ function skippedCycleSummary(skipReason: string): SchedulerCycleSummary {
     telegramSent: 0,
     telegramFailed: 0,
     durationSeconds: 0,
+    batch: null,
   };
 }
 
-async function runCycle(): Promise<SchedulerCycleSummary> {
+async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerCycleSummary> {
   if (cycleLock) {
-    console.log('[scheduler] Previous cycle still running — skipping this execution');
+    console.log(JSON.stringify({
+      event: 'scheduler_cycle_skipped',
+      reason: 'lock_active',
+      timestamp: new Date().toISOString(),
+    }));
     return skippedCycleSummary('lock_active');
   }
   cycleLock = true;
@@ -546,7 +575,11 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
   const cycleStart = Date.now();
   const cycleLabel = `#${state.cyclesCompleted + 1}`;
 
-  console.log(`[scheduler] Starting sync cycle ${cycleLabel}...`);
+  console.log(JSON.stringify({
+    event: 'scheduler_cycle_started',
+    cycle: cycleLabel,
+    timestamp: new Date(cycleStart).toISOString(),
+  }));
 
   try {
     // Fetch TO numbers and driver IDs for vehicles with active travel orders
@@ -598,6 +631,9 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
       dispatchAlerts: false,
       toNumberOverrides,
       driverIdOverrides,
+      batchOffset: options.batchOffset,
+      batchLimit: options.batchLimit,
+      deadlineAtMs: options.deadlineAtMs,
     });
 
     console.log('[scheduler-debug]', {
@@ -1291,13 +1327,17 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
     let tripLogsFailed = 0;
     let tripLogsLinked = 0;
     try {
-      const tripLogResult = await syncGpsTripLogsFromTelemetry();
-      tripLogsCreated = tripLogResult.created;
-      tripLogsUpdated = tripLogResult.updated;
-      tripLogsFailed = tripLogResult.failed;
+      if (!result.batch.passComplete) {
+        console.log('[scheduler] Deferring Travel Order log sync until the fleet pass completes');
+      } else {
+        const tripLogResult = await syncGpsTripLogsFromTelemetry();
+        tripLogsCreated = tripLogResult.created;
+        tripLogsUpdated = tripLogResult.updated;
+        tripLogsFailed = tripLogResult.failed;
 
-      const linkResult = await syncUnlinkedGpsTripLogsToTravelOrders();
-      tripLogsLinked = linkResult.linked;
+        const linkResult = await syncUnlinkedGpsTripLogsToTravelOrders();
+        tripLogsLinked = linkResult.linked;
+      }
     } catch (tripLogError) {
       tripLogsFailed = -1;
       console.error('[scheduler] Travel Order log sync failed:', (tripLogError as Error).message);
@@ -1309,11 +1349,15 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
     let noToSkipped = 0;
     let noToFailed = 0;
     try {
-      const noToResult = await syncNoToLogsFromTelemetry();
-      noToCreated = noToResult.created;
-      noToUpdated = noToResult.updated;
-      noToSkipped = noToResult.skipped;
-      noToFailed = noToResult.failed;
+      if (!result.batch.passComplete) {
+        console.log('[scheduler] Deferring No-TO sync until the fleet pass completes');
+      } else {
+        const noToResult = await syncNoToLogsFromTelemetry();
+        noToCreated = noToResult.created;
+        noToUpdated = noToResult.updated;
+        noToSkipped = noToResult.skipped;
+        noToFailed = noToResult.failed;
+      }
     } catch (noToError) {
       noToFailed = -1;
       console.error('[scheduler] No-TO sync failed:', (noToError as Error).message);
@@ -1342,7 +1386,31 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
     ].join(', ');
 
     state.lastResult = `ok: ${summary}`;
-    console.log(`[scheduler] Cycle ${cycleLabel} completed — ${summary}`);
+    console.log(JSON.stringify({
+      event: 'scheduler_cycle_completed',
+      cycle: cycleLabel,
+      status: 'success',
+      timestamp: state.lastRunAt,
+      duration_seconds: duration,
+      vehicles_processed: Number(result.data?.length ?? 0),
+      telemetry_saved: telemetrySaved,
+      telemetry_skipped: telemetrySkipped,
+      telegram_sent: telegramSent,
+      telegram_failed: telegramFailed,
+      trip_logs_created: tripLogsCreated,
+      trip_logs_updated: tripLogsUpdated,
+      trip_logs_linked: tripLogsLinked,
+      trip_logs_failed: tripLogsFailed,
+      no_to_created: noToCreated,
+      no_to_updated: noToUpdated,
+      no_to_skipped: noToSkipped,
+      no_to_failed: noToFailed,
+      batch_offset: result.batch.offset,
+      batch_examined: result.batch.examined,
+      batch_remaining: result.batch.remaining,
+      fleet_pass_complete: result.batch.passComplete,
+      deadline_reached: result.batch.deadlineReached,
+    }));
 
     return {
       skipped: false,
@@ -1353,6 +1421,7 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
       telegramSent,
       telegramFailed,
       durationSeconds: duration,
+      batch: result.batch,
     };
   } catch (error) {
     const duration = (Date.now() - cycleStart) / 1000;
@@ -1361,7 +1430,14 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
     state.lastRunAt = new Date().toISOString();
     const message = error instanceof Error ? error.message : String(error);
     state.lastResult = `error: ${message}`;
-    console.error(`[scheduler] Cycle ${cycleLabel} failed — ${message}`);
+    console.error(JSON.stringify({
+      event: 'scheduler_cycle_completed',
+      cycle: cycleLabel,
+      status: 'error',
+      timestamp: state.lastRunAt,
+      duration_seconds: duration,
+      error: message,
+    }));
     throw error;
   } finally {
     cycleLock = false;

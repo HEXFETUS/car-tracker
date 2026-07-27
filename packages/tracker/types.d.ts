@@ -18,6 +18,10 @@ export interface AlertSummary {
 export const IDLE_ALERT_THRESHOLDS_MINUTES: number[];
 export const SPEED_LIMIT_KMH: number;
 export const LOW_FUEL_LITERS: number;
+export const CARTRACK_TIMEOUT_MS: number;
+export const CARTRACK_RETRIES: number;
+export const TELEGRAM_TIMEOUT_MS: number;
+export const GEOCODING_TIMEOUT_MS: number;
 
 /** Per-vehicle status object returned in the sync result data array. */
 export interface VehicleStatus {
@@ -90,6 +94,14 @@ export interface SyncResult {
   data: VehicleStatus[];
   tripLogs: TripLogRecord[];
   emittedAlerts: EmittedAlert[];
+  batch: {
+    offset: number;
+    examined: number;
+    remaining: number;
+    nextOffset: number;
+    passComplete: boolean;
+    deadlineReached: boolean;
+  };
 }
 
 /**
@@ -108,7 +120,16 @@ export function syncFleetAndAlert(options?: {
   dispatchAlerts?: boolean;
   /** Disable writes to shared alert/trip detection state for read-only snapshots. */
   mutateState?: boolean;
+  batchOffset?: number;
+  batchLimit?: number;
+  deadlineAtMs?: number;
 }): Promise<SyncResult>;
+
+export function selectFleetBatch(
+  vehicles: any[],
+  batchOffset?: number,
+  batchLimit?: number,
+): { allVehicles: any[]; vehicles: any[]; offset: number };
 
 export function sendTelegram(message: string): Promise<{ ok: boolean; error?: string }>;
 

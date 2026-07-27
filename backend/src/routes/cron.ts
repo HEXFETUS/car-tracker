@@ -12,7 +12,7 @@
 
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import { CRON_SECRET } from '../config/env.js';
-import { runCycle } from '../services/scheduler.js';
+import { runCronBatch } from '../services/cronBatchService.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -53,6 +53,7 @@ function isAuthorized(req: Request): boolean {
  * Returns a JSON summary of what happened.
  */
 router.get('/sync-tracker', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
   if (!isAuthorized(req)) {
     res.status(401).json({
       success: false,
@@ -64,15 +65,26 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
-    // Execute one full scheduler cycle
-    const summary = await runCycle();
+    const batchResult = await runCronBatch();
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
     res.json({
       success: true,
       elapsed_seconds: parseFloat(elapsed),
-      summary,
+      summary: batchResult.summary,
+      batch: {
+        locked: batchResult.locked,
+        batch_size: batchResult.batchSize,
+        soft_deadline_ms: batchResult.softDeadlineMs,
+        fleet_pass: batchResult.fleetPass,
+        next_fleet_pass: batchResult.nextFleetPass,
+        processed: batchResult.summary?.batch?.examined ?? 0,
+        remaining: batchResult.summary?.batch?.remaining ?? null,
+        cursor: batchResult.summary?.batch?.nextOffset ?? null,
+        pass_complete: batchResult.summary?.batch?.passComplete ?? false,
+        deadline_reached: batchResult.summary?.batch?.deadlineReached ?? false,
+      },
     });
   } catch (error) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);

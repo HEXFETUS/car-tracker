@@ -1,5 +1,9 @@
 # Deployment Validation Checklist
 
+> Historical checklist: its Vercel Cron instructions are superseded by the
+> cron-job.org batching deployment documented in the root README. Do not add a
+> Vercel `"crons"` block or use the daily schedule described below.
+
 ## Telemetry Alert Persistence Fix + Vercel Cron Scheduler
 
 ### Pre-Deployment

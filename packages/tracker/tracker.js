@@ -42,8 +42,10 @@ export const IDLE_ALERT_THRESHOLDS_MINUTES = (() => {
 })();
 export const IDLE_LIMIT_MINUTES = IDLE_ALERT_THRESHOLDS_MINUTES[0];
 export const ALERT_DEDUPE_SECONDS = Number(process.env.ALERT_DEDUPE_SECONDS || process.env.SYNC_INTERVAL_SECONDS || 300);
-export const CARTRACK_TIMEOUT_MS = Number(process.env.CARTRACK_TIMEOUT_MS || 15000);
-export const CARTRACK_RETRIES = Number(process.env.CARTRACK_RETRIES || 1);
+export const CARTRACK_TIMEOUT_MS = Number(process.env.CARTRACK_TIMEOUT_MS || 8000);
+export const CARTRACK_RETRIES = Number(process.env.CARTRACK_RETRIES || 0);
+export const TELEGRAM_TIMEOUT_MS = Number(process.env.TELEGRAM_TIMEOUT_MS || 5000);
+export const GEOCODING_TIMEOUT_MS = Number(process.env.GEOCODING_TIMEOUT_MS || 3000);
 export const FLEET_CACHE_SECONDS = Number(process.env.FLEET_CACHE_SECONDS || 30);
 export const FLEET_STALE_CACHE_SECONDS = Number(process.env.FLEET_STALE_CACHE_SECONDS || 3600);
 
@@ -356,15 +358,23 @@ export async function sendTelegram(message) {
     return { ok: false, error: 'missing_telegram_config' };
   }
 
-  const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ chat_id: CHAT_ID, text: message }),
-  });
+  try {
+    const response = await fetchWithTimeout(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ chat_id: CHAT_ID, text: message }),
+    }, TELEGRAM_TIMEOUT_MS);
 
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result.ok) console.log('Telegram error:', response.status, result);
-  return result;
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) console.log('Telegram error:', response.status, result);
+    return result;
+  } catch (error) {
+    const message = error?.name === 'AbortError'
+      ? `telegram_timeout_after_${TELEGRAM_TIMEOUT_MS}ms`
+      : String(error?.message || error);
+    console.log('Telegram request failed:', message);
+    return { ok: false, error: message };
+  }
 }
 
 // ── Alert Dispatch ────────────────────────────────────────────
@@ -719,7 +729,11 @@ export function getIgnition(vehicle) {
 export async function reverseGeocode(latitude, longitude) {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`;
-    const response = await fetch(url, { headers: { 'user-agent': 'CarTracker/1.0' } });
+    const response = await fetchWithTimeout(
+      url,
+      { headers: { 'user-agent': 'CarTracker/1.0' } },
+      GEOCODING_TIMEOUT_MS,
+    );
     if (!response.ok) return null;
     const data = await response.json();
     const address = data.address || {};
@@ -849,6 +863,25 @@ export async function buildVehicleStatus(vehicle) {
 
 // ── Main Orchestrator ─────────────────────────────────────────
 
+export function selectFleetBatch(rawVehicles, batchOffset, batchLimit) {
+  const allVehicles = [...rawVehicles].sort((left, right) => {
+    const leftKey = extractPlateNumber(left) || String(getVehicleId(left) || getVehicleName(left) || '');
+    const rightKey = extractPlateNumber(right) || String(getVehicleId(right) || getVehicleName(right) || '');
+    return leftKey.localeCompare(rightKey);
+  });
+  const isBatched = Number.isFinite(batchOffset) || Number.isFinite(batchLimit);
+  const requestedOffset = Math.max(0, Math.floor(Number(batchOffset) || 0));
+  const offset = allVehicles.length === 0 || requestedOffset >= allVehicles.length ? 0 : requestedOffset;
+  const limit = isBatched
+    ? Math.max(1, Math.floor(Number(batchLimit) || 1))
+    : allVehicles.length;
+  return {
+    allVehicles,
+    vehicles: allVehicles.slice(offset, offset + limit),
+    offset,
+  };
+}
+
 /**
  * Main fleet sync & alert orchestration function.
  *
@@ -863,6 +896,9 @@ export async function buildVehicleStatus(vehicle) {
  * @param {(plateNumber: string) => Promise<string|null>} [options.resolveVehicleId]
  *   Optional callback to resolve a plate number to a database vehicle UUID.
  *   When provided, this is used instead of the built-in Supabase lookup.
+ * @param {number} [options.batchOffset] Zero-based position in the stable fleet order.
+ * @param {number} [options.batchLimit] Maximum number of raw fleet vehicles to examine.
+ * @param {number} [options.deadlineAtMs] Do not start another vehicle after this epoch time.
  */
 export async function syncFleetAndAlert(options = {}) {
   const {
@@ -874,9 +910,15 @@ export async function syncFleetAndAlert(options = {}) {
     dispatchAlerts = true,
     mutateState = true,
     driverIdOverrides = {},
+    batchOffset,
+    batchLimit,
+    deadlineAtMs,
   } = options;
   const data = await getFleetDataCached();
-  const vehicles = extractVehicles(data);
+  const selectedBatch = selectFleetBatch(extractVehicles(data), batchOffset, batchLimit);
+  const { allVehicles, vehicles, offset: normalizedOffset } = selectedBatch;
+  let vehiclesExamined = 0;
+  let deadlineReached = false;
   const vehicleStatuses = [];
     const tripLogRecords = [];
     const alertSummary = { queued: 0, sent: 0, skipped: 0, failed: 0, persisted: 0 };
@@ -884,6 +926,12 @@ export async function syncFleetAndAlert(options = {}) {
     const allEmittedAlerts = [];
 
   for (const vehicle of vehicles) {
+    if (Number.isFinite(deadlineAtMs) && Date.now() >= deadlineAtMs) {
+      deadlineReached = true;
+      break;
+    }
+    vehiclesExamined += 1;
+
     // ── Strict plate number resolution ────────────────────────
     // Extract the raw plate number from the Cartrack payload
     // and validate it against our database BEFORE processing.
@@ -1228,5 +1276,22 @@ export async function syncFleetAndAlert(options = {}) {
   // Trip-state alerts are already included in each vehicle's alert batch.
   void tripAlerts;
 
-  return { status: 'ok', vehicles: vehicles.length, alerts: alertSummary, data: vehicleStatuses, tripLogs: tripLogRecords, emittedAlerts: allEmittedAlerts };
+  const nextOffset = normalizedOffset + vehiclesExamined;
+  const passComplete = allVehicles.length === 0 || nextOffset >= allVehicles.length;
+  return {
+    status: 'ok',
+    vehicles: allVehicles.length,
+    alerts: alertSummary,
+    data: vehicleStatuses,
+    tripLogs: tripLogRecords,
+    emittedAlerts: allEmittedAlerts,
+    batch: {
+      offset: normalizedOffset,
+      examined: vehiclesExamined,
+      remaining: passComplete ? 0 : allVehicles.length - nextOffset,
+      nextOffset: passComplete ? 0 : nextOffset,
+      passComplete,
+      deadlineReached,
+    },
+  };
 }

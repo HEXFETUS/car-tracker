@@ -201,6 +201,8 @@ The local backend starts the in-process fleet scheduler immediately and repeats 
 | `CHAT_ID` | For Telegram | None | Destination Telegram chat ID |
 | `CRON_SECRET` | For cron/manual production sync | None | Secret accepted by the protected scheduler route |
 | `SYNC_INTERVAL_SECONDS` | No | `30` | Local scheduler interval; runtime minimum is 10 seconds |
+| `CRON_BATCH_SIZE` | No | `2` | Maximum raw fleet vehicles examined by each external cron request |
+| `CRON_SOFT_DEADLINE_MS` | No | `20000` | Stops a cron batch from starting another vehicle after this duration |
 | `VITE_API_URL` | No | Same origin | Browser API base URL; normally unset locally and on Vercel |
 
 ### Alert and Cartrack tuning
@@ -210,8 +212,10 @@ The local backend starts the in-process fleet scheduler immediately and repeats 
 | `SPEED_LIMIT_KMH` | `90` | Speeding alert threshold |
 | `LOW_FUEL_LITERS` | `5` | Low-fuel alert threshold |
 | `ALERT_DEDUPE_SECONDS` | `SYNC_INTERVAL_SECONDS` or `300` | Alert suppression window |
-| `CARTRACK_TIMEOUT_MS` | `15000` | Cartrack request timeout |
-| `CARTRACK_RETRIES` | `1` | Retry count for retriable Cartrack failures |
+| `CARTRACK_TIMEOUT_MS` | `8000` | Cartrack request timeout |
+| `CARTRACK_RETRIES` | `0` | Retry count for retriable Cartrack failures |
+| `TELEGRAM_TIMEOUT_MS` | `5000` | Telegram delivery timeout |
+| `GEOCODING_TIMEOUT_MS` | `3000` | Reverse-geocoding request timeout |
 | `FLEET_CACHE_SECONDS` | `30` | Fresh fleet response cache lifetime |
 | `FLEET_STALE_CACHE_SECONDS` | `3600` | Maximum stale fleet cache lifetime used during upstream failures |
 | `IGNITION_CONFIRMATION_POLLS` | `2` | Consecutive samples used to confirm ignition state changes |
@@ -327,24 +331,32 @@ The standalone `pnpm tracker` command reads from the process environment; it doe
 
 Changing the interval through the Superadmin settings API affects only the current process and is not a durable cross-instance scheduler configuration.
 
-### Vercel or another serverless deployment
+### Vercel with cron-job.org
 
-The Vercel function imports the compiled Express app from `backend/dist/app.js`, not the long-running server entry point. It therefore does not start an in-memory interval. Configure Vercel Cron or another trusted scheduler to invoke:
+The Vercel function imports the compiled Express app from `backend/dist/app.js`,
+not the long-running server entry point. It therefore does not start an
+in-memory interval. Production scheduling uses cron-job.org to invoke:
 
 ```text
 GET /api/cron/sync-tracker
 ```
 
-The request must provide `CRON_SECRET` by one of these methods:
+Configure cron-job.org to run every two minutes in `Asia/Manila`, use `GET`, set
+a 30-second request timeout, and provide:
 
 ```http
 X-Cron-Secret: your-secret
-Authorization: Bearer your-secret
 ```
 
-For schedulers that cannot set headers, `?secret=your-secret` is also accepted, but headers are preferred because URLs are commonly logged. The endpoint returns a synchronization summary without persisting run history; use the cron provider or platform function logs to review executions. Requests without a valid configured secret receive `401`.
+The endpoint uses a PostgreSQL advisory lock and durable cursor to process a
+bounded fleet batch. Each successful response includes batch progress, remaining
+vehicles, fleet-pass completion, and deadline status. Requests without a valid
+configured secret receive `401`.
 
-The Superadmin **Run Once** action calls the same protected endpoint through the backend.
+Authorization bearer and query-string secrets remain accepted for backward
+compatibility, but production should use `X-Cron-Secret` so secrets do not appear
+in URLs. Enable saved responses during rollout and failure/recovery
+notifications in cron-job.org.
 
 ## Production deployment
 
@@ -364,8 +376,9 @@ Recommended deployment order:
 3. Apply pending migrations to the production database.
 4. Run `pnpm build` locally or in continuous integration.
 5. Deploy the Vercel project.
-6. Configure a platform or external cron schedule for `/api/cron/sync-tracker`.
-7. Verify API health, login, integration status, one synchronization cycle, scheduler history, and Telegram delivery if enabled.
+6. Configure cron-job.org for the production endpoint with the secret header and a two-minute schedule.
+7. Verify repeated requests advance the durable cursor and complete a fleet pass.
+8. Remove duplicate jobs or older jobs targeting localhost or tunnel URLs.
 
 Example production checks:
 
