@@ -1055,7 +1055,15 @@ export async function syncFleetAndAlert(options = {}) {
         pushAlert('ignition', message, eventType);
       }
       if (ignition && speeding && !prevSpeeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver, driverId));
-      if (lowFuel && !prevLowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver, driverId));
+      const lowFuelLiterChanged =
+        lowFuel &&
+        prevLowFuel &&
+        Number.isFinite(fuel) &&
+        Number.isFinite(prev.fuel) &&
+        Math.floor(fuel) !== Math.floor(prev.fuel);
+      if (lowFuel && (!prevLowFuel || lowFuelLiterChanged)) {
+        pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver, driverId));
+      }
       if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) {
         const thresholdReached =
           idle.idleAlertCount > 0

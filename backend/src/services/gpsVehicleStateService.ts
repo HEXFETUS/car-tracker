@@ -58,6 +58,7 @@ export interface VehicleState {
   lastLongitude: number | null;
   lastLocationName: string | null;
   lastEventType: string | null;
+  lastLowFuelAlertLiter: number | null;
   updatedAt: string;
   version: number; // Optimistic concurrency version
 }
@@ -77,6 +78,7 @@ interface VehicleStateDbRow {
   last_longitude: number | null;
   last_location_name: string | null;
   last_event_type: string | null;
+  last_low_fuel_alert_liter: number | null;
   updated_at: string;
   version: number;
 }
@@ -104,12 +106,16 @@ export async function ensureVehicleStateSchema(): Promise<void> {
       last_longitude DOUBLE PRECISION,
       last_location_name TEXT,
       last_event_type TEXT,
+      last_low_fuel_alert_liter INTEGER,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       version INTEGER NOT NULL DEFAULT 1
     );
   `);
   await pool.query(`
     ALTER TABLE gps_vehicle_state ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+  `);
+  await pool.query(`
+    ALTER TABLE gps_vehicle_state ADD COLUMN IF NOT EXISTS last_low_fuel_alert_liter INTEGER;
   `);
   schemaReady = true;
 }
@@ -139,6 +145,7 @@ export async function loadVehicleState(vehicleId: string): Promise<VehicleState>
       lastLongitude: null,
       lastLocationName: null,
       lastEventType: null,
+      lastLowFuelAlertLiter: null,
       updatedAt: new Date().toISOString(),
       version: 0,
     };
@@ -159,9 +166,61 @@ export async function loadVehicleState(vehicleId: string): Promise<VehicleState>
     lastLongitude: row.last_longitude,
     lastLocationName: row.last_location_name,
     lastEventType: row.last_event_type,
+    lastLowFuelAlertLiter: row.last_low_fuel_alert_liter,
     updatedAt: row.updated_at,
     version: row.version,
   };
+}
+
+/**
+ * Atomically claim a low-fuel alert for a vehicle's current whole-liter
+ * bucket. The database row is the durable dedupe source, so this remains
+ * safe across process restarts and concurrent scheduler invocations.
+ *
+ * A reading at or above the threshold resets the current low-fuel episode.
+ * Null, non-finite, or negative readings do not mutate persisted state.
+ */
+export async function claimLowFuelAlert(
+  vehicleId: string,
+  fuelLiters: number | null,
+  lowFuelThresholdLiters: number,
+): Promise<boolean> {
+  if (
+    fuelLiters == null ||
+    !Number.isFinite(fuelLiters) ||
+    fuelLiters < 0 ||
+    !Number.isFinite(lowFuelThresholdLiters)
+  ) {
+    return false;
+  }
+
+  await ensureVehicleStateSchema();
+  const pool = getPool();
+
+  if (fuelLiters >= lowFuelThresholdLiters) {
+    await pool.query(
+      `UPDATE gps_vehicle_state
+          SET last_low_fuel_alert_liter = NULL,
+              updated_at = now()
+        WHERE vehicle_id = $1
+          AND last_low_fuel_alert_liter IS NOT NULL`,
+      [vehicleId],
+    );
+    return false;
+  }
+
+  const literBucket = Math.floor(fuelLiters);
+  const result = await pool.query(
+    `INSERT INTO gps_vehicle_state (vehicle_id, last_low_fuel_alert_liter)
+     VALUES ($1, $2)
+     ON CONFLICT (vehicle_id) DO UPDATE
+       SET last_low_fuel_alert_liter = EXCLUDED.last_low_fuel_alert_liter,
+           updated_at = now()
+       WHERE gps_vehicle_state.last_low_fuel_alert_liter IS DISTINCT FROM EXCLUDED.last_low_fuel_alert_liter
+     RETURNING vehicle_id`,
+    [vehicleId, literBucket],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 // ── Long GPS Outage Recovery ──────────────────────────────────
@@ -208,6 +267,7 @@ export function getFreshBaselineState(vehicleId: string): VehicleState {
     lastLongitude: null,
     lastLocationName: null,
     lastEventType: null,
+    lastLowFuelAlertLiter: null,
     updatedAt: new Date().toISOString(),
     version: 0,
   };

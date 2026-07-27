@@ -17,6 +17,7 @@ export interface AlertSummary {
 
 export const IDLE_ALERT_THRESHOLDS_MINUTES: number[];
 export const SPEED_LIMIT_KMH: number;
+export const LOW_FUEL_LITERS: number;
 
 /** Per-vehicle status object returned in the sync result data array. */
 export interface VehicleStatus {

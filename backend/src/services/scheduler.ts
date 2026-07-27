@@ -14,6 +14,7 @@ import {
   sendTelegram as trackerSendTelegram,
   getVehicleEmoji,
   IDLE_ALERT_THRESHOLDS_MINUTES,
+  LOW_FUEL_LITERS,
 } from '@car-tracker/tracker';
 import { findVehicleByPlate, syncGpsTripLogsFromTelemetry } from './gpsLogService.js';
 import { insertTelemetry, updateTelemetryTelegramDelivery, getLastIdlingThreshold } from './gpsTelemetryService.js';
@@ -23,6 +24,7 @@ import {
   loadVehicleState,
   ensureVehicleStateSchema,
   upsertVehicleState,
+  claimLowFuelAlert,
 } from './gpsVehicleStateService.js';
 import { createNotificationForRoles } from './notificationService.js';
 import { syncNoToLogsFromTelemetry } from './noToLifecycleService.js';
@@ -601,6 +603,16 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
           const fuelLiters = v.fuel ?? null;
           const recordedAt = v.eventTime || new Date().toISOString();
 
+          // Reset the durable low-fuel episode once the vehicle recovers.
+          // Low readings are claimed immediately before delivery below.
+          if (
+            fuelLiters != null &&
+            Number.isFinite(fuelLiters) &&
+            fuelLiters >= LOW_FUEL_LITERS
+          ) {
+            await claimLowFuelAlert(vehicleId, fuelLiters, LOW_FUEL_LITERS);
+          }
+
           const previousState = await loadVehicleState(vehicleId);
           let action: string;
 
@@ -1122,6 +1134,13 @@ async function runCycle(): Promise<SchedulerCycleSummary> {
             if (!telegramMessage) {
               telemetrySkipped += 1;
               console.log(`[scheduler] LOW_FUEL SKIPPED vehicle=${vehicleId} reason=no_telegram_message`);
+              continue;
+            }
+
+            const claimed = await claimLowFuelAlert(vehicleId, fuelLiters, LOW_FUEL_LITERS);
+            if (!claimed) {
+              telemetrySkipped += 1;
+              console.log(`[scheduler] LOW_FUEL SKIPPED vehicle=${vehicleId} reason=fuel_liter_already_alerted`);
               continue;
             }
 

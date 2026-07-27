@@ -16,6 +16,7 @@ import {
   shouldPersistMotionStartedFromPreviousState,
 } from './scheduler.js';
 import {
+  claimLowFuelAlert,
   processIgnitionReading,
   type VehicleState,
 } from './gpsVehicleStateService.js';
@@ -87,6 +88,7 @@ function baseVehicleState(overrides: Partial<VehicleState> = {}): VehicleState {
     lastLongitude: null,
     lastLocationName: null,
     lastEventType: null,
+    lastLowFuelAlertLiter: null,
     updatedAt: '2026-07-06T04:00:00.000Z',
     version: 1,
     ...overrides,
@@ -100,6 +102,52 @@ function trackerMilestoneForMinutes(minutes: number): number | null {
 afterEach(() => {
   setSendTelegramForTest(null);
   setPoolForTest(null);
+});
+
+describe('durable low-fuel alert dedupe', () => {
+  it('claims a new whole-liter bucket and suppresses the same bucket', async () => {
+    let savedBucket: number | null = null;
+    const { pool } = makePool((sql, params) => {
+      if (sql.includes('CREATE TABLE') || sql.includes('ALTER TABLE')) return { rows: [] };
+      if (sql.includes('INSERT INTO gps_vehicle_state')) {
+        const nextBucket = params?.[1] as number;
+        if (savedBucket === nextBucket) return { rows: [], rowCount: 0 };
+        savedBucket = nextBucket;
+        return { rows: [{ vehicle_id: params?.[0] }], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    assert.equal(await claimLowFuelAlert(baseTelemetry.vehicleId, 3.4, 5), true);
+    assert.equal(await claimLowFuelAlert(baseTelemetry.vehicleId, 3.1, 5), false);
+    assert.equal(await claimLowFuelAlert(baseTelemetry.vehicleId, 2.9, 5), true);
+
+    const concurrentClaims = await Promise.all([
+      claimLowFuelAlert(baseTelemetry.vehicleId, 1.8, 5),
+      claimLowFuelAlert(baseTelemetry.vehicleId, 1.2, 5),
+    ]);
+    assert.deepEqual(concurrentClaims.sort(), [false, true]);
+  });
+
+  it('resets after recovery and ignores invalid readings', async () => {
+    let resets = 0;
+    const { pool, calls } = makePool((sql) => {
+      if (sql.includes('CREATE TABLE') || sql.includes('ALTER TABLE')) return { rows: [] };
+      if (sql.includes('UPDATE gps_vehicle_state') && sql.includes('last_low_fuel_alert_liter = NULL')) {
+        resets += 1;
+      }
+      return { rows: [] };
+    });
+    setPoolForTest(pool);
+
+    assert.equal(await claimLowFuelAlert(baseTelemetry.vehicleId, 5, 5), false);
+    assert.equal(resets, 1);
+    assert.equal(await claimLowFuelAlert(baseTelemetry.vehicleId, null, 5), false);
+    assert.equal(await claimLowFuelAlert(baseTelemetry.vehicleId, Number.NaN, 5), false);
+    assert.equal(resets, 1);
+    assert.equal(calls.filter((call) => call.sql.includes('last_low_fuel_alert_liter = NULL')).length, 1);
+  });
 });
 
 describe('vehicle ignition state machine', () => {
