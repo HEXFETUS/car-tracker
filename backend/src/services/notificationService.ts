@@ -42,11 +42,20 @@ function mapNotification(row: NotificationRow) {
   };
 }
 
+const MAX_NOTIFICATIONS_PER_USER = 100;
+
 export async function createNotification(input: CreateNotificationInput) {
   const pool = getPool();
+  const client = await pool.connect();
   console.log(`[notifications] Before INSERT notification user=${input.userId} type=${input.type} entity=${input.entityId ?? 'null'}`);
   try {
-    const result = await pool.query<NotificationRow>(
+    await client.query('BEGIN');
+
+    // Serialize notification creation for this user so concurrent inserts
+    // cannot leave more than the configured maximum.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [input.userId]);
+
+    const result = await client.query<NotificationRow>(
       `INSERT INTO notifications
          (user_id, type, title, message, target_url, target_tab, entity_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -61,12 +70,35 @@ export async function createNotification(input: CreateNotificationInput) {
         input.entityId ?? null,
       ],
     );
+
+    const cleanupResult = await client.query(
+      `DELETE FROM notifications
+       WHERE user_id = $1
+         AND id IN (
+           SELECT id
+           FROM notifications
+           WHERE user_id = $1
+           ORDER BY created_at DESC, id DESC
+           OFFSET $2
+         )`,
+      [input.userId, MAX_NOTIFICATIONS_PER_USER],
+    );
+
+    await client.query('COMMIT');
     console.log(`[notifications] INSERT notification succeeded id=${result.rows[0]?.id}`);
+    if ((cleanupResult.rowCount ?? 0) > 0) {
+      console.log(
+        `[notifications] Deleted ${cleanupResult.rowCount} old notification(s) for user=${input.userId}`,
+      );
+    }
     return mapNotification(result.rows[0]);
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[notifications] INSERT notification failed: ${message}`);
     throw error;
+  } finally {
+    client.release();
   }
 }
 
