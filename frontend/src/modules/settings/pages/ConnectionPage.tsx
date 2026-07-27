@@ -250,11 +250,10 @@ function buildSchedulerCard(connection: ConnectionCheck, _onReload: () => void) 
 
   const details: SettingsCardDetail[] = [
     { label: 'Cron Mode', value: String(m.cronMode ?? 'Vercel Cron') },
-    { label: 'Last Status', value: String(m.lastCronStatus ?? m.dbLastStatus ?? '—') },
-    { label: 'Last Run', value: formatDate(m.lastRunAt ?? m.dbLastRunAt) },
-    { label: 'Cycles Completed', value: formatNumber(m.cyclesCompleted ?? m.dbCyclesCompleted ?? 0) },
-    { label: 'Total Runs', value: formatNumber(m.totalRuns ?? m.dbTotalRuns ?? 0) },
-    { label: 'Total Errors', value: formatNumber(m.errors ?? m.totalErrors ?? m.dbTotalErrors ?? 0) },
+    { label: 'Run History', value: 'Disabled' },
+    { label: 'In-memory Last Run', value: formatDate(m.lastRunAt) },
+    { label: 'In-memory Cycles', value: formatNumber(m.cyclesCompleted ?? 0) },
+    { label: 'In-memory Errors', value: formatNumber(m.errors ?? 0) },
     { label: 'Next Schedule', value: String(m.nextSchedule ?? 'Daily at 8:00 AM Manila') },
   ];
 

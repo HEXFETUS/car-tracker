@@ -16,10 +16,6 @@ import {
   CRON_SECRET,
 } from '../config/env.js';
 import { getSchedulerState, updateInterval } from '../services/scheduler.js';
-import {
-  getSchedulerRunSummary,
-  getRecentSchedulerRuns,
-} from '../services/schedulerRunService.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -394,11 +390,8 @@ async function checkTelegramConnection(): Promise<ConnectionCheckResult> {
 }
 
 // ── Scheduler Status Check ──────────────────────────────────────
-// Reads BOTH in-memory scheduler state (for local dev running
-// with setInterval) AND the DB scheduler_runs table (for
-// external cron triggers like cron-job.org).
-// On production deployments, the in-memory scheduler is never
-// running, so the status is determined entirely from DB data.
+// Reports in-memory scheduler state in local development and
+// configuration-only status for external cron deployments.
 
 async function checkSchedulerStatus(): Promise<ConnectionCheckResult> {
   const label = 'Internal Scheduler';
@@ -415,23 +408,14 @@ async function checkSchedulerStatus(): Promise<ConnectionCheckResult> {
     metrics.inMemoryErrors = state.errors;
     metrics.intervalSeconds = state.intervalSeconds ?? SYNC_INTERVAL_SECONDS;
 
-    // ── DB scheduler run data (cron-job.org history) ────────────
-    let dbSummary: { lastRunAt: string | null; lastStatus: string | null; lastErrorMessage: string | null; cyclesCompleted: number; totalRuns: number; totalErrors: number } | null = null;
-    try {
-      const { getSchedulerRunSummary } = await import('../services/schedulerRunService.js');
-      dbSummary = await getSchedulerRunSummary();
-    } catch {
-      // DB table may not exist yet
-    }
-
     // ── Determine effective mode and status ────────────────────
     // If in-memory scheduler is running, show "Interval" mode.
     // Otherwise, show "External Cron" mode (cron mode is assumed
     // for production deployments where the in-memory scheduler
     // cannot stay alive continuously).
-    const hasDbData = dbSummary !== null && dbSummary.totalRuns > 0;
     const cronMode = inMemoryRunning ? 'Interval' : 'External Cron';
     metrics.cronMode = cronMode;
+    metrics.historyPersistence = 'disabled';
 
     if (inMemoryRunning) {
       checks.push(`Running every ${state.intervalSeconds ?? SYNC_INTERVAL_SECONDS}s`);
@@ -439,91 +423,37 @@ async function checkSchedulerStatus(): Promise<ConnectionCheckResult> {
       checks.push('Cron mode: External Cron');
     }
 
-    // ── DB-backed metrics (survives restarts) ──────────────────
-    if (hasDbData && dbSummary) {
-      metrics.dbLastRunAt = dbSummary.lastRunAt;
-      metrics.dbLastStatus = dbSummary.lastStatus;
-      metrics.dbLastErrorMessage = dbSummary.lastErrorMessage;
-      metrics.dbCyclesCompleted = dbSummary.cyclesCompleted;
-      metrics.dbTotalRuns = dbSummary.totalRuns;
-      metrics.dbTotalErrors = dbSummary.totalErrors;
-
-      if (dbSummary.lastRunAt) {
-        checks.push(`Last cron run: ${new Date(dbSummary.lastRunAt).toLocaleString()}`);
-      }
-
-      if (dbSummary.lastStatus) {
-        metrics.lastCronStatus = dbSummary.lastStatus;
-        checks.push(`Last status: ${dbSummary.lastStatus}`);
-      }
-
-      if (dbSummary.lastErrorMessage) {
-        checks.push(`Last error: ${dbSummary.lastErrorMessage}`);
-      }
-
-      if (dbSummary.cyclesCompleted > 0) {
-        checks.push(`${dbSummary.cyclesCompleted} total cycle(s) completed`);
-        metrics.cyclesCompleted = dbSummary.cyclesCompleted;
-      } else {
-        metrics.cyclesCompleted = 0;
-      }
-
-      if (dbSummary.totalErrors > 0) {
-        checks.push(`${dbSummary.totalErrors} total error(s)`);
-        metrics.errors = dbSummary.totalErrors;
-      } else {
-        metrics.errors = 0;
-      }
-
-      if (dbSummary.totalRuns > 0) {
-        checks.push(`${dbSummary.totalRuns} total run(s)`);
-      }
-    } else {
-      // Fall back to in-memory state (local dev before any cron runs)
-      if (state.lastRunAt) {
-        checks.push(`Last run: ${new Date(state.lastRunAt).toLocaleString()}`);
-        metrics.lastRunAt = state.lastRunAt;
-      }
-
-      if (state.cyclesCompleted > 0) {
-        checks.push(`${state.cyclesCompleted} cycle(s) completed`);
-        metrics.cyclesCompleted = state.cyclesCompleted;
-      } else {
-        metrics.cyclesCompleted = 0;
-      }
-
-      if (state.errors > 0) {
-        checks.push(`${state.errors} error(s)`);
-        metrics.errors = state.errors;
-      } else {
-        metrics.errors = 0;
-      }
-
-      if (state.lastResult) {
-        metrics.lastResult = state.lastResult;
-      }
+    if (state.lastRunAt) {
+      checks.push(`Last in-memory run: ${new Date(state.lastRunAt).toLocaleString()}`);
+      metrics.lastRunAt = state.lastRunAt;
     }
+    metrics.cyclesCompleted = state.cyclesCompleted;
+    metrics.errors = state.errors;
+    if (state.cyclesCompleted > 0) {
+      checks.push(`${state.cyclesCompleted} in-memory cycle(s) completed`);
+    }
+    if (state.errors > 0) {
+      checks.push(`${state.errors} in-memory error(s)`);
+    }
+    if (state.lastResult) {
+      metrics.lastResult = state.lastResult;
+    }
+    checks.push('Run history persistence disabled');
 
     // ── External cron schedule info ──────────────────────────────
     metrics.nextSchedule = '0 0 * * * (daily at midnight)';
     checks.push('Next schedule: 00:00 UTC daily');
 
     // ── Overall status ─────────────────────────────────────────
-    // Connected: has recent successful runs OR in-memory running with completed cycles
-    // Degraded: has recent runs with errors OR in-memory running with errors
-    // Disconnected: no recent runs and scheduler not running
-    const hasRecentSuccess = hasDbData && dbSummary !== null &&
-      dbSummary.lastStatus === 'success' &&
-      dbSummary.lastRunAt !== null &&
-      (Date.now() - new Date(dbSummary.lastRunAt).getTime()) < 86400000; // within 24h
-
-    const hasRecentAttempt = hasDbData && dbSummary !== null && dbSummary.totalRuns > 0;
-
+    // External cron results are observed through provider logs because
+    // durable scheduler history is intentionally disabled.
     let status: 'connected' | 'disconnected' | 'error';
-    if (hasRecentSuccess || (inMemoryRunning && state.cyclesCompleted > 0 && state.errors === 0)) {
+    if (inMemoryRunning && state.errors === 0) {
       status = 'connected';
-    } else if (hasRecentAttempt || inMemoryRunning) {
+    } else if (inMemoryRunning) {
       status = 'error';
+    } else if (CRON_SECRET) {
+      status = 'connected';
     } else {
       status = 'disconnected';
     }
@@ -1078,31 +1008,6 @@ router.post('/run-telemetry-tests', expensiveOperationRateLimit, async (_req: Re
       success: false,
       data: null,
       error: 'Failed to run telemetry tests',
-    });
-  }
-});
-
-// ── GET /api/settings/scheduler-runs ─────────────────────────────
-// Returns recent scheduler run history from the database.
-
-router.get('/scheduler-runs', async (_req: Request, res: Response) => {
-  try {
-    const runs = await getRecentSchedulerRuns(20);
-    const summary = await getSchedulerRunSummary();
-
-    res.json({
-      success: true,
-      data: {
-        runs,
-        summary,
-      },
-    });
-  } catch (error) {
-    console.error('GET /api/settings/scheduler-runs error:', (error as Error).message);
-    res.status(500).json({
-      success: false,
-      data: null,
-      error: 'Failed to fetch scheduler runs',
     });
   }
 });

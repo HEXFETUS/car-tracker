@@ -16,7 +16,7 @@ This repository is a pnpm monorepo containing the browser application, API, shar
 - Monthly, yearly, and reconciliation reports with export support
 - Role-based access control, in-app notifications, global search, and activity shortcuts
 - Optional Telegram delivery for fleet alerts
-- Persistent scheduler run history and manual or protected cron-triggered synchronization
+- Manual or protected cron-triggered synchronization without database-backed run history
 
 ## System architecture
 
@@ -46,7 +46,7 @@ The main runtime flow is:
 2. The tracker fetches the current Cartrack fleet snapshot and, when needed, detailed history.
 3. Backend services classify telemetry, confirm vehicle state changes, and suppress duplicate events.
 4. Telemetry is matched to active travel orders or maintained as a No-TO journey.
-5. Trip logs, stops, destination progress, vehicle state, scheduler metrics, and notifications are persisted in PostgreSQL.
+5. Trip logs, stops, destination progress, vehicle state, and notifications are persisted in PostgreSQL. Scheduler execution history remains in the cron provider or platform logs.
 6. Configured alerts are sent to Telegram and their delivery result is recorded.
 7. The frontend reads the resulting operational state through the Express API.
 
@@ -342,7 +342,7 @@ X-Cron-Secret: your-secret
 Authorization: Bearer your-secret
 ```
 
-For schedulers that cannot set headers, `?secret=your-secret` is also accepted, but headers are preferred because URLs are commonly logged. The endpoint returns a synchronization summary and writes its status and metrics to `scheduler_runs`. Requests without a valid configured secret receive `401`.
+For schedulers that cannot set headers, `?secret=your-secret` is also accepted, but headers are preferred because URLs are commonly logged. The endpoint returns a synchronization summary without persisting run history; use the cron provider or platform function logs to review executions. Requests without a valid configured secret receive `401`.
 
 The Superadmin **Run Once** action calls the same protected endpoint through the backend.
 
@@ -434,7 +434,7 @@ Some historical examples in these documents may describe an earlier migration or
 - On Vercel, configure an external or platform cron; deploying `api/index.ts` alone does not create a repeating job.
 - Verify all three Cartrack variables and `DATABASE_URL` are present.
 - Confirm the cron request supplies the configured `CRON_SECRET`.
-- Review the Settings connection page and recent `scheduler_runs` records.
+- Review the Settings connection page and the cron provider or platform function logs.
 
 ### Telegram alerts do not arrive
 

@@ -140,58 +140,10 @@ export async function runTelemetryTests(): Promise<TelemetryTestResult> {
   return result.data;
 }
 
-export interface SchedulerRunData {
-  runs: Array<{
-    id: number;
-    started_at: string;
-    finished_at: string | null;
-    status: 'running' | 'success' | 'error';
-    cycles_completed: number;
-    error_message: string | null;
-    created_at: string;
-  }>;
-  summary: {
-    lastRunAt: string | null;
-    lastStatus: 'success' | 'error' | 'running' | null;
-    lastErrorMessage: string | null;
-    cyclesCompleted: number;
-    totalRuns: number;
-    totalErrors: number;
-  };
-}
-
-interface SchedulerRunsResponse {
-  success: boolean;
-  data: SchedulerRunData | null;
-  error?: string;
-}
-
 interface SchedulerRunNowResponse {
   success: boolean;
   data: Record<string, unknown> | null;
   error?: string;
-}
-
-/**
- * Fetch recent scheduler run history from the database.
- */
-export async function fetchSchedulerRuns(): Promise<SchedulerRunData> {
-  const base = API_BASE || '';
-  const response = await apiFetch(`${base}/api/settings/scheduler-runs`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch scheduler runs (HTTP ${response.status})`);
-  }
-
-  const result: SchedulerRunsResponse = await response.json();
-
-  if (!result.success || !result.data) {
-    throw new Error(result.error || 'Failed to fetch scheduler runs');
-  }
-
-  return result.data;
 }
 
 /**
