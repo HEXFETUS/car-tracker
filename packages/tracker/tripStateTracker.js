@@ -638,6 +638,14 @@ export function hasVehicleArrived(vehicleId) {
 }
 
 /**
+ * Return the trip currently owned by the trip-state machine.
+ * Alert producers use this to carry durable trip context into the scheduler.
+ */
+export function getCurrentTripId(vehicleId) {
+  return loadState(vehicleId).currentTripId ?? null;
+}
+
+/**
  * Get the return trip state for a vehicle.
  */
 export function getReturnTripState(vehicleId) {

@@ -24,6 +24,7 @@ import {
   consumeOrigin,
   consumeDestination,
   hasVehicleArrived,
+  getCurrentTripId,
   getReturnTripState,
   resetVehicleState,
 } from './tripStateTracker.js';
@@ -678,6 +679,15 @@ export function getIdleStatus(ignition, moving, prev = {}, apiIdleMinutes = null
   return { idleStartedAt, idleMinutes, idlingTooLong: idleMinutes >= IDLE_LIMIT_MINUTES, idleAlertCount, previousIdleAlertCount };
 }
 
+/**
+ * Tracker memory is not the idling deduplication authority. Once a milestone
+ * is reached, keep presenting it to the scheduler until gps_idling_dedup
+ * confirms that it has been persisted.
+ */
+export function shouldEmitIdlingMilestone(idle) {
+  return idle.idlingTooLong === true && Number(idle.idleAlertCount ?? 0) > 0;
+}
+
 export function looksLikeVehicle(record) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
   const hasIdentity = firstKey(record, [...VEHICLE_ID_KEYS, ...PLATE_NUMBER_KEYS]) !== null;
@@ -1072,6 +1082,7 @@ export async function syncFleetAndAlert(options = {}) {
     const tripStateAlerts = mutateState
       ? await processTripState(vehicle, vid, coordinates_?.latitude ?? null, coordinates_?.longitude ?? null, toDestCoord)
       : [];
+    const currentTripId = mutateState ? getCurrentTripId(vid) : null;
     let tripStateFiredIgnition = false;
     const tripStateIgnitionOn = tripStateAlerts.some((a) => a.type === 'IGNITION_ON');
     const tripStateIgnitionOff = tripStateAlerts.some((a) => a.type === 'IGNITION_OFF');
@@ -1115,7 +1126,7 @@ export async function syncFleetAndAlert(options = {}) {
       if (lowFuel && (!prevLowFuel || lowFuelLiterChanged)) {
         pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver, driverId));
       }
-      if (idle.idlingTooLong && idle.idleAlertCount > idle.previousIdleAlertCount) {
+      if (shouldEmitIdlingMilestone(idle)) {
         const thresholdReached =
           idle.idleAlertCount > 0
             ? IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] ?? null
@@ -1132,7 +1143,12 @@ export async function syncFleetAndAlert(options = {}) {
         }
 
         idlingAlertEmitted = true;
-        pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver, driverId));
+        pushAlert(
+          'idling_too_long',
+          formatIdlingTooLongAlert(name, thresholdReached, fuel, location, eventTime, toNumber, driver, driverId),
+          null,
+          { tripId: currentTripId, idlingThresholdReached: thresholdReached },
+        );
       }
       if (ignition && moving && !prevMoving && prevIdlingTooLong) {
         motionAlertEmitted = true;
@@ -1152,7 +1168,15 @@ export async function syncFleetAndAlert(options = {}) {
     } else if (ignition) {
       if (speeding) pushAlert('speeding', formatSpeedingAlert(name, speed, location, eventTime, toNumber, driver, driverId));
       if (lowFuel) pushAlert('low_fuel', formatFuelAlert(name, fuel, location, eventTime, toNumber, driver, driverId));
-      if (idle.idlingTooLong) pushAlert('idling_too_long', formatIdlingTooLongAlert(name, idle.idleMinutes, fuel, location, eventTime, toNumber, driver, driverId));
+      if (shouldEmitIdlingMilestone(idle)) {
+        const thresholdReached = IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] ?? null;
+        pushAlert(
+          'idling_too_long',
+          formatIdlingTooLongAlert(name, thresholdReached, fuel, location, eventTime, toNumber, driver, driverId),
+          null,
+          { tripId: currentTripId, idlingThresholdReached: thresholdReached },
+        );
+      }
     }
 
     if (dispatchAlerts) {
@@ -1264,9 +1288,7 @@ export async function syncFleetAndAlert(options = {}) {
         idleAlertCount: ea.eventType === 'IDLING' ? idle.idleAlertCount : undefined,
         idlingThresholdReached:
           ea.eventType === 'IDLING'
-            ? idle.idleAlertCount > 0
-              ? IDLE_ALERT_THRESHOLDS_MINUTES[idle.idleAlertCount - 1] ?? null
-              : null
+            ? ea.idlingThresholdReached ?? null
             : undefined,
         idlingStartedAt: ea.eventType === 'IDLING' ? idle.idleStartedAt : undefined,
       });

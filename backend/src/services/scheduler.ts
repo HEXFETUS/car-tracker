@@ -60,6 +60,7 @@ export interface SchedulerCycleSummary {
   vehiclesProcessed: number;
   telemetrySaved: number;
   telemetrySkipped: number;
+  telemetryFailed: number;
   telegramSent: number;
   telegramFailed: number;
   durationSeconds: number;
@@ -88,6 +89,13 @@ export type TelemetryTravelOrderCandidate = {
   scheduled_departure_local: string;
   scheduled_arrival_local: string | null;
 };
+
+export function resolveAlertActiveTripId(
+  persistedActiveTripId: string | null | undefined,
+  emittedTripId: string | null | undefined,
+): string | null {
+  return persistedActiveTripId || emittedTripId || null;
+}
 
 function manilaDateTimeParts(value: string): { date: string; minuteOfDay: number } | null {
   const date = new Date(value);
@@ -434,20 +442,34 @@ async function sendTelegramForTelemetry(
   message: string,
 ): Promise<{ sent: boolean; error: string | null }> {
   const attemptedAt = new Date().toISOString();
+  let sent = false;
+  let error: string | null = null;
   try {
     const tg = await sendTelegram(message);
     if (tg?.ok) {
-      await updateTelemetryTelegramDelivery(telemetryId, 'sent', null, attemptedAt);
-      return { sent: true, error: null };
+      sent = true;
+    } else {
+      error = tg?.error ?? 'telegram_not_ok';
     }
-    const error = tg?.error ?? 'telegram_not_ok';
-    await updateTelemetryTelegramDelivery(telemetryId, 'failed', error, attemptedAt);
-    return { sent: false, error };
   } catch (err) {
-    const error = errorMessage(err);
-    await updateTelemetryTelegramDelivery(telemetryId, 'failed', error, attemptedAt);
-    return { sent: false, error };
+    error = errorMessage(err);
   }
+
+  try {
+    await updateTelemetryTelegramDelivery(
+      telemetryId,
+      sent ? 'sent' : 'failed',
+      sent ? null : error,
+      attemptedAt,
+    );
+  } catch (deliveryStateError) {
+    const deliveryStateMessage = errorMessage(deliveryStateError);
+    error = error
+      ? `${error}; delivery_status_update_failed: ${deliveryStateMessage}`
+      : `delivery_status_update_failed: ${deliveryStateMessage}`;
+    console.error(`[scheduler] Alert saved but Telegram delivery status update failed telemetry=${telemetryId}:`, deliveryStateMessage);
+  }
+  return { sent, error };
 }
 
 // Helper: Resolve pre-formatted telegram message from tracker emittedAlerts.
@@ -523,7 +545,11 @@ async function saveTelemetryAndSendTelegram(
 
   // No message to send - mark as skipped
   if (savedTelemetry.id && !resolvedMessage) {
-    await updateTelemetryTelegramDelivery(savedTelemetry.id, 'skipped', null, new Date().toISOString());
+    try {
+      await updateTelemetryTelegramDelivery(savedTelemetry.id, 'skipped', null, new Date().toISOString());
+    } catch (deliveryStateError) {
+      console.error(`[scheduler] Alert saved but delivery status update failed telemetry=${savedTelemetry.id}:`, errorMessage(deliveryStateError));
+    }
   }
   return { saved: savedTelemetry.inserted, telemetryId: savedTelemetry.id, telegramSent: false, telegramError: null };
 }
@@ -548,6 +574,7 @@ function skippedCycleSummary(skipReason: string): SchedulerCycleSummary {
     vehiclesProcessed: 0,
     telemetrySaved: 0,
     telemetrySkipped: 0,
+    telemetryFailed: 0,
     telegramSent: 0,
     telegramFailed: 0,
     durationSeconds: 0,
@@ -664,6 +691,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
 
     let telemetrySaved = 0;
     let telemetrySkipped = 0;
+    let telemetryFailed = 0;
     let telegramSent = 0;
     let telegramFailed = 0;
 
@@ -1061,11 +1089,19 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       for (const alert of emittedAlerts) {
         try {
           const vehicleId = alert.vehicleId;
-          if (!vehicleId) { telemetrySkipped += 1; continue; }
+          if (!vehicleId) {
+            telemetryFailed += 1;
+            console.error('[scheduler] ALERT PERSISTENCE FAILED reason=missing_vehicle_id');
+            continue;
+          }
 
           const rawEventType = alert.eventType;
           const finalEventType = canonicalEventType(rawEventType);
-          if (!rawEventType || !finalEventType) { telemetrySkipped += 1; continue; }
+          if (!rawEventType || !finalEventType) {
+            telemetryFailed += 1;
+            console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${vehicleId} reason=invalid_event_type raw=${rawEventType ?? 'null'}`);
+            continue;
+          }
 
           // Do NOT depend on emittedAlerts for ignition events.
           if (finalEventType === EVENT_TYPE.IGNITION_ON || finalEventType === EVENT_TYPE.IGNITION_OFF) {
@@ -1084,7 +1120,11 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
 
           // For non-ignition events, load vehicle state
           const vs = await loadVehicleState(vehicleId);
-          const activeTripId = vs.activeTripId;
+          // Tracker alerts already carry the trip that produced them. Persisted
+          // vehicle state is preferred, but it can temporarily be empty after a
+          // restart or partial cycle; falling back prevents a valid alert from
+          // being silently discarded.
+          const activeTripId = resolveAlertActiveTripId(vs.activeTripId, alert.tripId);
           const resolvedOrder = resolveTelemetryTravelOrderForEvent(
             vehicleId,
             recordedAt,
@@ -1096,15 +1136,15 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
           // IDLING_TOO_LONG
           if (finalEventType === EVENT_TYPE.IDLING) {
             if (!activeTripId) {
-              telemetrySkipped += 1;
-              console.log(`[scheduler] IDLING SKIPPED vehicle=${vehicleId} reason=no_active_trip`);
+              telemetryFailed += 1;
+              console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${vehicleId} event=${finalEventType} reason=no_active_trip`);
               continue;
             }
 
             const thresholdMinutes = alert.idlingThresholdReached;
             if (!thresholdMinutes || thresholdMinutes < 10) {
-              telemetrySkipped += 1;
-              console.log(`[scheduler] IDLING SKIPPED vehicle=${vehicleId} reason=invalid_threshold`);
+              telemetryFailed += 1;
+              console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${vehicleId} event=${finalEventType} reason=invalid_threshold threshold=${thresholdMinutes ?? 'null'}`);
               continue;
             }
 
@@ -1169,14 +1209,14 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
 
           if (finalEventType === EVENT_TYPE.MOTION_STARTED) {
             if (!activeTripId) {
-              telemetrySkipped += 1;
-              console.log(`[scheduler] ${finalEventType} SKIPPED vehicle=${vehicleId} reason=no_active_trip`);
+              telemetryFailed += 1;
+              console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${vehicleId} event=${finalEventType} reason=no_active_trip`);
               continue;
             }
 
             if (!telegramMessage) {
-              telemetrySkipped += 1;
-              console.log(`[scheduler] ${finalEventType} SKIPPED vehicle=${vehicleId} reason=no_telegram_message`);
+              telemetryFailed += 1;
+              console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${vehicleId} event=${finalEventType} reason=no_telegram_message`);
               continue;
             }
 
@@ -1219,8 +1259,8 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
             }
 
             if (!telegramMessage) {
-              telemetrySkipped += 1;
-              console.log(`[scheduler] SPEEDING SKIPPED vehicle=${vehicleId} reason=no_telegram_message`);
+              telemetryFailed += 1;
+              console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${vehicleId} event=${finalEventType} reason=no_telegram_message`);
               continue;
             }
 
@@ -1262,8 +1302,8 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
           // LOW_FUEL
           if (finalEventType === EVENT_TYPE.LOW_FUEL) {
             if (!telegramMessage) {
-              telemetrySkipped += 1;
-              console.log(`[scheduler] LOW_FUEL SKIPPED vehicle=${vehicleId} reason=no_telegram_message`);
+              telemetryFailed += 1;
+              console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${vehicleId} event=${finalEventType} reason=no_telegram_message`);
               continue;
             }
 
@@ -1310,11 +1350,11 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
           }
 
           // Unknown event type
-          telemetrySkipped += 1;
-          console.log(`[scheduler] Unknown event type ${finalEventType} vehicle=${vehicleId}`);
+          telemetryFailed += 1;
+          console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${vehicleId} reason=unknown_event_type event=${finalEventType}`);
         } catch (err) {
-          console.error(`[scheduler] Failed to process alert for ${alert.vehicleId}:`, errorMessage(err));
-          telemetrySkipped += 1;
+          console.error(`[scheduler] ALERT PERSISTENCE FAILED vehicle=${alert.vehicleId ?? 'unknown'} event=${alert.eventType ?? 'unknown'}:`, errorMessage(err));
+          telemetryFailed += 1;
         }
       }
     }
@@ -1372,6 +1412,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       `vehicles=${result.data?.length ?? 0}`,
       `telemetry_saved=${telemetrySaved}`,
       `telemetry_skipped=${telemetrySkipped}`,
+      `telemetry_failed=${telemetryFailed}`,
       `telegram_sent=${telegramSent}`,
       `telegram_failed=${telegramFailed}`,
       `trip_logs_created=${tripLogsCreated}`,
@@ -1395,6 +1436,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       vehicles_processed: Number(result.data?.length ?? 0),
       telemetry_saved: telemetrySaved,
       telemetry_skipped: telemetrySkipped,
+      telemetry_failed: telemetryFailed,
       telegram_sent: telegramSent,
       telegram_failed: telegramFailed,
       trip_logs_created: tripLogsCreated,
@@ -1418,6 +1460,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       vehiclesProcessed: Number(result.data?.length ?? 0),
       telemetrySaved,
       telemetrySkipped,
+      telemetryFailed,
       telegramSent,
       telegramFailed,
       durationSeconds: duration,
@@ -1769,12 +1812,23 @@ export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTx
       }
     }
     if (telemetryId) {
-      await updateTelemetryTelegramDelivery(
-        telemetryId,
-        telegramSent ? 'sent' : telegramError ? 'failed' : 'skipped',
-        telegramError,
-        attemptedAt,
-      );
+      try {
+        await updateTelemetryTelegramDelivery(
+          telemetryId,
+          telegramSent ? 'sent' : telegramError ? 'failed' : 'skipped',
+          telegramError,
+          attemptedAt,
+        );
+      } catch (deliveryStateError) {
+        // The alert row has already committed. A secondary delivery-state
+        // update must never turn successful persistence into a retry that can
+        // obscure or duplicate the durable alert.
+        const deliveryStateMessage = errorMessage(deliveryStateError);
+        telegramError = telegramError
+          ? `${telegramError}; delivery_status_update_failed: ${deliveryStateMessage}`
+          : `delivery_status_update_failed: ${deliveryStateMessage}`;
+        console.error(`[scheduler] Alert saved but Telegram delivery status update failed telemetry=${telemetryId}:`, deliveryStateMessage);
+      }
     }
     return { skipped: false, telemetryId, telegramSent, telegramError };
   } catch (err) {

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import type pg from 'pg';
-import { formatSpeedingAlert, IDLE_ALERT_THRESHOLDS_MINUTES, SPEED_LIMIT_KMH } from '@car-tracker/tracker';
+import {
+  formatSpeedingAlert,
+  IDLE_ALERT_THRESHOLDS_MINUTES,
+  shouldEmitIdlingMilestone,
+  SPEED_LIMIT_KMH,
+} from '@car-tracker/tracker';
 import { setPoolForTest } from '../db/db.js';
 import { insertTelemetry } from './gpsTelemetryService.js';
 import {
@@ -11,6 +16,7 @@ import {
   markIdlingAlertDb,
   persistIdlingAlertIfNewThreshold,
   handleIdlingAlertInTransaction,
+  resolveAlertActiveTripId,
   setSendTelegramForTest,
   shouldPersistIdlingAlertDb,
   shouldPersistMotionStartedFromPreviousState,
@@ -28,6 +34,31 @@ import {
 } from './travelOrderSyncService.js';
 
 type QueryCall = { sql: string; params?: unknown[] };
+
+describe('emitted alert trip resolution', () => {
+  it('prefers persisted vehicle state and falls back to the emitted trip', () => {
+    assert.equal(resolveAlertActiveTripId('state-trip', 'emitted-trip'), 'state-trip');
+    assert.equal(resolveAlertActiveTripId(null, 'emitted-trip'), 'emitted-trip');
+    assert.equal(resolveAlertActiveTripId(undefined, null), null);
+  });
+});
+
+describe('retryable tracker idling milestones', () => {
+  it('keeps emitting a reached milestone even when tracker memory saw it on a previous poll', () => {
+    const reachedTenMinutes = {
+      idlingTooLong: true,
+      idleAlertCount: 1,
+      previousIdleAlertCount: 1,
+    };
+
+    assert.equal(shouldEmitIdlingMilestone(reachedTenMinutes), true);
+    assert.equal(shouldEmitIdlingMilestone(reachedTenMinutes), true);
+  });
+
+  it('does not emit before the first idling threshold', () => {
+    assert.equal(shouldEmitIdlingMilestone({ idlingTooLong: false, idleAlertCount: 0 }), false);
+  });
+});
 
 function makePool(handler: (sql: string, params?: unknown[]) => { rows?: unknown[]; rowCount?: number }) {
   const calls: QueryCall[] = [];
@@ -978,7 +1009,7 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
   // The mock persists gps_idling_dedup and gps_telemetry in memory so two
   // sequential "concurrent" executions at 11 minutes behave like the
   // SELECT ... FOR UPDATE + committed UPSERT would in Postgres.
-  function makeIdlingMockPool() {
+  function makeIdlingMockPool(options: { failDeliveryUpdate?: boolean; failTelemetryInsert?: boolean } = {}) {
     const dedupRows: Array<{ vehicle_id: string; active_trip_id: string; last_alerted_duration_minutes: number }> = [];
     const telemetryRows: Array<{ vehicle_id: string; active_trip_id: string; event_type: string; idling_threshold_minutes: number; travel_order_id: string | null; driver_id: string | null }> = [];
     const sentTelegrams: string[] = [];
@@ -1027,6 +1058,7 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
 
       // INSERT gps_telemetry (idling)
       if (sql.includes('INSERT INTO gps_telemetry')) {
+        if (options.failTelemetryInsert) throw new Error('telemetry insert unavailable');
         const p = params as unknown[];
         const vehicleId = String(p[0]);
         const activeTripId = String(p[11]);
@@ -1043,7 +1075,10 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
         return { rows: [{ id: `tel-${telemetryRows.length}` }] };
       }
 
-      if (sql.includes('UPDATE gps_telemetry')) return { rows: [], rowCount: 1 };
+      if (sql.includes('UPDATE gps_telemetry')) {
+        if (options.failDeliveryUpdate) throw new Error('delivery status unavailable');
+        return { rows: [], rowCount: 1 };
+      }
 
       // ensureIdlingDedupSchema DDL — ignore
       return { rows: [] };
@@ -1185,5 +1220,62 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
     });
 
     assert.ok(sentMessages[0].includes('Idling for 25 minutes'), 'message must use threshold (25), not 26');
+  });
+
+  it('keeps the committed idling alert when delivery status recording fails', async () => {
+    const { pool, telemetryRows } = makeIdlingMockPool({ failDeliveryUpdate: true });
+    setPoolForTest(pool);
+
+    const result = await handleIdlingAlertInTransaction({
+      vehicleId: 'vid-3',
+      plateNumber: 'KAR6412',
+      activeTripId: 'trip-3',
+      latitude: 14.5,
+      longitude: 121,
+      speedKmh: 0,
+      fuelLiters: null,
+      ignition: true,
+      locationName: 'Depot',
+      recordedAt: '2026-07-06T04:11:00.000Z',
+      idlingStartedAt: '2026-07-06T04:00:00.000Z',
+      thresholdMinutes: 10,
+      telegramMessage: 'Idling for 10 minutes',
+      travelOrderId: null,
+      driverId: null,
+    });
+
+    assert.equal(telemetryRows.length, 1, 'the durable alert remains inserted');
+    assert.equal(result.skipped, false);
+    assert.equal(result.telemetryId, 'tel-1');
+    assert.match(result.telegramError ?? '', /delivery_status_update_failed/);
+  });
+
+  it('rolls back the idling claim when telemetry persistence fails', async () => {
+    const { pool, order } = makeIdlingMockPool({ failTelemetryInsert: true });
+    setPoolForTest(pool);
+
+    await assert.rejects(
+      handleIdlingAlertInTransaction({
+        vehicleId: 'vid-4',
+        plateNumber: 'KAR6412',
+        activeTripId: 'trip-4',
+        latitude: 14.5,
+        longitude: 121,
+        speedKmh: 0,
+        fuelLiters: null,
+        ignition: true,
+        locationName: 'Depot',
+        recordedAt: '2026-07-06T04:11:00.000Z',
+        idlingStartedAt: '2026-07-06T04:00:00.000Z',
+        thresholdMinutes: 10,
+        telegramMessage: 'Idling for 10 minutes',
+        travelOrderId: null,
+        driverId: null,
+      }),
+      /telemetry insert unavailable/,
+    );
+
+    assert.ok(order.includes('ROLLBACK'), 'failed telemetry insertion must roll back the dedup transaction');
+    assert.equal(sentMessages.length, 0, 'delivery must not run before persistence commits');
   });
 });

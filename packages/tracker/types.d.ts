@@ -16,6 +16,10 @@ export interface AlertSummary {
 }
 
 export const IDLE_ALERT_THRESHOLDS_MINUTES: number[];
+export function shouldEmitIdlingMilestone(idle: {
+  idlingTooLong: boolean;
+  idleAlertCount: number;
+}): boolean;
 export const SPEED_LIMIT_KMH: number;
 export const LOW_FUEL_LITERS: number;
 export const CARTRACK_TIMEOUT_MS: number;

@@ -18,7 +18,7 @@
 //   5. Simultaneous speeding + low-fuel (both persisted)
 //   6. Location update while moving (no duplicate MOVING)
 //   7. Only IGNITION ON creates active_trip_id
-//   8. No active trip → non-IGNITION events are skipped
+//   8. Missing scheduler state + emitted tripId → idling is persisted
 
 import pg from 'pg';
 import crypto from 'node:crypto';
@@ -161,6 +161,7 @@ function simulateEmittedAlerts(scenario) {
     toNumber: null,
     timestamp: step.timestamp ?? new Date().toISOString(),
     message: `Test alert: ${step.eventType}`,
+    tripId: step.tripId ?? null,
     idleAlertCount: step.idleAlertCount,
     idlingThresholdReached: step.idlingThresholdReached,
   }));
@@ -184,7 +185,7 @@ async function persistEmittedAlerts(alerts) {
        WHERE vehicle_id = $1 ORDER BY recorded_at DESC LIMIT 1`,
       [vehicleId],
     );
-    let activeTripId = last.rows[0]?.active_trip_id ?? null;
+    let activeTripId = last.rows[0]?.active_trip_id ?? alert.tripId ?? null;
 
     // Event-specific active_trip_id logic (mirrors scheduler.ts)
     if (eventType === 'IGNITION_ON') {
@@ -666,7 +667,7 @@ async function runTests() {
 
     // ── Test 7: Only IGNITION ON Creates active_trip_id ──────
     console.log('\n─── Test 7: Only IGNITION ON Creates active_trip_id ─');
-    await (test('Non-IGNITION events are skipped when no active trip exists', async () => {
+    await (test('Idling is saved when scheduler state is missing but the emitted alert has a tripId', async () => {
       if (DRY_RUN) { skipped += 1; return; }
 
       const vehicleId7 = crypto.randomUUID();
@@ -677,62 +678,34 @@ async function runTests() {
         [vehicleId7, plate7],
       );
 
-      // No IGNITION ON — try to persist other events
+      const emittedTripId = crypto.randomUUID();
+      // No persisted IGNITION ON row: the emitted trip context must be enough.
       const alerts = simulateEmittedAlerts([
         {
           vehicleId: vehicleId7,
           plate: plate7,
           eventType: 'IDLING_TOO_LONG',
+          tripId: emittedTripId,
           speed: 0,
           ignition: true,
           idleAlertCount: 1,
           idlingThresholdReached: 10,
           timestamp: new Date().toISOString(),
         },
-        {
-          vehicleId: vehicleId7,
-          plate: plate7,
-          eventType: 'MOTION_STARTED',
-          speed: 50,
-          ignition: true,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          vehicleId: vehicleId7,
-          plate: plate7,
-          eventType: 'SPEEDING ALERT',
-          speed: 100,
-          ignition: true,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          vehicleId: vehicleId7,
-          plate: plate7,
-          eventType: 'LOW FUEL ALERT',
-          speed: 50,
-          fuel: 2,
-          ignition: true,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          vehicleId: vehicleId7,
-          plate: plate7,
-          eventType: 'IGNITION_OFF',
-          speed: 0,
-          ignition: false,
-          timestamp: new Date().toISOString(),
-        },
       ]);
 
       const result = await persistEmittedAlerts(alerts);
 
-      assertEqual(result.saved, 0, 'No events should be saved without an active trip');
-      assertEqual(result.skipped, 5, 'All 5 events should be skipped');
+      assertEqual(result.saved, 1, 'Idling should be saved from emitted trip context');
+      assertEqual(result.skipped, 0, 'The valid idling alert should not be skipped');
 
       const rows = await getTelemetryForVehicle(vehicleId7);
-      assertEqual(rows.length, 0, 'Telemetry table should be empty');
+      assertEqual(rows.length, 1, 'Telemetry table should contain the idling alert');
+      assertEqual(rows[0].active_trip_id, emittedTripId, 'Saved alert should retain emitted tripId');
 
       // Cleanup
+      await pool.query('DELETE FROM gps_telemetry WHERE vehicle_id = $1', [vehicleId7]);
+      await pool.query('DELETE FROM gps_idling_dedup WHERE vehicle_id = $1', [vehicleId7]);
       await pool.query('DELETE FROM vehicles WHERE id = $1', [vehicleId7]);
     }))();
 

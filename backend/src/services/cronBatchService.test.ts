@@ -10,6 +10,7 @@ function summary(overrides: Partial<SchedulerCycleSummary> = {}): SchedulerCycle
     vehiclesProcessed: 2,
     telemetrySaved: 2,
     telemetrySkipped: 0,
+    telemetryFailed: 0,
     telegramSent: 0,
     telegramFailed: 0,
     durationSeconds: 1,
