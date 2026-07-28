@@ -546,9 +546,20 @@ describe('idling dedup UPSERT (fix for threshold spam)', () => {
     ]);
   });
 
-  it('keeps same-cycle LOCATION_UPDATE when MOTION_STARTED is emitted', () => {
+  it('suppresses same-cycle LOCATION_UPDATE when MOTION_STARTED is emitted', () => {
     const alerts = [
       { vehicleId: baseTelemetry.vehicleId, eventType: 'MOTION_STARTED' },
+      { vehicleId: baseTelemetry.vehicleId, eventType: 'LOCATION_UPDATE' },
+    ];
+
+    assert.equal(
+      hasHigherPriorityTelemetryEventForSnapshot(alerts, baseTelemetry.vehicleId, 'LOCATION_UPDATE'),
+      true,
+    );
+  });
+
+  it('allows LOCATION_UPDATE again when no MOTION_STARTED exists for the snapshot', () => {
+    const alerts = [
       { vehicleId: baseTelemetry.vehicleId, eventType: 'LOCATION_UPDATE' },
     ];
 

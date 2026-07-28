@@ -897,6 +897,29 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
               continue;
             }
 
+            // The first moving snapshot after idling belongs exclusively to
+            // MOTION_STARTED. Its emitted alert is persisted in the alert pass
+            // below; subsequent moving snapshots resume LOCATION_UPDATE.
+            if (
+              hasHigherPriorityTelemetryEventForSnapshot(
+                emittedAlerts ?? [],
+                vehicleId,
+                EVENT_TYPE.LOCATION_UPDATE,
+              )
+            ) {
+              action = 'location_update_skipped_for_transition_alert';
+              telemetrySkipped += 1;
+              console.log('[scheduler-state]', {
+                plateNumber,
+                vehicleId,
+                currentIgnition,
+                wasOn,
+                activeTripId,
+                action,
+              });
+              continue;
+            }
+
             // A speeding alert owns this snapshot. The emitted-alert pass
             // persists and sends SPEEDING; normal location updates resume
             // once the reported speed drops below the configured limit.
@@ -1518,7 +1541,7 @@ export function hasHigherPriorityTelemetryEventForSnapshot(
       return candidateEventType === 'IGNITION_ON' || candidateEventType === 'MOTION_STARTED';
     }
     if (currentEventType === 'LOCATION_UPDATE') {
-      return candidateEventType === 'SPEEDING';
+      return candidateEventType === 'SPEEDING' || candidateEventType === 'MOTION_STARTED';
     }
     return false;
   });
