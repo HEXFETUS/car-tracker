@@ -1,5 +1,11 @@
 import { getPool } from '../db/db.js';
 import { getFleetConfig } from './fleetConfigService.js';
+import {
+  beginLifecycleSync,
+  completeLifecycleSync,
+  failLifecycleSync,
+  type LifecycleSyncOptions,
+} from './lifecycleSyncProgressService.js';
 
 type BusinessTripStatus =
   | 'WAITING_AT_BASE'
@@ -22,6 +28,7 @@ type TelemetryRow = {
   active_trip_id: string | null;
   driver_id: string | null;
   travel_order_id: string | null;
+  created_at?: string | Date | null;
 };
 
 type TravelOrderRow = {
@@ -1062,26 +1069,54 @@ async function upsertNoToTrip(trip: LifecycleTrip): Promise<'created' | 'updated
   return status;
 }
 
-export async function syncBusinessTripLogsFromTelemetry(): Promise<{
+export async function syncBusinessTripLogsFromTelemetry(
+  options: LifecycleSyncOptions = {},
+): Promise<{
   created: number;
   updated: number;
   skipped: number;
   failed: number;
+  rowsExamined: number;
 }> {
   const pool = getPool();
-  const travelDateSync = await syncTravelDateGpsLogs();
-  await syncCompleteTravelOrderSessions();
-  const [telemetryResult, ordersResult] = await Promise.all([
+  const fullHistory = options.fullHistory === true;
+  const watermark = await beginLifecycleSync(pool, 'business-trip-lifecycle', options);
+  try {
+    const travelDateSync = await syncTravelDateGpsLogs();
+    await syncCompleteTravelOrderSessions();
+    const [telemetryResult, ordersResult] = await Promise.all([
     pool.query<TelemetryRow>(
-      `SELECT id, vehicle_id, plate_number, event_type, latitude, longitude,
+      `WITH candidate_sessions AS (
+         SELECT DISTINCT vehicle_id, active_trip_id
+           FROM gps_telemetry
+          WHERE $1::boolean = false
+            AND created_at > $2::timestamptz
+            AND active_trip_id IS NOT NULL
+         UNION
+         SELECT vehicle_id, active_trip_id
+           FROM gps_vehicle_state
+          WHERE $1::boolean = false
+            AND active_trip_id IS NOT NULL
+            AND ignition_state = 'ON'
+       )
+       SELECT id, vehicle_id, plate_number, event_type, latitude, longitude,
               speed_kmh, location_name, recorded_at, active_trip_id, driver_id,
-              travel_order_id
-         FROM gps_telemetry
+              travel_order_id, created_at
+         FROM gps_telemetry telemetry
         WHERE recorded_at IS NOT NULL
           AND vehicle_id IS NOT NULL
           AND latitude IS NOT NULL
           AND longitude IS NOT NULL
+          AND (
+            $1::boolean = true
+            OR EXISTS (
+              SELECT 1 FROM candidate_sessions candidate
+               WHERE candidate.vehicle_id = telemetry.vehicle_id
+                 AND candidate.active_trip_id = telemetry.active_trip_id
+            )
+          )
         ORDER BY vehicle_id, recorded_at ASC`,
+      [fullHistory, watermark],
     ),
     pool.query<TravelOrderRow>(
       `SELECT id, vehicle_id, driver_id, status, scheduled_departure,
@@ -1093,7 +1128,7 @@ export async function syncBusinessTripLogsFromTelemetry(): Promise<{
           AND status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
         ORDER BY vehicle_id, scheduled_departure ASC`,
     ),
-  ]);
+    ]);
 
   const ordersByVehicle = new Map<string, TravelOrderRow[]>();
   for (const order of ordersResult.rows) {
@@ -1146,8 +1181,18 @@ export async function syncBusinessTripLogsFromTelemetry(): Promise<{
     }
   }
 
-  console.log(`[business-trip-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped, ${failed} failed`);
-  return { created, updated, skipped, failed };
+    const rowsExamined = telemetryResult.rows.length;
+    const maxCreatedAt = telemetryResult.rows.reduce<Date | string | null>((latest, row) => {
+      if (!row.created_at) return latest;
+      return !latest || new Date(row.created_at) > new Date(latest) ? row.created_at : latest;
+    }, null);
+    await completeLifecycleSync(pool, 'business-trip-lifecycle', rowsExamined, maxCreatedAt, fullHistory);
+    console.log(`[business-trip-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped, ${failed} failed, ${rowsExamined} rows examined`);
+    return { created, updated, skipped, failed, rowsExamined };
+  } catch (error) {
+    await failLifecycleSync(pool, 'business-trip-lifecycle', error, fullHistory);
+    throw error;
+  }
 }
 
 /**

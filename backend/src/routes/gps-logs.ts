@@ -366,7 +366,7 @@ router.get('/no-to', async (req: Request, res: Response) => {
 // POST /api/gps-logs/no-to/sync — Manually trigger No TO Logs sync
 router.post('/no-to/sync', expensiveOperationRateLimit, async (_req: Request, res: Response) => {
   try {
-    const result = await syncNoToLogsFromTelemetry();
+    const result = await syncNoToLogsFromTelemetry({ fullHistory: true });
     res.json({
       success: true,
       data: result,
@@ -2127,7 +2127,7 @@ router.get('/:id/stops', async (req: Request, res: Response) => {
 // ─────────────────────────────────────────────────────────────────
 router.post('/sync-from-telemetry', expensiveOperationRateLimit, async (req: Request, res: Response) => {
   try {
-    const result = await syncGpsTripLogsFromTelemetry();
+    const result = await syncGpsTripLogsFromTelemetry({ fullHistory: true });
     const travelOrderSync = await syncUnlinkedGpsTripLogsToTravelOrders();
     res.json({
       success: true,

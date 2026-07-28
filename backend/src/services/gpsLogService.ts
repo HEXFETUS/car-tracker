@@ -1344,14 +1344,17 @@ async function determineTripType(params: {
  *
  * @returns Summary of created, updated, skipped, and failed counts.
  */
-export async function syncGpsTripLogsFromTelemetry(): Promise<{
+export async function syncGpsTripLogsFromTelemetry(
+  options: { fullHistory?: boolean; lateArrivalOverlapMinutes?: number } = {},
+): Promise<{
   created: number;
   updated: number;
   skipped: number;
   failed: number;
+  rowsExamined?: number;
 }> {
   if (process.env.BUSINESS_TRIP_LIFECYCLE_SYNC !== 'legacy') {
-    return syncBusinessTripLogsFromTelemetry();
+    return syncBusinessTripLogsFromTelemetry(options);
   }
 
   const pool = getPool();

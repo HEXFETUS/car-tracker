@@ -63,6 +63,7 @@ export interface SchedulerCycleSummary {
   telemetryFailed: number;
   telegramSent: number;
   telegramFailed: number;
+  lifecycleRowsExamined?: number;
   durationSeconds: number;
   batch: {
     offset: number;
@@ -577,6 +578,7 @@ function skippedCycleSummary(skipReason: string): SchedulerCycleSummary {
     telemetryFailed: 0,
     telegramSent: 0,
     telegramFailed: 0,
+    lifecycleRowsExamined: 0,
     durationSeconds: 0,
     batch: null,
   };
@@ -1366,6 +1368,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     let tripLogsUpdated = 0;
     let tripLogsFailed = 0;
     let tripLogsLinked = 0;
+    let lifecycleRowsExamined = 0;
     try {
       if (!result.batch.passComplete) {
         console.log('[scheduler] Deferring Travel Order log sync until the fleet pass completes');
@@ -1374,6 +1377,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
         tripLogsCreated = tripLogResult.created;
         tripLogsUpdated = tripLogResult.updated;
         tripLogsFailed = tripLogResult.failed;
+        lifecycleRowsExamined += tripLogResult.rowsExamined ?? 0;
 
         const linkResult = await syncUnlinkedGpsTripLogsToTravelOrders();
         tripLogsLinked = linkResult.linked;
@@ -1397,6 +1401,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
         noToUpdated = noToResult.updated;
         noToSkipped = noToResult.skipped;
         noToFailed = noToResult.failed;
+        lifecycleRowsExamined += noToResult.rowsExamined ?? 0;
       }
     } catch (noToError) {
       noToFailed = -1;
@@ -1463,6 +1468,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       telemetryFailed,
       telegramSent,
       telegramFailed,
+      lifecycleRowsExamined,
       durationSeconds: duration,
       batch: result.batch,
     };

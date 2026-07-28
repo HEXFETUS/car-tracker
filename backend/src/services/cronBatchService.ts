@@ -77,8 +77,17 @@ async function tryAcquireLock(client: pg.PoolClient): Promise<boolean> {
 export async function runCronBatch(): Promise<CronBatchResult> {
   const client = await getPool().connect();
   let locked = false;
+  let runId: number | null = null;
 
   try {
+    const runResult = await client.query<{ id: number }>(
+      `INSERT INTO scheduler_runs
+         (started_at, status, trigger_source, batch_size)
+       VALUES (now(), 'running', 'cron', $1)
+       RETURNING id`,
+      [CRON_BATCH_SIZE],
+    );
+    runId = runResult.rows[0]?.id ?? null;
     locked = await tryAcquireLock(client);
     if (!locked) {
       await client.query(
@@ -90,6 +99,15 @@ export async function runCronBatch(): Promise<CronBatchResult> {
           WHERE scheduler_name = $1`,
         [SCHEDULER_NAME],
       );
+      if (runId != null) {
+        await client.query(
+          `UPDATE scheduler_runs
+              SET finished_at = now(), status = 'skipped',
+                  skip_reason = 'advisory_lock_active'
+            WHERE id = $1`,
+          [runId],
+        );
+      }
       return {
         locked: false,
         batchSize: CRON_BATCH_SIZE,
@@ -162,6 +180,33 @@ export async function runCronBatch(): Promise<CronBatchResult> {
         summary.batch?.examined ?? 0,
       ],
     );
+    if (runId != null) {
+      await client.query(
+        `UPDATE scheduler_runs
+            SET finished_at = now(),
+                status = $2,
+                cycles_completed = CASE WHEN $2 = 'completed' THEN 1 ELSE 0 END,
+                vehicles_processed = $3,
+                telemetry_saved = $4,
+                telegram_sent = $5,
+                telegram_failed = $6,
+                skip_reason = $7,
+                rows_examined = $8,
+                batch_offset = $9
+          WHERE id = $1`,
+        [
+          runId,
+          outcome.status,
+          summary.vehiclesProcessed,
+          summary.telemetrySaved,
+          summary.telegramSent,
+          summary.telegramFailed,
+          outcome.reason,
+          summary.lifecycleRowsExamined ?? 0,
+          progress.next_vehicle_offset,
+        ],
+      );
+    }
 
     return {
       locked: true,
@@ -182,6 +227,14 @@ export async function runCronBatch(): Promise<CronBatchResult> {
         WHERE scheduler_name = $1`,
       [SCHEDULER_NAME, message.slice(0, 2000)],
     ).catch(() => {});
+    if (runId != null) {
+      await client.query(
+        `UPDATE scheduler_runs
+            SET finished_at = now(), status = 'error', error_message = $2
+          WHERE id = $1`,
+        [runId, message.slice(0, 2000)],
+      ).catch(() => {});
+    }
     throw error;
   } finally {
     if (locked) {

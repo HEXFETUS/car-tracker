@@ -25,6 +25,12 @@
 import { getPool } from '../db/db.js';
 import { getFleetConfig } from './fleetConfigService.js';
 import { createNotificationForRoles } from './notificationService.js';
+import {
+  beginLifecycleSync,
+  completeLifecycleSync,
+  failLifecycleSync,
+  type LifecycleSyncOptions,
+} from './lifecycleSyncProgressService.js';
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -49,6 +55,7 @@ type TelemetryRow = {
   active_trip_id: string | null;
   driver_id: string | null;
   is_to_linked?: boolean;
+  created_at?: string | Date | null;
 };
 
 type NoToLifecycleTrip = {
@@ -810,13 +817,16 @@ type NoToSyncResult = {
   updated: number;
   skipped: number;
   failed: number;
+  rowsExamined: number;
 };
 
 async function syncNoToLogsFromTelemetryUnlocked(
-  options: { notifyNewTrips?: boolean } = {},
+  options: LifecycleSyncOptions & { notifyNewTrips?: boolean } = {},
 ): Promise<NoToSyncResult> {
   const pool = getPool();
   const notifyNewTrips = options.notifyNewTrips ?? true;
+  const fullHistory = options.fullHistory === true;
+  const watermark = await beginLifecycleSync(pool, 'no-to-lifecycle', options);
   const fleetConfig = getFleetConfig();
   const defaultBaseCoord = `${fleetConfig.base.latitude},${fleetConfig.base.longitude}`;
   const idleLimitMs = (fleetConfig.trip.idleLimitMinutes ?? 10) * 60 * 1000;
@@ -824,11 +834,25 @@ async function syncNoToLogsFromTelemetryUnlocked(
   console.log('[no-to-lifecycle-sync] Starting...');
 
   // ── Fetch telemetry rows ────────────────────────────────────
-  const telemetryResult = await pool.query<TelemetryRow>(
-    `SELECT telemetry.id, telemetry.vehicle_id, telemetry.plate_number,
+  try {
+    const telemetryResult = await pool.query<TelemetryRow>(
+    `WITH candidate_sessions AS (
+       SELECT DISTINCT vehicle_id, active_trip_id
+         FROM gps_telemetry
+        WHERE $1::boolean = false
+          AND created_at > $2::timestamptz
+          AND active_trip_id IS NOT NULL
+       UNION
+       SELECT vehicle_id, active_trip_id
+         FROM gps_vehicle_state
+        WHERE $1::boolean = false
+          AND active_trip_id IS NOT NULL
+          AND ignition_state = 'ON'
+     )
+     SELECT telemetry.id, telemetry.vehicle_id, telemetry.plate_number,
             telemetry.event_type, telemetry.latitude, telemetry.longitude,
             telemetry.speed_kmh, telemetry.location_name, telemetry.recorded_at,
-            telemetry.active_trip_id, telemetry.driver_id,
+            telemetry.active_trip_id, telemetry.driver_id, telemetry.created_at,
             (telemetry.travel_order_id IS NOT NULL OR EXISTS (
               SELECT 1
                 FROM gps_trip_log_active_trips linked_session
@@ -845,7 +869,16 @@ async function syncNoToLogsFromTelemetryUnlocked(
         AND telemetry.active_trip_id IS NOT NULL
         AND telemetry.latitude IS NOT NULL
         AND telemetry.longitude IS NOT NULL
+        AND (
+          $1::boolean = true
+          OR EXISTS (
+            SELECT 1 FROM candidate_sessions candidate
+             WHERE candidate.vehicle_id = telemetry.vehicle_id
+               AND candidate.active_trip_id = telemetry.active_trip_id
+          )
+        )
       ORDER BY telemetry.vehicle_id, telemetry.recorded_at ASC`,
+    [fullHistory, watermark],
   );
 
   // ── Fetch all vehicles ──────────────────────────────────────
@@ -1057,8 +1090,18 @@ async function syncNoToLogsFromTelemetryUnlocked(
     }
   }
 
-  console.log(`[no-to-lifecycle-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped, ${failed} failed`);
-  return { created, updated, skipped, failed };
+    const rowsExamined = telemetryResult.rows.length;
+    const maxCreatedAt = telemetryResult.rows.reduce<Date | string | null>((latest, row) => {
+      if (!row.created_at) return latest;
+      return !latest || new Date(row.created_at) > new Date(latest) ? row.created_at : latest;
+    }, null);
+    await completeLifecycleSync(pool, 'no-to-lifecycle', rowsExamined, maxCreatedAt, fullHistory);
+    console.log(`[no-to-lifecycle-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped, ${failed} failed, ${rowsExamined} rows examined`);
+    return { created, updated, skipped, failed, rowsExamined };
+  } catch (error) {
+    await failLifecycleSync(pool, 'no-to-lifecycle', error, fullHistory);
+    throw error;
+  }
 }
 
 let noToSyncQueue: Promise<void> = Promise.resolve();
@@ -1069,7 +1112,7 @@ let noToSyncQueue: Promise<void> = Promise.resolve();
  * the lock can survive after the pooled connection is returned.
  */
 export async function syncNoToLogsFromTelemetry(
-  options: { notifyNewTrips?: boolean } = {},
+  options: LifecycleSyncOptions & { notifyNewTrips?: boolean } = {},
 ): Promise<NoToSyncResult> {
   const queuedSync = noToSyncQueue.then(() => syncNoToLogsFromTelemetryUnlocked(options));
   noToSyncQueue = queuedSync.then(

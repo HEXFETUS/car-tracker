@@ -55,6 +55,8 @@ export const CARTRACK_USERNAME = str('CARTRACK_USERNAME');
 export const CARTRACK_PASSWORD = str('CARTRACK_PASSWORD');
 export const CARTRACK_API_URL = str('CARTRACK_API_URL');
 export const SYNC_INTERVAL_SECONDS = num('SYNC_INTERVAL_SECONDS', 30);
+export const ENABLE_INTERNAL_SCHEDULER =
+  str('ENABLE_INTERNAL_SCHEDULER', NODE_ENV === 'production' ? 'false' : 'true').toLowerCase() === 'true';
 export const CRON_BATCH_SIZE = Math.max(1, Math.floor(num('CRON_BATCH_SIZE', 2)));
 export const CRON_SOFT_DEADLINE_MS = Math.max(1000, Math.floor(num('CRON_SOFT_DEADLINE_MS', 20000)));
 export const GPS_TO_MATCH_TOLERANCE_MINUTES = num('GPS_TO_MATCH_TOLERANCE_MINUTES', 10);

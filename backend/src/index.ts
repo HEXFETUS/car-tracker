@@ -1,5 +1,5 @@
 import app from './app.js';
-import { PORT } from './config/env.js';
+import { ENABLE_INTERNAL_SCHEDULER, PORT } from './config/env.js';
 import { startScheduler } from './services/scheduler.js';
 
 const server = app.listen(PORT, () => {
@@ -9,7 +9,11 @@ const server = app.listen(PORT, () => {
   // Automatically runs syncFleetAndAlert() every SYNC_INTERVAL_SECONDS
   // to fetch Cartrack telemetry, detect state changes, and dispatch
   // Telegram alerts for any vehicle activity.
-  startScheduler();
+  if (ENABLE_INTERNAL_SCHEDULER) {
+    startScheduler();
+  } else {
+    console.log('[scheduler] Internal interval disabled; expecting the protected cron endpoint to trigger sync');
+  }
 });
 
 server.on('error', (error: NodeJS.ErrnoException) => {
