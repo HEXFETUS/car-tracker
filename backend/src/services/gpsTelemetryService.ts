@@ -27,6 +27,7 @@ export interface TelemetryInsert {
   telegramStatus?: string | null;
   telegramError?: string | null;
   telegramAttemptedAt?: string | null;
+  sourceEventKey?: string | null;
 }
 
 export interface TelemetryRow {
@@ -409,8 +410,8 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
        (vehicle_id, plate_number, event_type, latitude, longitude,
         speed_kmh, fuel_liters, ignition, location_name,
         driver_id, travel_order_id, recorded_at, active_trip_id, idling_threshold_minutes, telegram_message,
-        telegram_status, telegram_error, telegram_attempted_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        telegram_status, telegram_error, telegram_attempted_at, source_event_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
      ON CONFLICT DO NOTHING
      RETURNING id`,
         [
@@ -432,6 +433,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
           data.telegramStatus ?? null,
           data.telegramError ?? null,
           data.telegramAttemptedAt ?? null,
+          data.sourceEventKey ?? null,
         ],
     );
     const id = result.rows[0]?.id ?? null;
@@ -442,7 +444,18 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
     console.log(
       `[telemetry] INSERT gps_telemetry skipped by conflict vehicle=${data.vehicleId} event=${eventType} active_trip_id=${data.activeTripId ?? 'null'}`,
     );
-    const conflictResult = eventType === 'IGNITION_ON'
+    const sourceConflictResult = data.sourceEventKey
+      ? await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
+        `SELECT id, latitude, longitude
+           FROM gps_telemetry
+          WHERE source_event_key = $1
+          LIMIT 1`,
+        [data.sourceEventKey],
+      )
+      : null;
+    const conflictResult = sourceConflictResult?.rows[0]
+      ? sourceConflictResult
+      : eventType === 'IGNITION_ON'
       ? await pool.query<{ id: string; latitude: number | null; longitude: number | null }>(
         `SELECT id, latitude, longitude
            FROM gps_telemetry

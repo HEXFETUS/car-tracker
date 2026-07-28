@@ -198,8 +198,13 @@ const VEHICLE_ID_KEYS = ['vehicle_id', 'vehicleId', 'id', 'unit_id', 'unitId', '
 const PLATE_NUMBER_KEYS = ['registration', 'plate_number', 'plate', 'reg', 'license_plate', 'vehicle_name', 'vehicleName', 'name', 'label'];
 const VEHICLE_LIST_KEYS = ['data', 'vehicles', 'vehicle', 'items', 'results', 'fleet', 'assets', 'units'];
 
-interface RawVehicle {
+export interface RawVehicle {
   [key: string]: unknown;
+}
+
+export interface CartrackFleetIdentity {
+  unitId: string;
+  plateNumber: string;
 }
 
 function firstKey(data: RawVehicle | null | undefined, keys: string[]): unknown {
@@ -296,6 +301,16 @@ export async function getFleetVehicles(): Promise<RawVehicle[]> {
   return [];
 }
 
+export async function getCartrackFleetIdentities(): Promise<CartrackFleetIdentity[]> {
+  const vehicles = await getFleetVehicles();
+  return vehicles.flatMap((vehicle) => {
+    const rawId = firstKey(vehicle, VEHICLE_ID_KEYS);
+    const plateNumber = extractPlateNumber(vehicle);
+    if (rawId === null || rawId === undefined || !plateNumber) return [];
+    return [{ unitId: String(rawId), plateNumber }];
+  });
+}
+
 // ── Resolve Cartrack Unit ID from Plate Number ────────────────
 
 export async function resolveCartrackUnitId(
@@ -384,6 +399,7 @@ export async function fetchCartrackVehicleHistory(
   unitId: string,
   dateStr: string,
   plateNumber?: string,
+  options: { allowCurrentStatusFallback?: boolean; requireBreadcrumbs?: boolean } = {},
 ): Promise<CartrackHistoryPoint[]> {
   if (!isConfigured()) return [];
 
@@ -423,11 +439,16 @@ export async function fetchCartrackVehicleHistory(
         const data = await response.json();
         const points = extractArrayPayload(data);
         if (points.length > 0) {
+          if (options.requireBreadcrumbs && points.every(looksLikeTripSummary)) {
+            console.log(`Cartrack endpoint returned trip summaries, continuing breadcrumb discovery: ${endpoint}`);
+            break;
+          }
           console.log(`\n📡 CARTRACK ENDPOINT: ${endpoint}`);
           console.log(`   Status: ${response.status}, Records: ${points.length}`);
           return points;
         }
 
+        if (options.requireBreadcrumbs) break;
         return [];
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -437,11 +458,13 @@ export async function fetchCartrackVehicleHistory(
     }
   }
 
-  console.log(`History API unavailable for unit ${unitId}, falling back to current fleet status`);
-  const currentStatus = await fetchVehicleCurrentStatus(unitId);
-  if (currentStatus) {
-    console.log(`Using current fleet status for unit ${unitId} as fallback`);
-    return [currentStatus];
+  if (options.allowCurrentStatusFallback !== false) {
+    console.log(`History API unavailable for unit ${unitId}, falling back to current fleet status`);
+    const currentStatus = await fetchVehicleCurrentStatus(unitId);
+    if (currentStatus) {
+      console.log(`Using current fleet status for unit ${unitId} as fallback`);
+      return [currentStatus];
+    }
   }
 
   if (lastError) {
