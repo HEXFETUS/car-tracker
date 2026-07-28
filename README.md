@@ -349,14 +349,17 @@ X-Cron-Secret: your-secret
 ```
 
 The endpoint uses a PostgreSQL advisory lock and durable cursor to process a
-bounded fleet batch. Each successful response includes batch progress, remaining
-vehicles, fleet-pass completion, and deadline status. Requests without a valid
-configured secret receive `401`.
+bounded fleet batch. A completed batch returns `200` and includes batch progress,
+remaining vehicles, fleet-pass completion, and deadline status. Concurrent or
+locked runs return `409`; skipped or no-progress runs return `503`. Their JSON
+bodies include machine-readable `status` and `reason` values. Requests without a
+valid configured secret receive `401`.
 
 Authorization bearer and query-string secrets remain accepted for backward
 compatibility, but production should use `X-Cron-Secret` so secrets do not appear
-in URLs. Enable saved responses during rollout and failure/recovery
-notifications in cron-job.org.
+in URLs. Configure cron-job.org to treat only HTTP 2xx as successful, retain the
+JSON response body in execution history, and enable failure/recovery
+notifications.
 
 ## Production deployment
 

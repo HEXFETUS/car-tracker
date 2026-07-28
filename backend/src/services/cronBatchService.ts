@@ -23,6 +23,35 @@ export interface CronBatchResult {
   summary: SchedulerCycleSummary | null;
 }
 
+export type CronBatchOutcome =
+  | { status: 'completed'; httpStatus: 200; reason: null }
+  | { status: 'lock_active'; httpStatus: 409; reason: 'advisory_lock_active' | 'cycle_lock_active' }
+  | { status: 'skipped'; httpStatus: 503; reason: string }
+  | { status: 'no_progress'; httpStatus: 503; reason: 'no_batch_progress' };
+
+export function classifyCronBatchResult(result: CronBatchResult): CronBatchOutcome {
+  if (!result.locked) {
+    return { status: 'lock_active', httpStatus: 409, reason: 'advisory_lock_active' };
+  }
+  if (!result.summary) {
+    return { status: 'skipped', httpStatus: 503, reason: 'missing_cycle_summary' };
+  }
+  if (result.summary.skipped) {
+    const reason = result.summary.skipReason || 'scheduler_cycle_skipped';
+    if (reason === 'lock_active') {
+      return { status: 'lock_active', httpStatus: 409, reason: 'cycle_lock_active' };
+    }
+    return { status: 'skipped', httpStatus: 503, reason };
+  }
+  if (
+    !result.summary.batch
+    || (result.summary.batch.examined === 0 && !result.summary.batch.passComplete)
+  ) {
+    return { status: 'no_progress', httpStatus: 503, reason: 'no_batch_progress' };
+  }
+  return { status: 'completed', httpStatus: 200, reason: null };
+}
+
 export function nextCronProgress(
   currentFleetPass: number,
   currentVehicleOffset: number,
@@ -52,6 +81,15 @@ export async function runCronBatch(): Promise<CronBatchResult> {
   try {
     locked = await tryAcquireLock(client);
     if (!locked) {
+      await client.query(
+        `UPDATE cron_scheduler_progress
+            SET last_attempt_at = now(),
+                last_result = 'lock_active',
+                last_skip_reason = 'advisory_lock_active',
+                updated_at = now()
+          WHERE scheduler_name = $1`,
+        [SCHEDULER_NAME],
+      );
       return {
         locked: false,
         batchSize: CRON_BATCH_SIZE,
@@ -78,9 +116,16 @@ export async function runCronBatch(): Promise<CronBatchResult> {
 
     await client.query(
       `UPDATE cron_scheduler_progress
-          SET last_started_at = now(), updated_at = now()
+          SET last_attempt_at = now(),
+              last_started_at = now(),
+              last_result = 'running',
+              last_skip_reason = NULL,
+              last_error = NULL,
+              last_batch_offset = $2,
+              last_vehicles_examined = NULL,
+              updated_at = now()
         WHERE scheduler_name = $1`,
-      [SCHEDULER_NAME],
+      [SCHEDULER_NAME, progress.next_vehicle_offset],
     );
 
     const summary = await runCycle({
@@ -89,15 +134,33 @@ export async function runCronBatch(): Promise<CronBatchResult> {
       deadlineAtMs,
     });
     const next = nextCronProgress(fleetPass, progress.next_vehicle_offset, summary);
+    const outcome = classifyCronBatchResult({
+      locked: true,
+      batchSize: CRON_BATCH_SIZE,
+      softDeadlineMs: CRON_SOFT_DEADLINE_MS,
+      fleetPass,
+      nextFleetPass: next.nextFleetPass,
+      summary,
+    });
 
     await client.query(
       `UPDATE cron_scheduler_progress
           SET next_vehicle_offset = $2,
               fleet_pass = $3,
-              last_completed_at = now(),
+              last_completed_at = CASE WHEN $4 = 'completed' THEN now() ELSE last_completed_at END,
+              last_result = $4,
+              last_skip_reason = $5,
+              last_vehicles_examined = $6,
               updated_at = now()
         WHERE scheduler_name = $1`,
-      [SCHEDULER_NAME, next.nextVehicleOffset, next.nextFleetPass],
+      [
+        SCHEDULER_NAME,
+        next.nextVehicleOffset,
+        next.nextFleetPass,
+        outcome.status,
+        outcome.reason,
+        summary.batch?.examined ?? 0,
+      ],
     );
 
     return {
@@ -108,6 +171,18 @@ export async function runCronBatch(): Promise<CronBatchResult> {
       nextFleetPass: next.nextFleetPass,
       summary,
     };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await client.query(
+      `UPDATE cron_scheduler_progress
+          SET last_result = 'failed',
+              last_skip_reason = NULL,
+              last_error = $2,
+              updated_at = now()
+        WHERE scheduler_name = $1`,
+      [SCHEDULER_NAME, message.slice(0, 2000)],
+    ).catch(() => {});
+    throw error;
   } finally {
     if (locked) {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [ADVISORY_LOCK_NAME]).catch(() => {});

@@ -12,7 +12,7 @@
 
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import { CRON_SECRET } from '../config/env.js';
-import { runCronBatch } from '../services/cronBatchService.js';
+import { classifyCronBatchResult, runCronBatch } from '../services/cronBatchService.js';
 
 const router: ExpressRouter = express.Router();
 
@@ -66,11 +66,13 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
 
   try {
     const batchResult = await runCronBatch();
-
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    const outcome = classifyCronBatchResult(batchResult);
 
-    res.json({
-      success: true,
+    res.status(outcome.httpStatus).json({
+      success: outcome.status === 'completed',
+      status: outcome.status,
+      reason: outcome.reason,
       elapsed_seconds: parseFloat(elapsed),
       summary: batchResult.summary,
       batch: {

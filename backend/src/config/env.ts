@@ -14,7 +14,9 @@ function str(key: string, fallback = ''): string {
 }
 
 function num(key: string, fallback: number): number {
-  const parsed = Number(str(key));
+  const raw = str(key);
+  if (raw === '') return fallback;
+  const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { nextCronProgress } from './cronBatchService.js';
+import {
+  classifyCronBatchResult,
+  nextCronProgress,
+  type CronBatchResult,
+} from './cronBatchService.js';
 import type { SchedulerCycleSummary } from './scheduler.js';
 
 function summary(overrides: Partial<SchedulerCycleSummary> = {}): SchedulerCycleSummary {
@@ -56,6 +60,72 @@ describe('cron batch progress', () => {
     assert.deepEqual(nextCronProgress(3, 4, skipped), {
       nextVehicleOffset: 4,
       nextFleetPass: 3,
+    });
+  });
+
+  it('processes a three-vehicle fleet across two batches', () => {
+    const first = summary({
+      batch: {
+        offset: 0, examined: 2, remaining: 1, nextOffset: 2,
+        passComplete: false, deadlineReached: false,
+      },
+    });
+    const second = summary({
+      vehiclesProcessed: 1,
+      batch: {
+        offset: 2, examined: 1, remaining: 0, nextOffset: 0,
+        passComplete: true, deadlineReached: false,
+      },
+    });
+
+    assert.deepEqual(nextCronProgress(1, 0, first), {
+      nextVehicleOffset: 2, nextFleetPass: 1,
+    });
+    assert.deepEqual(nextCronProgress(1, 2, second), {
+      nextVehicleOffset: 0, nextFleetPass: 2,
+    });
+  });
+});
+
+function batchResult(overrides: Partial<CronBatchResult> = {}): CronBatchResult {
+  return {
+    locked: true,
+    batchSize: 2,
+    softDeadlineMs: 20_000,
+    fleetPass: 1,
+    nextFleetPass: 1,
+    summary: summary(),
+    ...overrides,
+  };
+}
+
+describe('cron HTTP outcome classification', () => {
+  it('reports an advisory lock collision as 409', () => {
+    assert.deepEqual(classifyCronBatchResult(batchResult({ locked: false, summary: null })), {
+      status: 'lock_active', httpStatus: 409, reason: 'advisory_lock_active',
+    });
+  });
+
+  it('reports an internal cycle lock as 409', () => {
+    const skipped = summary({ skipped: true, skipReason: 'lock_active', batch: null });
+    assert.deepEqual(classifyCronBatchResult(batchResult({ summary: skipped })), {
+      status: 'lock_active', httpStatus: 409, reason: 'cycle_lock_active',
+    });
+  });
+
+  it('reports other skipped and no-progress cycles as 503', () => {
+    const paused = summary({ skipped: true, skipReason: 'paused', batch: null });
+    assert.equal(classifyCronBatchResult(batchResult({ summary: paused })).httpStatus, 503);
+
+    const stalled = summary({
+      vehiclesProcessed: 0,
+      batch: {
+        offset: 0, examined: 0, remaining: 3, nextOffset: 0,
+        passComplete: false, deadlineReached: true,
+      },
+    });
+    assert.deepEqual(classifyCronBatchResult(batchResult({ summary: stalled })), {
+      status: 'no_progress', httpStatus: 503, reason: 'no_batch_progress',
     });
   });
 });
