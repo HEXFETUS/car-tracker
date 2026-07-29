@@ -80,6 +80,74 @@ describe('history alert derivation', () => {
     ]);
   });
 
+  it('emits each cumulative idling milestone only once', () => {
+    let cursor: Parameters<typeof deriveHistoryAlerts>[0] = state({
+      speedKmh: 0,
+      locationName: 'Depot',
+      idleStartedAt: '2026-07-28T02:00:00.000Z',
+    });
+
+    const expected = [
+      ['2026-07-28T02:10:00.000Z', 10],
+      ['2026-07-28T02:25:00.000Z', 25],
+      ['2026-07-28T02:55:00.000Z', 55],
+    ] as const;
+    for (const [recordedAt, threshold] of expected) {
+      const result = deriveHistoryAlerts(cursor, point({
+        recordedAt,
+        timestampMs: Date.parse(recordedAt),
+        speedKmh: 0,
+        locationName: 'Depot',
+      }));
+      assert.deepEqual(result.alerts, [{
+        eventType: 'IDLING_TOO_LONG',
+        idlingThresholdMinutes: threshold,
+      }]);
+      cursor = result.next;
+
+      const duplicate = deriveHistoryAlerts(cursor, point({
+        recordedAt,
+        timestampMs: Date.parse(recordedAt),
+        speedKmh: 0,
+        locationName: 'Depot',
+      }));
+      assert.deepEqual(duplicate.alerts, []);
+      cursor = duplicate.next;
+    }
+  });
+
+  it('resets idling milestones after movement and alerts on a later idle session', () => {
+    const moving = deriveHistoryAlerts(
+      state({
+        speedKmh: 0,
+        locationName: 'Depot',
+        idleStartedAt: '2026-07-28T02:00:00.000Z',
+        lastIdlingThresholdMinutes: 10,
+      }),
+      point({
+        recordedAt: '2026-07-28T02:11:00.000Z',
+        timestampMs: Date.parse('2026-07-28T02:11:00.000Z'),
+        speedKmh: 20,
+      }),
+    );
+    assert.equal(moving.next.idleStartedAt, null);
+    assert.equal(moving.next.lastIdlingThresholdMinutes, 0);
+
+    const idleStart = deriveHistoryAlerts(moving.next, point({
+      recordedAt: '2026-07-28T02:12:00.000Z',
+      timestampMs: Date.parse('2026-07-28T02:12:00.000Z'),
+      speedKmh: 0,
+      locationName: 'Next Depot',
+    }));
+    const nextMilestone = deriveHistoryAlerts(idleStart.next, point({
+      recordedAt: '2026-07-28T02:22:00.000Z',
+      timestampMs: Date.parse('2026-07-28T02:22:00.000Z'),
+      speedKmh: 0,
+      locationName: 'Next Depot',
+    }));
+    assert.equal(nextMilestone.alerts.at(-1)?.idlingThresholdMinutes, 10);
+  });
+
   it('does not fabricate transition alerts during cursor bootstrap', () => {
     const result = deriveHistoryAlerts(
       state({ ignition: null, speedKmh: 0, fuelLiters: null, locationName: null, activeTripId: null }),

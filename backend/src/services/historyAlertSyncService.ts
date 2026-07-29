@@ -12,11 +12,56 @@ import {
   type CartrackHistoryPoint,
 } from './cartrackHistoryService.js';
 import { insertTelemetry, updateTelemetryTelegramDelivery } from './gpsTelemetryService.js';
+import { createNotificationForRoles } from './notificationService.js';
 
 const INITIAL_LOOKBACK_MS = 10 * 60 * 1000;
 const HISTORY_OVERLAP_MS = 2 * 60 * 1000;
 const MAX_HISTORY_DAYS_PER_RUN = 2;
 const TELEGRAM_RETRY_LIMIT = 25;
+const NOTIFICATION_ROLES = ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'];
+
+let historyAlertSchemaPromise: Promise<void> | null = null;
+
+/**
+ * History-backed alerts were introduced after the original schema bootstrap.
+ * Keep this idempotent runtime guard so existing and newly provisioned
+ * databases can safely run the recovery pass.
+ */
+async function ensureHistoryAlertSchema(): Promise<void> {
+  if (!historyAlertSchemaPromise) {
+    historyAlertSchemaPromise = getPool().query(`
+      ALTER TABLE gps_telemetry
+        ADD COLUMN IF NOT EXISTS source_event_key TEXT;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS gps_telemetry_source_event_key_uidx
+        ON gps_telemetry (source_event_key)
+        WHERE source_event_key IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS gps_history_alert_cursors (
+        vehicle_id UUID PRIMARY KEY REFERENCES vehicles(id) ON DELETE CASCADE,
+        last_event_at TIMESTAMPTZ,
+        last_ignition BOOLEAN,
+        last_speed_kmh NUMERIC,
+        last_fuel_liters NUMERIC,
+        last_location_name TEXT,
+        idle_started_at TIMESTAMPTZ,
+        last_idling_threshold_minutes INTEGER NOT NULL DEFAULT 0,
+        active_trip_id UUID,
+        last_error TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS gps_history_alert_delivery_retry_idx
+        ON gps_telemetry (telegram_status, recorded_at)
+        WHERE source_event_key IS NOT NULL
+          AND telegram_status IS DISTINCT FROM 'sent';
+    `).then(() => undefined).catch((error) => {
+      historyAlertSchemaPromise = null;
+      throw error;
+    });
+  }
+  await historyAlertSchemaPromise;
+}
 
 interface CursorState {
   lastEventAt: string | null;
@@ -307,6 +352,7 @@ export async function syncHistoryBackedAlerts(options: {
     vehiclesExamined: 0, historyPointsExamined: 0, alertsSaved: 0,
     alertsSkipped: 0, telegramSent: 0, telegramFailed: 0, vehiclesFailed: 0,
   };
+  await ensureHistoryAlertSchema();
   await retryHistoryTelegram(summary);
 
   const identities = await getCartrackFleetIdentities();
@@ -379,6 +425,23 @@ export async function syncHistoryBackedAlerts(options: {
             summary.alertsSaved += 1;
             if (await deliver(saved.id, message)) summary.telegramSent += 1;
             else summary.telegramFailed += 1;
+            if (alert.eventType === 'IDLING_TOO_LONG') {
+              try {
+                await createNotificationForRoles(NOTIFICATION_ROLES, {
+                  type: 'gps_alert',
+                  title: 'Idling Alert',
+                  message: `Vehicle ${vehicle.plate_number} has been idling for ${alert.idlingThresholdMinutes} minutes.`,
+                  targetUrl: '/gps-logs',
+                  targetTab: 'alerts',
+                  entityId: saved.id,
+                });
+              } catch (notificationError) {
+                console.error(
+                  `[history-alerts] Failed to create idling notification vehicle=${vehicle.id}:`,
+                  notificationError instanceof Error ? notificationError.message : String(notificationError),
+                );
+              }
+            }
           } else {
             summary.alertsSkipped += 1;
           }

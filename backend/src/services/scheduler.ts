@@ -31,6 +31,7 @@ import {
 import { createNotificationForRoles } from './notificationService.js';
 import { syncNoToLogsFromTelemetry } from './noToLifecycleService.js';
 import { syncUnlinkedGpsTripLogsToTravelOrders } from './travelOrderSyncService.js';
+import { syncHistoryBackedAlerts, type HistoryAlertSyncSummary } from './historyAlertSyncService.js';
 
 type SendTelegramFn = typeof trackerSendTelegram;
 let sendTelegram: SendTelegramFn = trackerSendTelegram;
@@ -64,6 +65,7 @@ export interface SchedulerCycleSummary {
   telegramSent: number;
   telegramFailed: number;
   lifecycleRowsExamined?: number;
+  historyAlerts?: HistoryAlertSyncSummary;
   durationSeconds: number;
   batch: {
     offset: number;
@@ -661,6 +663,9 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       toNumberOverrides,
       driverIdOverrides,
     });
+
+    const historyAlerts = await syncHistoryBackedAlerts();
+    console.log('[scheduler-history]', historyAlerts);
 
     console.log('[scheduler-debug]', {
       vehicles: result.data?.length ?? 0,
@@ -1489,6 +1494,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       telegramSent,
       telegramFailed,
       lifecycleRowsExamined,
+      historyAlerts,
       durationSeconds: duration,
       batch: result.batch,
     };
