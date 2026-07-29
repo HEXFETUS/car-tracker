@@ -30,7 +30,7 @@ function summary(overrides: Partial<SchedulerCycleSummary> = {}): SchedulerCycle
 }
 
 function cronResult(overrides: Partial<SchedulerCycleSummary> = {}): CronBatchResult {
-  return { summary: summary(overrides) };
+  return { locked: true, summary: summary(overrides) };
 }
 
 describe('full-fleet cron HTTP outcome classification', () => {
@@ -42,7 +42,18 @@ describe('full-fleet cron HTTP outcome classification', () => {
     });
   });
 
-  it('reports a skipped cycle as 500 instead of a lock conflict', () => {
+  it('reports an overlapping full-fleet cycle as 409', () => {
+    assert.deepEqual(classifyCronBatchResult({
+      locked: false,
+      summary: null,
+    }), {
+      status: 'already_running',
+      httpStatus: 409,
+      reason: 'advisory_lock_active',
+    });
+  });
+
+  it('reports a skipped non-overlapping cycle as 500', () => {
     assert.deepEqual(classifyCronBatchResult(cronResult({
       skipped: true,
       skipReason: 'paused',

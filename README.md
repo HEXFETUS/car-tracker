@@ -334,18 +334,19 @@ GET /api/cron/sync-tracker
 ```
 
 Configure cron-job.org to run every two minutes in `Asia/Manila`, use `GET`, set
-a 55-second request timeout, and provide:
+a 300-second request timeout, and provide:
 
 ```http
 X-Cron-Secret: your-secret
 ```
 
-The endpoint uses a PostgreSQL advisory lock and durable cursor to process a
-bounded fleet batch. A completed batch returns `200` and includes batch progress,
-remaining vehicles, fleet-pass completion, and deadline status. Concurrent or
-locked runs return `409`; skipped or no-progress runs return `503`. Their JSON
-bodies include machine-readable `status` and `reason` values. Requests without a
-valid configured secret receive `401`.
+Each request processes the complete live fleet and history-alert pass. A
+PostgreSQL advisory lock prevents the two-minute schedule from starting
+overlapping full-fleet work when a prior request is still running. A completed
+run returns `200` with telemetry and alert totals. An overlapping invocation
+returns `409` with `status: "already_running"` and
+`reason: "advisory_lock_active"`; it does not queue another run. Other skipped
+cycles return `500`. Requests without a valid configured secret receive `401`.
 
 Authorization bearer and query-string secrets remain accepted for backward
 compatibility, but production should use `X-Cron-Secret` so secrets do not appear
@@ -362,7 +363,7 @@ The root `vercel.json` defines the current combined deployment:
 - serves `frontend/dist` as the static application;
 - rewrites `/api/*` to `api/index.ts`;
 - rewrites non-API paths to `index.html` for client-side routing; and
-- allows the API function to run for up to 60 seconds.
+- allows the API function to run for up to 300 seconds.
 
 Recommended deployment order:
 
@@ -372,7 +373,8 @@ Recommended deployment order:
 4. Run `pnpm build` locally or in continuous integration.
 5. Deploy the Vercel project.
 6. Configure cron-job.org for the production endpoint with the secret header and a two-minute schedule.
-7. Verify repeated requests advance the durable cursor and complete a fleet pass.
+7. Verify a normal request completes the full-fleet pass and a concurrent
+   request returns `409` with `status: "already_running"`.
 8. Remove duplicate jobs or older jobs targeting localhost or tunnel URLs.
 
 Example production checks:

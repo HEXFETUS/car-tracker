@@ -68,21 +68,24 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
     const batchResult = await runCronBatch();
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
     const outcome = classifyCronBatchResult(batchResult);
+    const summary = batchResult.summary;
 
     res.status(outcome.httpStatus).json({
       success: outcome.status === 'completed',
       status: outcome.status,
       reason: outcome.reason,
       elapsed_seconds: parseFloat(elapsed),
-      totals: {
-        vehicles_processed: batchResult.summary.vehiclesProcessed,
-        telemetry_saved: batchResult.summary.telemetrySaved,
-        telemetry_skipped: batchResult.summary.telemetrySkipped,
-        telemetry_failed: batchResult.summary.telemetryFailed,
-        telegram_sent: batchResult.summary.telegramSent,
-        telegram_failed: batchResult.summary.telegramFailed,
-        history_alerts: batchResult.summary.historyAlerts ?? null,
-      },
+      totals: summary
+        ? {
+            vehicles_processed: summary.vehiclesProcessed,
+            telemetry_saved: summary.telemetrySaved,
+            telemetry_skipped: summary.telemetrySkipped,
+            telemetry_failed: summary.telemetryFailed,
+            telegram_sent: summary.telegramSent,
+            telegram_failed: summary.telegramFailed,
+            history_alerts: summary.historyAlerts ?? null,
+          }
+        : null,
     });
   } catch (error) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
