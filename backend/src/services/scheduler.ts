@@ -31,7 +31,6 @@ import {
 import { createNotificationForRoles } from './notificationService.js';
 import { syncNoToLogsFromTelemetry } from './noToLifecycleService.js';
 import { syncUnlinkedGpsTripLogsToTravelOrders } from './travelOrderSyncService.js';
-import { syncHistoryBackedAlerts, type HistoryAlertSyncSummary } from './historyAlertSyncService.js';
 
 type SendTelegramFn = typeof trackerSendTelegram;
 let sendTelegram: SendTelegramFn = trackerSendTelegram;
@@ -65,7 +64,6 @@ export interface SchedulerCycleSummary {
   telegramSent: number;
   telegramFailed: number;
   lifecycleRowsExamined?: number;
-  historyAlerts?: HistoryAlertSyncSummary;
   durationSeconds: number;
   batch: {
     offset: number;
@@ -78,9 +76,6 @@ export interface SchedulerCycleSummary {
 }
 
 export interface SchedulerCycleOptions {
-  batchOffset?: number;
-  batchLimit?: number;
-  deadlineAtMs?: number;
   /** External cron runs process the full fleet without the interval mutex. */
   allowConcurrent?: boolean;
 }
@@ -665,17 +660,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       dispatchAlerts: false,
       toNumberOverrides,
       driverIdOverrides,
-      batchOffset: options.batchOffset,
-      batchLimit: options.batchLimit,
-      deadlineAtMs: options.deadlineAtMs,
     });
-
-    const historyAlerts = await syncHistoryBackedAlerts({
-      batchOffset: options.batchOffset,
-      batchLimit: options.batchLimit,
-      deadlineAtMs: options.deadlineAtMs,
-    });
-    console.log('[scheduler-history]', historyAlerts);
 
     console.log('[scheduler-debug]', {
       vehicles: result.data?.length ?? 0,
@@ -1504,7 +1489,6 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       telegramSent,
       telegramFailed,
       lifecycleRowsExamined,
-      historyAlerts,
       durationSeconds: duration,
       batch: result.batch,
     };

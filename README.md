@@ -196,8 +196,6 @@ The local backend starts the in-process fleet scheduler immediately and repeats 
 | `CHAT_ID` | For Telegram | None | Destination Telegram chat ID |
 | `CRON_SECRET` | For cron/manual production sync | None | Secret accepted by the protected scheduler route |
 | `SYNC_INTERVAL_SECONDS` | No | `30` | Local scheduler interval; runtime minimum is 10 seconds |
-| `CRON_BATCH_SIZE` | No | `2` | Maximum raw fleet vehicles examined by each external cron request |
-| `CRON_SOFT_DEADLINE_MS` | No | `45000` | Stops a cron batch from starting another vehicle after this duration |
 | `VITE_API_URL` | No | Same origin | Browser API base URL; normally unset locally and on Vercel |
 
 ### Alert and Cartrack tuning

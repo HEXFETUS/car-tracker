@@ -81,7 +81,6 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
         telemetry_failed: batchResult.summary.telemetryFailed,
         telegram_sent: batchResult.summary.telegramSent,
         telegram_failed: batchResult.summary.telegramFailed,
-        history_alerts: batchResult.summary.historyAlerts ?? null,
       },
     });
   } catch (error) {
