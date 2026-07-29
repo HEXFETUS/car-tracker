@@ -137,6 +137,36 @@ describe('No TO lifecycle journey boundaries', () => {
     assert.equal(trips[0].endCoordinates, '8.454678,124.623177');
   });
 
+  it('uses the first real telemetry point when a journey starts away from base', () => {
+    const trips = buildNoToLifecycleTrips([
+      telemetry({
+        event_type: 'IGNITION_ON',
+        latitude: 8.474215,
+        longitude: 124.630676,
+        location_name: 'Actual away origin',
+      }),
+      telemetry({
+        latitude: 8.381879,
+        longitude: 124.272789,
+        recorded_at: '2026-07-18T01:00:00.000Z',
+        location_name: 'Farthest point',
+      }),
+      telemetry({
+        event_type: 'IGNITION_OFF',
+        latitude: 8.454678,
+        longitude: 124.623177,
+        speed_kmh: 0,
+        recorded_at: '2026-07-18T02:00:00.000Z',
+        location_name: 'Fleet base',
+      }),
+    ], '8.453993,124.6229589', 10 * 60 * 1000);
+
+    assert.equal(trips.length, 1);
+    assert.equal(trips[0].originName, 'Actual away origin');
+    assert.equal(trips[0].originCoord, '8.474215,124.630676');
+    assert.equal(trips[0].points[0].event_type, 'IGNITION_ON');
+  });
+
   it('anchors a journey to the last fleet-base point before MOTION_STARTED', () => {
     const trips = buildNoToLifecycleTrips([
       telemetry({

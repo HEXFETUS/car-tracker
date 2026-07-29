@@ -2,7 +2,7 @@
 
 Car Tracker is a fleet operations system for managing vehicles, drivers, travel orders, maintenance, and GPS-derived trip activity. It combines live data from Cartrack with internal travel-order workflows, PostgreSQL persistence, operational dashboards, reports, in-app notifications, and optional Telegram alerts.
 
-This repository is a pnpm monorepo containing the browser application, API, shared types, database migrations, and the fleet synchronization engine.
+This repository is a pnpm monorepo containing the browser application, API, shared types, database access code, and the fleet synchronization engine.
 
 ## Features
 
@@ -57,7 +57,7 @@ The main runtime flow is:
 | Frontend | React 19, Vite 6, TypeScript, React Router, TanStack Query, Tailwind CSS, Leaflet, Recharts |
 | Backend | Node.js, Express 4, TypeScript, PostgreSQL (`pg`), bcrypt |
 | Tracking | Cartrack HTTP integration, GPS state and trip lifecycle services |
-| Database | PostgreSQL or Supabase PostgreSQL with ordered SQL migrations |
+| Database | PostgreSQL or Supabase PostgreSQL |
 | Deployment | Vercel static frontend and Node serverless API; local Node server is also supported |
 | Notifications | In-app notifications and optional Telegram Bot API alerts |
 
@@ -67,7 +67,6 @@ The main runtime flow is:
 .
 ├── api/                    # Vercel serverless entry point for the compiled Express app
 ├── backend/                # Express API, services, security, routes, and database code
-│   └── src/db/migrations/  # Ordered, tracked PostgreSQL migrations
 ├── frontend/               # React/Vite single-page application
 ├── packages/tracker/       # Reusable Cartrack sync and alert engine
 ├── shared/                 # Shared application types workspace package
@@ -142,15 +141,11 @@ VITE_API_URL=http://localhost:3500
 
 Leave `VITE_API_URL` unset for a same-origin production deployment such as the included Vercel configuration.
 
-### 4. Apply database migrations
+### 4. Confirm database access
 
-```bash
-pnpm --filter car-tracker-backend migrate
-```
+The configured database is the source of truth for the application schema and must already contain the required tables, columns, indexes, functions, and policies. This repository does not reconstruct a fresh database.
 
-The migration runner applies pending `.sql` files from `backend/src/db/migrations` in filename order. Each migration runs in its own transaction, and the `_migrations` table records the filename and checksum so repeated runs skip migrations already applied.
-
-Run migrations before starting a fresh environment and before deploying application code that depends on a newer schema.
+For a future schema change, create temporary SQL, apply it directly to every required database, verify both the schema change and dependent application behavior, and then delete the SQL file before committing the application changes.
 
 ### 5. Start development
 
@@ -289,16 +284,16 @@ The API returns JSON and generally uses a `{ success, data, error, message }` en
 
 ## Database domains
 
-The schema is managed entirely through `backend/src/db/migrations`. Its main domains are:
+The existing database is the authoritative schema. Its main domains are:
 
 - Fleet master data: vehicles, drivers, maintenance, and users
 - Travel orders: workflow status, assignments, coordinates, and ordered destinations
 - Raw and classified tracking: telemetry, alerts, durable vehicle state, and idling deduplication
 - Trips: travel-order trip logs, active trip state, stops, and actual route endpoints
 - No-TO journeys: unmatched trip logs and their active lifecycle state
-- Application support: notifications, scheduler run history, rate-limit buckets, and migration tracking
+- Application support: notifications, scheduler run history, and rate-limit buckets
 
-Do not edit an already-applied migration. Add a new numbered migration so existing environments can advance safely.
+Schema changes must be applied and verified directly against every required database. Temporary migration SQL must be deleted after implementation and must not be committed.
 
 ## Development commands
 
@@ -313,7 +308,6 @@ Run these commands from the repository root unless noted otherwise.
 | `pnpm build:backend` | Type-check and compile the backend |
 | `pnpm build:frontend` | Build the frontend into `frontend/dist` |
 | `pnpm --filter car-tracker-frontend preview` | Preview the built frontend |
-| `pnpm --filter car-tracker-backend migrate` | Apply pending database migrations |
 | `pnpm tracker` | Run one standalone fleet sync cycle and exit |
 | `pnpm lint` | Lint all TypeScript and TSX sources |
 | `pnpm lint:backend` | Lint backend TypeScript sources |
@@ -376,7 +370,7 @@ Recommended deployment order:
 
 1. Configure `DATABASE_URL`, `AUTH_SECRET`, `APP_ORIGINS`, Cartrack credentials, `CRON_SECRET`, and optional Telegram settings in the deployment environment.
 2. Set `NODE_ENV=production` if the platform does not set it automatically.
-3. Apply pending migrations to the production database.
+3. Confirm the production database already contains every schema change required by the application.
 4. Run `pnpm build` locally or in continuous integration.
 5. Deploy the Vercel project.
 6. Configure cron-job.org for the production endpoint with the secret header and a two-minute schedule.
@@ -397,7 +391,6 @@ Do not put a production cron secret directly in shell history on shared systems.
 Before deployment, run:
 
 ```bash
-pnpm --filter car-tracker-backend migrate
 pnpm --filter car-tracker-backend test
 pnpm lint
 pnpm build
@@ -418,9 +411,9 @@ Detailed operational checks are maintained in:
 
 - [Deployment validation checklist](scripts/deploy-validation-checklist.md)
 - [System testing plan](scripts/testing-plan.md)
-- [Migration verification SQL](scripts/verify-migrations.sql)
+- [Database schema verification SQL](scripts/verify-migrations.sql)
 
-Some historical examples in these documents may describe an earlier migration or alert label. Treat current source, migrations, and API responses as authoritative when they differ.
+Some historical examples in these documents may describe an earlier schema change or alert label. Treat the current database schema, source code, and API responses as authoritative when they differ.
 
 ## Troubleshooting
 
@@ -441,8 +434,8 @@ Some historical examples in these documents may describe an earlier migration or
 ### Database errors or missing relations
 
 - Verify `DATABASE_URL` points to the intended environment.
-- Run `pnpm --filter car-tracker-backend migrate` and inspect the first failed migration.
-- Do not manually mark a failed migration as applied; correct the database condition and rerun the idempotent migrator.
+- Confirm the database already contains the schema required by the running application.
+- Apply any missing schema change directly to the intended database, verify it, and delete the temporary SQL after implementation.
 
 ### Synchronization does not run
 
@@ -469,7 +462,7 @@ Stop the existing process or set another `PORT`. If the port changes, also updat
 - Restrict `APP_ORIGINS` to browser origins you control.
 - Keep mutations behind backend role checks; do not rely on hidden frontend controls.
 - Prefer cron authentication headers over query parameters.
-- Apply security and rate-limit migrations before exposing a deployment.
+- Confirm required security policies and rate-limit tables exist before exposing a deployment.
 - Use a restricted database account where operational requirements allow it, and rotate credentials after suspected exposure.
 
 ## License

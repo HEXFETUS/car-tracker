@@ -317,7 +317,10 @@ router.get('/no-to', async (req: Request, res: Response) => {
          LEFT JOIN drivers d ON d.id = n.driver_id
          LEFT JOIN travel_orders t ON t.id = n.travel_order_id
         ${whereClause}
-        ORDER BY n.trip_date DESC, split_part(n.no_to_record_no, '-', 4)::int DESC
+        ORDER BY n.trip_date DESC,
+                 substring(n.no_to_record_no FROM '([0-9]+)$')::bigint DESC NULLS LAST,
+                 n.created_at DESC,
+                 n.id DESC
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, pageSize, offset],
     );

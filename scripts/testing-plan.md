@@ -186,25 +186,14 @@ curl http://localhost:3000/api/travel-orders
 
 ---
 
-## 4. Migration Verification
+## 4. Database Schema Verification
 
 ### Objective
-Confirm a fresh database applies all migrations in sequence without errors.
+Confirm the existing test database contains the schema required by the application.
 
 ### Procedure
 
-#### Step 1: Create Fresh Database
-```bash
-createdb car_tracker_test
-```
-
-#### Step 2: Apply Migrations
-```bash
-cd backend
-pnpm run migrate
-```
-
-#### Step 3: Verify Indexes
+#### Step 1: Verify Schema
 ```sql
 -- Run scripts/verify-migrations.sql
 \i scripts/verify-migrations.sql
@@ -217,9 +206,9 @@ pnpm run migrate
 - `indexes_created` >= 4
 
 ### Acceptance Criteria
-- All migrations apply without error
 - All expected indexes exist
 - No duplicate index names
+- The database contains every table, column, function, and policy required by the application
 
 ---
 
@@ -236,7 +225,7 @@ Per your guidance, these are deferred:
 1. **Week 1**: Run scheduler soak test (24-48 hours)
 2. **Week 1**: Execute multi-destination e2e test
 3. **Week 2**: Authentication regression test with real users
-4. **Week 2**: Fresh DB migration verification
+4. **Week 2**: Existing database schema verification
 5. **After validation**: Consider parallelization and logging improvements
 
 Once all four verification items pass, the system can be considered "stable" for production use.

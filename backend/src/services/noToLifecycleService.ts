@@ -306,19 +306,9 @@ export function buildNoToLifecycleTrips(
         && lastBaseAt != null
         && rowMs >= lastBaseAt
         && rowMs - lastBaseAt <= BASE_ANCHOR_MAX_GAP_MS;
-      const configuredBase = parseCoord(defaultBaseCoord);
-      const syntheticBaseRow: TelemetryRow | null = !fleetBaseResult.near && !canUseLastBase && configuredBase
-        ? {
-            ...row,
-            id: null,
-            event_type: 'ORIGIN_ANCHOR',
-            latitude: configuredBase.lat,
-            longitude: configuredBase.lng,
-            speed_kmh: 0,
-            location_name: 'Fleet base',
-          }
-        : null;
-      const originRow = canUseLastBase ? lastBaseRow! : (syntheticBaseRow ?? row);
+      // Never invent an origin at the configured base. If there is no recent
+      // real base point, the first telemetry point is the only truthful origin.
+      const originRow = canUseLastBase ? lastBaseRow! : row;
       const originCoord = coordinate(originRow) ?? coord;
       const originAt = canUseLastBase
         ? (timestampToIso(originRow.recorded_at) ?? recordedAt)

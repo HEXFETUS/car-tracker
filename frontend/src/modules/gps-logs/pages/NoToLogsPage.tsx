@@ -108,6 +108,12 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
   };
 
   const today = new Date().toISOString().split('T')[0];
+  const hasActiveFilters = Boolean(vehicleFilter || dateFilter);
+  const clearFilters = () => {
+    onVehicleFilterChange('');
+    onDateFilterChange('');
+    setPage(1);
+  };
   const filters = (
     <>
       <div className="relative w-full sm:w-auto">
@@ -154,7 +160,21 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
       {!loading && result && result.data.length === 0 && (
         <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-zinc-100 bg-white text-center">
           <AlertTriangle className="mb-3 size-10 text-zinc-300" />
-          <p className="font-semibold text-zinc-700">No No TO logs found</p>
+          <p className="font-semibold text-zinc-700">
+            {hasActiveFilters ? 'No No TO logs match the active filters' : 'No No TO logs found'}
+          </p>
+          {hasActiveFilters && (
+            <>
+              <p className="mt-1 text-sm text-zinc-500">Clear the vehicle and date filters to show all No TO logs.</p>
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="mt-4 inline-flex min-h-11 items-center justify-center rounded-lg bg-brand-teal px-4 py-2 text-sm font-medium text-white hover:bg-brand-teal/90"
+              >
+                Clear filters
+              </button>
+            </>
+          )}
         </div>
       )}
 

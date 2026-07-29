@@ -164,8 +164,6 @@ Expected output: 8/8 tests passed, 0 failed.
 | `packages/tracker/types.d.ts` | Modified (existing) |
 | `backend/src/services/scheduler.ts` | Modified (exported runCycle) |
 | `backend/src/services/gpsTelemetryService.ts` | Modified (existing) |
-| `backend/src/db/migrations/040_create_gps_idling_dedup.sql` | Existing |
-| `backend/src/db/migrations/041_create_scheduler_runs.sql` | **New** |
 | `backend/src/services/schedulerRunService.ts` | **New** |
 | `backend/src/routes/cron.ts` | Rewritten with DB persistence |
 | `backend/src/routes/settings.ts` | Modified (async checkSchedulerStatus, new endpoints) |

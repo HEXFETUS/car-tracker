@@ -1,5 +1,5 @@
--- Migration verification script
--- Run this against a fresh database to confirm all migrations apply in sequence
+-- Database schema verification script
+-- Run this against an existing application database to verify required schema
 
 -- Expected migrations in order:
 -- 039_gps_trip_logs_unique_index.sql
