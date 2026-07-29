@@ -74,18 +74,14 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
       status: outcome.status,
       reason: outcome.reason,
       elapsed_seconds: parseFloat(elapsed),
-      summary: batchResult.summary,
-      batch: {
-        locked: batchResult.locked,
-        batch_size: batchResult.batchSize,
-        soft_deadline_ms: batchResult.softDeadlineMs,
-        fleet_pass: batchResult.fleetPass,
-        next_fleet_pass: batchResult.nextFleetPass,
-        processed: batchResult.summary?.batch?.examined ?? 0,
-        remaining: batchResult.summary?.batch?.remaining ?? null,
-        cursor: batchResult.summary?.batch?.nextOffset ?? null,
-        pass_complete: batchResult.summary?.batch?.passComplete ?? false,
-        deadline_reached: batchResult.summary?.batch?.deadlineReached ?? false,
+      totals: {
+        vehicles_processed: batchResult.summary.vehiclesProcessed,
+        telemetry_saved: batchResult.summary.telemetrySaved,
+        telemetry_skipped: batchResult.summary.telemetrySkipped,
+        telemetry_failed: batchResult.summary.telemetryFailed,
+        telegram_sent: batchResult.summary.telegramSent,
+        telegram_failed: batchResult.summary.telegramFailed,
+        history_alerts: batchResult.summary.historyAlerts ?? null,
       },
     });
   } catch (error) {

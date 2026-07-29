@@ -81,6 +81,8 @@ export interface SchedulerCycleOptions {
   batchOffset?: number;
   batchLimit?: number;
   deadlineAtMs?: number;
+  /** External cron runs process the full fleet without the interval mutex. */
+  allowConcurrent?: boolean;
 }
 
 export type TelemetryTravelOrderCandidate = {
@@ -587,7 +589,8 @@ function skippedCycleSummary(skipReason: string): SchedulerCycleSummary {
 }
 
 async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerCycleSummary> {
-  if (cycleLock) {
+  const useCycleLock = options.allowConcurrent !== true;
+  if (useCycleLock && cycleLock) {
     console.log(JSON.stringify({
       event: 'scheduler_cycle_skipped',
       reason: 'lock_active',
@@ -595,11 +598,11 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     }));
     return skippedCycleSummary('lock_active');
   }
-  cycleLock = true;
+  if (useCycleLock) cycleLock = true;
 
   if (state.paused) {
     console.log('[scheduler] Paused — skipping cycle');
-    cycleLock = false;
+    if (useCycleLock) cycleLock = false;
     return skippedCycleSummary('paused');
   }
 
@@ -1522,7 +1525,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     }));
     throw error;
   } finally {
-    cycleLock = false;
+    if (useCycleLock) cycleLock = false;
   }
 }
 

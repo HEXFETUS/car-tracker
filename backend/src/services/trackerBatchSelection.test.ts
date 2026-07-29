@@ -9,6 +9,16 @@ const fleet = [
 ];
 
 describe('tracker fleet batch selection', () => {
+  it('selects the complete fleet when cron omits batching options', () => {
+    const result = selectFleetBatch(fleet);
+    assert.deepEqual(
+      result.vehicles.map((vehicle) => vehicle.registration),
+      ['AAA-001', 'BBB-002', 'CCC-003'],
+    );
+    assert.equal(result.vehicles.length, 3);
+    assert.equal(result.offset, 0);
+  });
+
   it('uses a stable plate order before applying the cursor and limit', () => {
     const result = selectFleetBatch(fleet, 1, 2);
     assert.deepEqual(
