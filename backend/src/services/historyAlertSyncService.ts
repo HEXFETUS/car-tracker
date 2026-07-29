@@ -161,6 +161,10 @@ export function deriveHistoryAlerts(
   const hadPrevious = previous.ignition !== null;
   const moving = point.ignition && point.speedKmh > 0;
   const wasMoving = previous.ignition === true && previous.speedKmh > 0;
+  const motionStarted = hadPrevious
+    && moving
+    && !wasMoving
+    && previous.lastIdlingThresholdMinutes > 0;
 
   let activeTripId = previous.activeTripId;
   if (hadPrevious && previous.ignition === false && point.ignition) {
@@ -172,7 +176,16 @@ export function deriveHistoryAlerts(
     activeTripId = randomUUID();
   }
 
-  if (hadPrevious && moving && !sameLocation(previous.locationName, point.locationName) && point.locationName) {
+  // The first moving point after an alerted idle session belongs exclusively
+  // to MOTION_STARTED. The cursor still advances to this location, so a normal
+  // LOCATION_UPDATE resumes only after a later point changes location again.
+  if (
+    hadPrevious
+    && moving
+    && !motionStarted
+    && !sameLocation(previous.locationName, point.locationName)
+    && point.locationName
+  ) {
     alerts.push({ eventType: 'LOCATION_UPDATE' });
   }
   if (hadPrevious && point.ignition && point.speedKmh >= SPEED_LIMIT_KMH && previous.speedKmh < SPEED_LIMIT_KMH) {
@@ -197,7 +210,7 @@ export function deriveHistoryAlerts(
       }
     }
   } else {
-    if (moving && !wasMoving && previous.lastIdlingThresholdMinutes > 0) {
+    if (motionStarted) {
       alerts.push({ eventType: 'MOTION_STARTED' });
     }
     idleStartedAt = null;

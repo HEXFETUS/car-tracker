@@ -75,9 +75,29 @@ describe('history alert derivation', () => {
         locationName: 'Exit Road',
       }),
     );
-    assert.deepEqual(moving.alerts.map((alert) => alert.eventType), [
-      'LOCATION_UPDATE', 'MOTION_STARTED',
-    ]);
+    assert.deepEqual(moving.alerts.map((alert) => alert.eventType), ['MOTION_STARTED']);
+
+    const unchangedLocation = deriveHistoryAlerts(
+      moving.next,
+      point({
+        recordedAt: '2026-07-28T02:12:00.000Z',
+        timestampMs: Date.parse('2026-07-28T02:12:00.000Z'),
+        speedKmh: 20,
+        locationName: 'Exit Road',
+      }),
+    );
+    assert.deepEqual(unchangedLocation.alerts, []);
+
+    const changedAgain = deriveHistoryAlerts(
+      unchangedLocation.next,
+      point({
+        recordedAt: '2026-07-28T02:13:00.000Z',
+        timestampMs: Date.parse('2026-07-28T02:13:00.000Z'),
+        speedKmh: 20,
+        locationName: 'Next Road',
+      }),
+    );
+    assert.deepEqual(changedAgain.alerts.map((alert) => alert.eventType), ['LOCATION_UPDATE']);
   });
 
   it('emits each cumulative idling milestone only once', () => {
