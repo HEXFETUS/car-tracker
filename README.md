@@ -195,6 +195,8 @@ The local backend starts the in-process fleet scheduler immediately and repeats 
 | `BOT_TOKEN` | For Telegram | None | Telegram bot token |
 | `CHAT_ID` | For Telegram | None | Destination Telegram chat ID |
 | `CRON_SECRET` | For cron/manual production sync | None | Secret accepted by the protected scheduler route |
+| `CRON_BATCH_SIZE` | No | `2` | Maximum fleet vehicles examined by one external cron request |
+| `CRON_SOFT_DEADLINE_MS` | No | `45000` | Soft deadline after which a cron batch stops starting more vehicles |
 | `SYNC_INTERVAL_SECONDS` | No | `30` | Local scheduler interval; runtime minimum is 10 seconds |
 | `VITE_API_URL` | No | Same origin | Browser API base URL; normally unset locally and on Vercel |
 
@@ -334,25 +336,27 @@ GET /api/cron/sync-tracker
 ```
 
 Configure cron-job.org to run every two minutes in `Asia/Manila`, use `GET`, set
-a 300-second request timeout, and provide:
+a request timeout above `CRON_SOFT_DEADLINE_MS`, and provide:
 
 ```http
 X-Cron-Secret: your-secret
 ```
 
-Each request processes the complete live fleet and history-alert pass. A
-PostgreSQL advisory lock prevents the two-minute schedule from starting
-overlapping full-fleet work when a prior request is still running. A completed
-run returns `200` with telemetry and alert totals. An overlapping invocation
-returns `409` with `status: "already_running"` and
-`reason: "advisory_lock_active"`; it does not queue another run. Other skipped
-cycles return `500`. Requests without a valid configured secret receive `401`.
+Each request processes a durable slice of the live fleet and matching
+history-alert pass. `CRON_BATCH_SIZE` defaults to two vehicles and
+`CRON_SOFT_DEADLINE_MS` defaults to 45 seconds. PostgreSQL stores the next
+vehicle offset so later invocations continue the fleet pass. A completed batch
+returns `200` with telemetry, alert, and cursor totals. An overlapping
+invocation is a healthy no-op and returns `200` with
+`status: "already_running"` and `reason: "advisory_lock_active"`. Processing
+failures return `500`. Requests without a valid configured secret receive
+`401`.
 
 Authorization bearer and query-string secrets remain accepted for backward
-compatibility, but production should use `X-Cron-Secret` so secrets do not appear
-in URLs. Configure cron-job.org to treat only HTTP 2xx as successful, retain the
-JSON response body in execution history, and enable failure/recovery
-notifications.
+compatibility, but production must use `X-Cron-Secret` so secrets do not appear
+in URLs or provider execution history. Configure cron-job.org to treat only
+HTTP 2xx as successful, retain the JSON response body in execution history,
+and enable failure/recovery notifications.
 
 ## Production deployment
 
@@ -373,8 +377,8 @@ Recommended deployment order:
 4. Run `pnpm build` locally or in continuous integration.
 5. Deploy the Vercel project.
 6. Configure cron-job.org for the production endpoint with the secret header and a two-minute schedule.
-7. Verify a normal request completes the full-fleet pass and a concurrent
-   request returns `409` with `status: "already_running"`.
+7. Verify repeated normal requests advance the cursor through a full-fleet
+   pass and a concurrent request returns `200` with `status: "already_running"`.
 8. Remove duplicate jobs or older jobs targeting localhost or tunnel URLs.
 
 Example production checks:

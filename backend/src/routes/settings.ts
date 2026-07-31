@@ -1034,11 +1034,12 @@ router.post('/scheduler-run-now', expensiveOperationRateLimit, async (req: Reque
     }
 
     // Make an internal HTTP request to the cron endpoint
-    const cronUrl = `${protocol}://${host}/api/cron/sync-tracker?secret=${cronSecret}`;
+    const cronUrl = `${protocol}://${host}/api/cron/sync-tracker`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
 
     const response = await fetch(cronUrl, {
+      headers: { 'X-Cron-Secret': cronSecret },
       signal: controller.signal,
     });
     clearTimeout(timeout);

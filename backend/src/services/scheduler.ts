@@ -78,8 +78,9 @@ export interface SchedulerCycleSummary {
 }
 
 export interface SchedulerCycleOptions {
-  /** External cron runs process the full fleet without the interval mutex. */
-  allowConcurrent?: boolean;
+  batchOffset?: number;
+  batchLimit?: number;
+  deadlineAtMs?: number;
 }
 
 export type TelemetryTravelOrderCandidate = {
@@ -586,8 +587,7 @@ function skippedCycleSummary(skipReason: string): SchedulerCycleSummary {
 }
 
 async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerCycleSummary> {
-  const useCycleLock = options.allowConcurrent !== true;
-  if (useCycleLock && cycleLock) {
+  if (cycleLock) {
     console.log(JSON.stringify({
       event: 'scheduler_cycle_skipped',
       reason: 'lock_active',
@@ -595,11 +595,11 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     }));
     return skippedCycleSummary('lock_active');
   }
-  if (useCycleLock) cycleLock = true;
+  cycleLock = true;
 
   if (state.paused) {
     console.log('[scheduler] Paused — skipping cycle');
-    if (useCycleLock) cycleLock = false;
+    cycleLock = false;
     return skippedCycleSummary('paused');
   }
 
@@ -662,9 +662,16 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       dispatchAlerts: false,
       toNumberOverrides,
       driverIdOverrides,
+      batchOffset: options.batchOffset,
+      batchLimit: options.batchLimit,
+      deadlineAtMs: options.deadlineAtMs,
     });
 
-    const historyAlerts = await syncHistoryBackedAlerts();
+    const historyAlerts = await syncHistoryBackedAlerts({
+      batchOffset: options.batchOffset,
+      batchLimit: options.batchLimit,
+      deadlineAtMs: options.deadlineAtMs,
+    });
     console.log('[scheduler-history]', historyAlerts);
 
     console.log('[scheduler-debug]', {
@@ -1515,7 +1522,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     }));
     throw error;
   } finally {
-    if (useCycleLock) cycleLock = false;
+    cycleLock = false;
   }
 }
 

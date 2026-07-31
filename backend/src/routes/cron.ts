@@ -8,7 +8,8 @@
 // against the CRON_SECRET env variable.
 //
 // Usage (external cron service — e.g. cron-job.org):
-//   GET https://your-api.example.com/api/cron/sync-tracker?secret=your-cron-secret-here
+//   GET https://your-api.example.com/api/cron/sync-tracker
+//   X-Cron-Secret: your-cron-secret-here
 
 import express, { type Request, type Response, type Router as ExpressRouter } from 'express';
 import { CRON_SECRET } from '../config/env.js';
@@ -71,7 +72,7 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
     const summary = batchResult.summary;
 
     res.status(outcome.httpStatus).json({
-      success: outcome.status === 'completed',
+      success: outcome.httpStatus === 200,
       status: outcome.status,
       reason: outcome.reason,
       elapsed_seconds: parseFloat(elapsed),
@@ -86,6 +87,18 @@ router.get('/sync-tracker', async (req: Request, res: Response) => {
             history_alerts: summary.historyAlerts ?? null,
           }
         : null,
+      batch: {
+        locked: batchResult.locked,
+        batch_size: batchResult.batchSize,
+        soft_deadline_ms: batchResult.softDeadlineMs,
+        fleet_pass: batchResult.fleetPass,
+        next_fleet_pass: batchResult.nextFleetPass,
+        processed: summary?.batch?.examined ?? 0,
+        remaining: summary?.batch?.remaining ?? null,
+        cursor: summary?.batch?.nextOffset ?? null,
+        pass_complete: summary?.batch?.passComplete ?? false,
+        deadline_reached: summary?.batch?.deadlineReached ?? false,
+      },
     });
   } catch (error) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
