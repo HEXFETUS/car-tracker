@@ -672,11 +672,19 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
       deadlineAtMs: options.deadlineAtMs,
     });
 
-    const historyAlerts = await syncHistoryBackedAlerts({
-      batchOffset: options.batchOffset,
-      batchLimit: options.batchLimit,
-      deadlineAtMs: options.deadlineAtMs,
-    });
+    // History-backed alert recovery is disabled on the Hobby plan because
+    // cron-job.org enforces a 30-second timeout. The fleet sync pass above
+    // already saves alerts to gps_telemetry in real time. Re-enable this
+    // recovery pass only when running on Vercel Pro with a longer timeout.
+    const historyAlerts: HistoryAlertSyncSummary = {
+      vehiclesExamined: 0,
+      historyPointsExamined: 0,
+      alertsSaved: 0,
+      alertsSkipped: 0,
+      telegramSent: 0,
+      telegramFailed: 0,
+      vehiclesFailed: 0,
+    };
     console.log('[scheduler-history]', historyAlerts);
 
     console.log('[scheduler-debug]', {
