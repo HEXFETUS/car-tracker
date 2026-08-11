@@ -394,6 +394,8 @@ export async function syncHistoryBackedAlerts(options: {
       : Date.now() - INITIAL_LOOKBACK_MS;
     const fetchFromMs = originalCursorMs - HISTORY_OVERLAP_MS;
     try {
+      // Check deadline before making expensive external API calls
+      if (options.deadlineAtMs && Date.now() >= options.deadlineAtMs) break;
       const historyArrays = await Promise.all(datesToFetch(fetchFromMs, Date.now()).map((date) =>
         fetchCartrackVehicleHistory(identity.unitId, date, identity.plateNumber, {
           allowCurrentStatusFallback: false,

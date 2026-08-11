@@ -639,17 +639,22 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     // boundaries, and does not depend on tracker display metadata.
     let telemetryTravelOrders: TelemetryTravelOrderCandidate[] = [];
     try {
+      // Use a single optimized query that combines both travel order lookups
       const toIdResult = await getPool().query<TelemetryTravelOrderCandidate>(
         `SELECT id, vehicle_id, driver_id, to_number,
-                scheduled_departure::date::text AS travel_date,
-                scheduled_departure::text AS scheduled_departure_local,
-                scheduled_arrival::text AS scheduled_arrival_local
-          FROM travel_orders
-          WHERE status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
-            AND vehicle_id IS NOT NULL
-            AND to_number IS NOT NULL
-            AND scheduled_departure IS NOT NULL
-          ORDER BY vehicle_id, scheduled_departure ASC, id ASC`,
+                 scheduled_departure::date::text AS travel_date,
+                 scheduled_departure::text AS scheduled_departure_local,
+                 scheduled_arrival::text AS scheduled_arrival_local
+           FROM travel_orders
+           WHERE status IN ('APPROVED', 'ACTIVE', 'COMPLETED')
+             AND vehicle_id IS NOT NULL
+             AND to_number IS NOT NULL
+             AND scheduled_departure IS NOT NULL
+             AND (
+               scheduled_departure::date = (NOW() AT TIME ZONE 'Asia/Manila')::date
+               OR status IN ('ACTIVE', 'COMPLETED')
+             )
+           ORDER BY vehicle_id, scheduled_departure ASC, id ASC`,
       );
       telemetryTravelOrders = toIdResult.rows;
       console.log('[scheduler] Travel orders loaded for event-date resolution:', telemetryTravelOrders.length);

@@ -69,8 +69,8 @@ export interface TransformedTripData {
 
 // ── Constants ─────────────────────────────────────────────────
 
-const CARTRACK_TIMEOUT_MS = 20000;
-const CARTRACK_RETRIES = 2;
+const CARTRACK_TIMEOUT_MS = 10000;
+const CARTRACK_RETRIES = 1;
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -407,6 +407,8 @@ export async function fetchCartrackVehicleHistory(
   const baseUrl = normalizeBaseUrl(CARTRACK_API_URL);
   const registration = encodeURIComponent((plateNumber || unitId).trim().toUpperCase());
 
+  // Limit to the most likely endpoints to avoid excessive API calls.
+  // Each endpoint has a 10s timeout and 1 retry, so worst case is ~40s per vehicle.
   const endpoints = [
     appendQuery(`${baseUrl}/trips/${registration}`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }),
     appendQuery(`${baseUrl}/trips/${registration}`, { from: fromIso, to: toIso }),
@@ -414,12 +416,6 @@ export async function fetchCartrackVehicleHistory(
     appendQuery(`${baseUrl}/trips/${unitId}/details`, { from: fromIso, to: toIso }),
     appendQuery(`${baseUrl}/vehicles/${registration}/trips`, { start_timestamp: startTimestamp, end_timestamp: endTimestamp }),
     appendQuery(`${baseUrl}/vehicles/${registration}/trips`, { from: fromIso, to: toIso }),
-    `${baseUrl}/vehicles/${unitId}/trips/${dateStr}`,
-    appendQuery(`${baseUrl}/vehicles/${unitId}/trips`, { from: fromIso, to: toIso }),
-    appendQuery(`${baseUrl}/trips`, { registration: plateNumber || unitId, start_timestamp: startTimestamp, end_timestamp: endTimestamp }),
-    appendQuery(`${baseUrl}/history/${unitId}`, { from: fromIso, to: toIso }),
-    appendQuery(`${baseUrl}/reports/trip/${registration}`, { from: fromIso, to: toIso }),
-    appendQuery(`${baseUrl}/reports/route/${registration}`, { from: fromIso, to: toIso }),
   ];
 
   let lastError: Error | null = null;

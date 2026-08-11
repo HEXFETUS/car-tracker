@@ -52,7 +52,7 @@ export function getPool(): pg.Pool {
 
     pool = new Pool({
       connectionString: DATABASE_URL,
-      max: 5,
+      max: 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
     });
