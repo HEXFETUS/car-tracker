@@ -31,6 +31,7 @@ import {
   failLifecycleSync,
   type LifecycleSyncOptions,
 } from './lifecycleSyncProgressService.js';
+import { generateNoToRecordNo, renumberNoToRecordNos } from './noToRecordNumberService.js';
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -176,22 +177,6 @@ function isIdling(row: TelemetryRow): boolean {
 
 function tripDateFromTimestamp(value: string): string {
   return value.slice(0, 10);
-}
-
-async function generateNoToRecordNo(departureTime: string): Promise<string> {
-  const pool = getPool();
-  const year = new Date(departureTime).getFullYear();
-  // Use MAX of the numeric suffix instead of COUNT(*) so that gaps from
-  // deleted/linked-then-removed records are skipped and we never generate
-  // a record number that already exists.
-  const result = await pool.query<{ max_seq: string | null }>(
-    `SELECT MAX(CAST(split_part(no_to_record_no, '-', 4) AS INTEGER)) AS max_seq
-       FROM gps_no_to_logs
-      WHERE EXTRACT(YEAR FROM COALESCE(departure_time, trip_date, created_at)) = $1`,
-    [year],
-  );
-  const nextSeq = (Number(result.rows[0]?.max_seq ?? 0)) + 1;
-  return `NO-TO-${year}-${String(nextSeq).padStart(4, '0')}`;
 }
 
 /** Check if a coordinate is near this logical journey's starting point. */
@@ -655,7 +640,7 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
     );
   } else {
     // ── INSERT new log ──
-    const noToRecordNo = await generateNoToRecordNo(trip.startedAt);
+    const noToRecordNo = await generateNoToRecordNo(tripDateFromTimestamp(trip.startedAt));
     const primaryActiveTripId = activeTripIdArray.length > 0 ? activeTripIdArray[0] : null;
     const insertColumns = [
       'no_to_record_no',
@@ -743,7 +728,7 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
         lastError = err;
         // If duplicate key on no_to_record_no, regenerate and retry
         if (err?.code === '23505' && err?.constraint === 'gps_no_to_logs_no_to_record_no_key') {
-          const newNo = await generateNoToRecordNo(trip.startedAt);
+          const newNo = await generateNoToRecordNo(tripDateFromTimestamp(trip.startedAt));
           insertValues[0] = newNo;
           continue;
         }
@@ -1099,6 +1084,18 @@ async function syncNoToLogsFromTelemetryUnlocked(
       if (!row.created_at) return latest;
       return !latest || new Date(row.created_at) > new Date(latest) ? row.created_at : latest;
     }, null);
+
+    // Keep NO-TO numbers ascending by trip date even when older-dated trips are
+    // synced after newer ones. Runs only when records were created or updated.
+    if (created > 0 || updated > 0) {
+      const renumbered = await renumberNoToRecordNos();
+      if (renumbered > 0) {
+        console.log(`[no-to-lifecycle-sync] Re-sequenced NO-TO record numbers by trip date`, {
+          renumbered,
+        });
+      }
+    }
+
     await completeLifecycleSync(pool, 'no-to-lifecycle', rowsExamined, maxCreatedAt, fullHistory);
     console.log(`[no-to-lifecycle-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped, ${failed} failed, ${rowsExamined} rows examined`);
     return { created, updated, skipped, failed, rowsExamined };

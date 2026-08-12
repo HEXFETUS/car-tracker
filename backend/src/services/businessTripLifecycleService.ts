@@ -6,6 +6,7 @@ import {
   failLifecycleSync,
   type LifecycleSyncOptions,
 } from './lifecycleSyncProgressService.js';
+import { generateNoToRecordNo, renumberNoToRecordNos } from './noToRecordNumberService.js';
 
 type BusinessTripStatus =
   | 'WAITING_AT_BASE'
@@ -355,18 +356,6 @@ export async function syncCompleteTravelOrderSessions(): Promise<{ sessions: num
             (SELECT COUNT(*)::integer FROM updated_telemetry) AS points`,
   );
   return result.rows[0] ?? { sessions: 0, points: 0 };
-}
-
-async function generateNoToRecordNo(departureTime: string): Promise<string> {
-  const pool = getPool();
-  const year = new Date(departureTime).getFullYear();
-  const result = await pool.query<{ cnt: string }>(
-    `SELECT COUNT(*) AS cnt
-       FROM gps_no_to_logs
-      WHERE EXTRACT(YEAR FROM COALESCE(departure_time, trip_date, created_at)) = $1`,
-    [year],
-  );
-  return `NO-TO-${year}-${String(Number(result.rows[0]?.cnt ?? 0) + 1).padStart(4, '0')}`;
 }
 
 function chooseOriginCoord(order: TravelOrderRow, defaultBaseCoord: string): string {
@@ -1008,7 +997,7 @@ async function upsertNoToTrip(trip: LifecycleTrip): Promise<'created' | 'updated
       ],
     );
   } else {
-    const noToRecordNo = await generateNoToRecordNo(trip.startedAt);
+    const noToRecordNo = await generateNoToRecordNo(tripDateFromTimestamp(trip.startedAt));
     const inserted = await pool.query<{ id: string }>(
       `INSERT INTO gps_no_to_logs
          (no_to_record_no, vehicle_id, driver_id, trip_date,
@@ -1527,7 +1516,7 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
       const tripDate = new Date(segment.firstRecordedAt).toISOString().slice(0, 10);
       console.log({ tripDate, typeofTripDate: typeof tripDate, firstRecordedAt: segment.firstRecordedAt });
 
-      const noToRecordNo = await generateNoToRecordNo(segment.firstRecordedAt);
+      const noToRecordNo = await generateNoToRecordNo(tripDate);
       const insertResult = await pool.query<{ id: string }>(
         `INSERT INTO gps_no_to_logs
            (no_to_record_no, vehicle_id, driver_id, trip_date,
@@ -1581,6 +1570,17 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
     } catch (error) {
       failed += 1;
       console.error('[no-to-sync] Error processing segment:', (error as Error).message);
+    }
+  }
+
+  // Keep NO-TO numbers ascending by trip date even when older-dated trips are
+  // synced after newer ones. Runs only when records were created or updated.
+  if (created > 0 || updated > 0) {
+    const renumbered = await renumberNoToRecordNos();
+    if (renumbered > 0) {
+      console.log(`[no-to-sync] Re-sequenced NO-TO record numbers by trip date`, {
+        renumbered,
+      });
     }
   }
 
