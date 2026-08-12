@@ -877,16 +877,30 @@ async function syncNoToLogsFromTelemetryUnlocked(
   );
   const allVehicleIds = new Set(vehicleResult.rows.map((v) => v.id));
 
-  // Delete only a No-TO journey whose own bounded telemetry windows no longer
-  // contain an unlinked point. Other journeys may legitimately reuse the same
-  // tracker active_trip_id outside those windows.
+  // Soft-convert (instead of deleting) a No-TO journey whose own bounded
+  // telemetry windows no longer contain an unlinked point — all its points are
+  // now travel-order-linked. Other journeys may legitimately reuse the same
+  // tracker active_trip_id outside those windows. Kept records point at the
+  // absorbing gps_trip_log via converted_gps_trip_log_id so the NO-TO number
+  // is preserved.
   const staleLinkedResult = await pool.query(
-    `DELETE FROM gps_no_to_logs no_to_log
-      WHERE EXISTS (
-        SELECT 1
-          FROM gps_no_to_log_active_trips session
-         WHERE session.gps_no_to_log_id = no_to_log.id
-      )
+    `UPDATE gps_no_to_logs no_to_log
+        SET status = 'linked',
+            linked_at = NOW(),
+            travel_order_id = COALESCE(no_to_log.travel_order_id, linked_gl.travel_order_id),
+            linked_to_number = COALESCE(no_to_log.linked_to_number, linked_t.to_number),
+            converted_gps_trip_log_id = COALESCE(no_to_log.converted_gps_trip_log_id, linked_gl.id)
+       FROM gps_trip_log_active_trips linked_glat
+       JOIN gps_trip_logs linked_gl
+         ON linked_gl.id = linked_glat.gps_trip_log_id
+        AND linked_gl.travel_order_id IS NOT NULL
+       LEFT JOIN travel_orders linked_t ON linked_t.id = linked_gl.travel_order_id
+      WHERE linked_glat.active_trip_id IN (
+            SELECT session.active_trip_id
+              FROM gps_no_to_log_active_trips session
+             WHERE session.gps_no_to_log_id = no_to_log.id
+          )
+        AND no_to_log.converted_gps_trip_log_id IS NULL
         AND NOT EXISTS (
           SELECT 1
             FROM gps_no_to_log_active_trips session
@@ -910,8 +924,8 @@ async function syncNoToLogsFromTelemetryUnlocked(
         )`,
   );
   if ((staleLinkedResult.rowCount ?? 0) > 0) {
-    console.log('[no-to-lifecycle-sync] Deleted fully TO-linked No-TO journeys', {
-      deleted: staleLinkedResult.rowCount,
+    console.log('[no-to-lifecycle-sync] Soft-converted fully TO-linked No-TO journeys', {
+      converted: staleLinkedResult.rowCount,
     });
   }
 

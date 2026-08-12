@@ -93,6 +93,34 @@ describe('No TO lifecycle journey boundaries', () => {
     assert.doesNotMatch(telemetrySql, /SELECT DISTINCT active_trip_id/);
   });
 
+  it('soft-converts fully TO-linked No-TO journeys instead of deleting them', async () => {
+    let convertSql = '';
+    const pool = {
+      async connect() {
+        return {
+          async query() { return { rows: [{ pg_advisory_lock: true }], rowCount: 1 }; },
+          release() {},
+        };
+      },
+      async query(sql: string) {
+        if (sql.includes('UPDATE gps_no_to_logs') && sql.includes('converted_gps_trip_log_id')) {
+          convertSql = sql;
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    setPoolForTest(pool as never);
+
+    await syncNoToLogsFromTelemetry();
+
+    assert.match(convertSql, /SET status = 'linked'/);
+    assert.match(convertSql, /linked_at = NOW\(\)/);
+    assert.match(convertSql, /converted_gps_trip_log_id/);
+    assert.match(convertSql, /gps_trip_log_active_trips/);
+    assert.match(convertSql, /converted_gps_trip_log_id IS NULL/);
+    assert.doesNotMatch(convertSql, /DELETE FROM gps_no_to_logs/);
+  });
+
   it('splits unlinked journeys around a bounded Travel Order interval', () => {
     const trips = buildNoToLifecycleTrips([
       telemetry({ event_type: 'IGNITION_ON' }),

@@ -1315,19 +1315,28 @@ export async function syncNoToLogsFromTelemetry(): Promise<{
     excludedActiveTripCount: excludedActiveTripIds.size,
   });
 
-  // ── Delete stale no-TO logs whose active_trip_id is now TO-linked ──
-  const deleteResult = await pool.query(
-    `DELETE FROM gps_no_to_logs
-      WHERE id IN (
-        SELECT n.id
-          FROM gps_no_to_logs n
-          JOIN gps_no_to_log_active_trips nat ON nat.gps_no_to_log_id = n.id
-         WHERE nat.active_trip_id = ANY($1::uuid[])
-      )`,
+  // ── Soft-convert stale no-TO logs whose active_trip_id is now TO-linked ──
+  // Keep the record (and its no_to_record_no) instead of deleting it. Mark it
+  // as linked and point converted_gps_trip_log_id at the travel-order GPS log
+  // that absorbed the same active trip, so the old NO-TO number is never lost.
+  const convertResult = await pool.query(
+    `UPDATE gps_no_to_logs n
+        SET status = 'linked',
+            linked_at = NOW(),
+            travel_order_id = COALESCE(n.travel_order_id, gl.travel_order_id),
+            linked_to_number = COALESCE(n.linked_to_number, t.to_number),
+            converted_gps_trip_log_id = COALESCE(n.converted_gps_trip_log_id, gl.id)
+       FROM gps_no_to_log_active_trips nat
+       JOIN gps_trip_log_active_trips glat ON glat.active_trip_id = nat.active_trip_id
+       JOIN gps_trip_logs gl ON gl.id = glat.gps_trip_log_id AND gl.travel_order_id IS NOT NULL
+       LEFT JOIN travel_orders t ON t.id = gl.travel_order_id
+      WHERE nat.gps_no_to_log_id = n.id
+        AND nat.active_trip_id = ANY($1::uuid[])
+        AND n.converted_gps_trip_log_id IS NULL`,
     [Array.from(excludedActiveTripIds)],
   );
-  console.log('[no-to-sync] Deleted stale TO-linked no-TO logs', {
-    deleted: deleteResult.rowCount,
+  console.log('[no-to-sync] Soft-converted stale TO-linked no-TO logs', {
+    converted: convertResult.rowCount,
   });
 
   let created = 0;
