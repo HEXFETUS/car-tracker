@@ -916,59 +916,66 @@ async function syncNoToLogsFromTelemetryUnlocked(
 
   // Remove unmatched tracker sessions that never became a trip because every
   // bounded telemetry point remained inside the configured fleet-base radius.
-  const nonTripResult = await pool.query(
-    `DELETE FROM gps_no_to_logs no_to_log
-      WHERE no_to_log.status = 'unmatched'
-        AND EXISTS (
-          SELECT 1
-            FROM gps_no_to_log_active_trips session
-           WHERE session.gps_no_to_log_id = no_to_log.id
-        )
-        AND NOT EXISTS (
-          SELECT 1
-            FROM gps_no_to_log_active_trips session
-            JOIN gps_telemetry telemetry
-              ON telemetry.vehicle_id = no_to_log.vehicle_id
-             AND telemetry.active_trip_id = session.active_trip_id
-             AND (session.start_time IS NULL OR telemetry.recorded_at >= session.start_time)
-             AND (session.end_time IS NULL OR telemetry.recorded_at <= session.end_time)
-           WHERE session.gps_no_to_log_id = no_to_log.id
-             AND telemetry.latitude IS NOT NULL
-             AND telemetry.longitude IS NOT NULL
-             AND haversine_distance(
-               $1,
-               telemetry.latitude::text || ',' || telemetry.longitude::text
-             ) > $2
-        )`,
-    [defaultBaseCoord, BASE_RADIUS_M],
-  );
-  if ((nonTripResult.rowCount ?? 0) > 0) {
-    console.log('[no-to-lifecycle-sync] Deleted stationary base non-trips', {
-      deleted: nonTripResult.rowCount,
-    });
+  // Only performed on a full-history rebuild — the incremental auto sync never
+  // deletes any No-TO record, so old logs are preserved.
+  if (fullHistory) {
+    const nonTripResult = await pool.query(
+      `DELETE FROM gps_no_to_logs no_to_log
+        WHERE no_to_log.status = 'unmatched'
+          AND EXISTS (
+            SELECT 1
+              FROM gps_no_to_log_active_trips session
+             WHERE session.gps_no_to_log_id = no_to_log.id
+          )
+          AND NOT EXISTS (
+            SELECT 1
+              FROM gps_no_to_log_active_trips session
+              JOIN gps_telemetry telemetry
+                ON telemetry.vehicle_id = no_to_log.vehicle_id
+               AND telemetry.active_trip_id = session.active_trip_id
+               AND (session.start_time IS NULL OR telemetry.recorded_at >= session.start_time)
+               AND (session.end_time IS NULL OR telemetry.recorded_at <= session.end_time)
+             WHERE session.gps_no_to_log_id = no_to_log.id
+               AND telemetry.latitude IS NOT NULL
+               AND telemetry.longitude IS NOT NULL
+               AND haversine_distance(
+                 $1,
+                 telemetry.latitude::text || ',' || telemetry.longitude::text
+               ) > $2
+          )`,
+      [defaultBaseCoord, BASE_RADIUS_M],
+    );
+    if ((nonTripResult.rowCount ?? 0) > 0) {
+      console.log('[no-to-lifecycle-sync] Deleted stationary base non-trips', {
+        deleted: nonTripResult.rowCount,
+      });
+    }
   }
 
   // ── Filter out excluded sessions and group by vehicle ───────
   // Repair records produced by the previous cross-session grouping. If the
   // row's primary active trip never had a location update, its movement and
   // end fields necessarily came from a different session. Delete only
-  // unmatched rows so the valid sessions can be rebuilt below.
-  const invalidMergedResult = await pool.query(
-    `DELETE FROM gps_no_to_logs n
-      WHERE n.status = 'unmatched'
-        AND n.active_trip_id IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1
-            FROM gps_telemetry t
-           WHERE t.vehicle_id = n.vehicle_id
-             AND t.active_trip_id = n.active_trip_id
-             AND UPPER(TRIM(t.event_type)) = 'LOCATION_UPDATE'
-        )`,
-  );
-  if ((invalidMergedResult.rowCount ?? 0) > 0) {
-    console.log('[no-to-lifecycle-sync] Deleted invalid merged no-TO logs', {
-      deleted: invalidMergedResult.rowCount,
-    });
+  // unmatched rows so the valid sessions can be rebuilt below. Only performed
+  // on a full-history rebuild — the incremental auto sync never deletes.
+  if (fullHistory) {
+    const invalidMergedResult = await pool.query(
+      `DELETE FROM gps_no_to_logs n
+        WHERE n.status = 'unmatched'
+          AND n.active_trip_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+              FROM gps_telemetry t
+             WHERE t.vehicle_id = n.vehicle_id
+               AND t.active_trip_id = n.active_trip_id
+               AND UPPER(TRIM(t.event_type)) = 'LOCATION_UPDATE'
+          )`,
+    );
+    if ((invalidMergedResult.rowCount ?? 0) > 0) {
+      console.log('[no-to-lifecycle-sync] Deleted invalid merged no-TO logs', {
+        deleted: invalidMergedResult.rowCount,
+      });
+    }
   }
 
   // Shared active_trip_id values do not make two logical journeys a parent and
@@ -1053,7 +1060,9 @@ async function syncNoToLogsFromTelemetryUnlocked(
       // Remove unmatched legacy identities that the current lifecycle no
       // longer produces (for example, a paused fragment superseded by a
       // completed base-return journey). Linked/converted records are retained.
-      if (!vehiclePersistFailed) {
+      // Only performed on a full-history rebuild — the incremental auto sync
+      // never deletes any No-TO record, so old logs are preserved.
+      if (!vehiclePersistFailed && fullHistory) {
         const tripStarts = trips.map((trip) => trip.startedAt);
         const reconciled = await pool.query(
           `DELETE FROM gps_no_to_logs no_to_log
