@@ -30,6 +30,7 @@ import {
 } from './gpsVehicleStateService.js';
 import { createNotificationForRoles } from './notificationService.js';
 import { syncNoToLogsFromTelemetry } from './noToLifecycleService.js';
+import { renumberNoToRecordNos } from './noToRecordNumberService.js';
 import { syncUnlinkedGpsTripLogsToTravelOrders } from './travelOrderSyncService.js';
 import { syncHistoryBackedAlerts, type HistoryAlertSyncSummary } from './historyAlertSyncService.js';
 
@@ -1447,6 +1448,15 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
         noToSkipped = noToResult.skipped;
         noToFailed = noToResult.failed;
         lifecycleRowsExamined += noToResult.rowsExamined ?? 0;
+
+        // Keep NO-TO numbers ascending by trip date. Runs only when the sync
+        // actually changed records to avoid needless work on frequent ticks.
+        if (noToCreated > 0 || noToUpdated > 0) {
+          const renumbered = await renumberNoToRecordNos();
+          if (renumbered > 0) {
+            console.log('[scheduler] Re-sequenced NO-TO record numbers by trip date', { renumbered });
+          }
+        }
       }
     } catch (noToError) {
       noToFailed = -1;

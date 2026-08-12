@@ -98,7 +98,11 @@ export function NoToLogsPage({ activeTab, onTabChange, vehicleFilter, onVehicleF
     try {
       setSyncing(true);
       const result = await syncNoToLogs();
-      toast(`Synced: ${result.data.created} created, ${result.data.updated} updated, ${result.data.skipped} skipped`, 'success');
+      toast(
+        `Synced: ${result.data.created} created, ${result.data.updated} updated, ${result.data.skipped} skipped` +
+          (result.data.renumbered > 0 ? `, re-sequenced ${result.data.renumbered}` : ''),
+        'success',
+      );
       await loadLogs();
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Failed to sync No TO logs', 'error');

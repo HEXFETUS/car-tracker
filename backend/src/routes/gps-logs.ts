@@ -28,6 +28,7 @@ import {
 } from '../services/trackingHistorySyncService.js';
 import { syncUnlinkedGpsTripLogsToTravelOrders } from '../services/travelOrderSyncService.js';
 import { syncNoToLogsFromTelemetry } from '../services/noToLifecycleService.js';
+import { renumberNoToRecordNos } from '../services/noToRecordNumberService.js';
 import { mapGpsTripLogRow } from './gps-trip-log-serializer.js';
 import { deriveActualTripEndpoints } from '../services/tripDetailsRouteService.js';
 import { anchorNoToRouteAtOrigin, deriveNoToTripDetails } from '../services/noToTripDetailsService.js';
@@ -370,9 +371,12 @@ router.get('/no-to', async (req: Request, res: Response) => {
 router.post('/no-to/sync', expensiveOperationRateLimit, async (_req: Request, res: Response) => {
   try {
     const result = await syncNoToLogsFromTelemetry({ fullHistory: true });
+    // Always re-sequence NO-TO numbers by trip date after a manual sync so the
+    // button is guaranteed to produce a correct, date-ordered sequence.
+    const renumbered = await renumberNoToRecordNos();
     res.json({
       success: true,
-      data: result,
+      data: { ...result, renumbered },
       message: 'No TO Logs sync completed',
     });
   } catch (error) {

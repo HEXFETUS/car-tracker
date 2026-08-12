@@ -31,7 +31,7 @@ import {
   failLifecycleSync,
   type LifecycleSyncOptions,
 } from './lifecycleSyncProgressService.js';
-import { generateNoToRecordNo, renumberNoToRecordNos } from './noToRecordNumberService.js';
+import { generateNoToRecordNo } from './noToRecordNumberService.js';
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -1084,17 +1084,6 @@ async function syncNoToLogsFromTelemetryUnlocked(
       if (!row.created_at) return latest;
       return !latest || new Date(row.created_at) > new Date(latest) ? row.created_at : latest;
     }, null);
-
-    // Keep NO-TO numbers ascending by trip date even when older-dated trips are
-    // synced after newer ones. Runs only when records were created or updated.
-    if (created > 0 || updated > 0) {
-      const renumbered = await renumberNoToRecordNos();
-      if (renumbered > 0) {
-        console.log(`[no-to-lifecycle-sync] Re-sequenced NO-TO record numbers by trip date`, {
-          renumbered,
-        });
-      }
-    }
 
     await completeLifecycleSync(pool, 'no-to-lifecycle', rowsExamined, maxCreatedAt, fullHistory);
     console.log(`[no-to-lifecycle-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped, ${failed} failed, ${rowsExamined} rows examined`);

@@ -242,6 +242,7 @@ export interface NoToSyncResult {
   updated: number;
   skipped: number;
   failed: number;
+  renumbered: number;
 }
 
 export async function syncNoToLogs(): Promise<{ success: boolean; data: NoToSyncResult; message: string }> {
