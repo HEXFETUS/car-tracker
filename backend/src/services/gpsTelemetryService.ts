@@ -5,6 +5,7 @@
 // fleet sync cycle.
 
 import { getPool } from '../db/db.js';
+import type pg from 'pg';
 import { IGNITION_DUPLICATE_WINDOW_SECONDS } from './gpsVehicleStateService.js';
 
 export interface TelemetryInsert {
@@ -23,6 +24,8 @@ export interface TelemetryInsert {
   recordedAt: string;
   activeTripId?: string | null;
   idlingThresholdMinutes?: number | null;
+  /** Existing idle-session timestamp used only for shared delivery identity. */
+  idlingStartedAt?: string | null;
   telegramMessage?: string | null;
   telegramStatus?: string | null;
   telegramError?: string | null;
@@ -78,14 +81,16 @@ interface TelemetryDbRow {
   driver_full_name: string | null;
 }
 
-function canonicalTelemetryEventType(eventType: string): string {
+export function canonicalTelemetryEventType(eventType: string): string {
   let result: string;
   switch (eventType) {
     case 'IGNITION ON ALERT':
+    case 'IGNITION ON':
     case 'IGNITION_ON':
       result = 'IGNITION_ON';
       break;
     case 'IGNITION OFF ALERT':
+    case 'IGNITION OFF':
     case 'IGNITION_OFF':
       result = 'IGNITION_OFF';
       break;
@@ -240,8 +245,8 @@ export async function telemetryExists(
  * travel_order_id (UUID) is the single source of truth.
  * The TO number is obtained by JOINing to travel_orders.to_number.
  */
-export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted: boolean; updated: boolean; id: string | null }> {
-  const pool = getPool();
+export async function insertTelemetry(data: TelemetryInsert, connection: pg.Pool | pg.PoolClient = getPool(), options: { includeSuppressedId?: boolean } = {}): Promise<{ inserted: boolean; updated: boolean; id: string | null }> {
+  const pool = connection;
   const eventType = canonicalTelemetryEventType(data.eventType);
   const normalizedLocationName = normalizeLocationName(data.locationName);
   console.log("[TELEMETRY SERVICE] insertTelemetry called with:", {
@@ -308,7 +313,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
           console.log(
             `[telemetry] LOCATION_UPDATE skipped same location_name vehicle=${data.vehicleId} location=${JSON.stringify(data.locationName ?? '')}`,
           );
-          return { inserted: false, updated: false, id: null };
+          return { inserted: false, updated: false, id: options.includeSuppressedId ? latestRow.id : null };
         }
         console.log(
           `[telemetry] LOCATION_UPDATE inserted new location_name vehicle=${data.vehicleId} old_location=${JSON.stringify(latestRow.location_name)} new_location=${JSON.stringify(data.locationName ?? '')}`,
@@ -331,6 +336,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
            AND (event_type = $2 OR event_type = $3 OR event_type = $4)
            AND ignition = $5
            AND recorded_at >= $6::timestamptz - INTERVAL '1 second' * $7
+           AND recorded_at <= $6::timestamptz + INTERVAL '1 second' * $7
          LIMIT 1`,
         [
           data.vehicleId,
@@ -376,6 +382,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
               WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
               ELSE event_type
             END = $2
+            AND ($2 <> 'IDLING_TOO_LONG' OR idling_threshold_minutes IS NOT DISTINCT FROM $5)
             AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
             AND lower(trim(regexp_replace(regexp_replace(coalesce(location_name, ''), ',+$', ''), '\\s+', ' ', 'g'))) = $4
           LIMIT 1`,
@@ -384,6 +391,7 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
           eventType,
           recordedAtMinute,
           normalizedLocationName,
+          data.idlingThresholdMinutes ?? null,
         ],
       );
       const nonIgnitionDuplicateRow = nonIgnitionDuplicateResult.rows[0];
@@ -489,10 +497,11 @@ export async function insertTelemetry(data: TelemetryInsert): Promise<{ inserted
               WHEN 'IDLING_TOO_LONG' THEN 'IDLING_TOO_LONG'
               ELSE event_type
             END = $2
+            AND ($2 <> 'IDLING_TOO_LONG' OR idling_threshold_minutes IS NOT DISTINCT FROM $5)
             AND date_trunc('minute', recorded_at AT TIME ZONE 'UTC') = date_trunc('minute', $3::timestamptz AT TIME ZONE 'UTC')
             AND lower(trim(regexp_replace(regexp_replace(coalesce(location_name, ''), ',+$', ''), '\\s+', ' ', 'g'))) = $4
           LIMIT 1`,
-        [data.vehicleId, eventType, recordedAtMinute, normalizedLocationName],
+        [data.vehicleId, eventType, recordedAtMinute, normalizedLocationName, data.idlingThresholdMinutes ?? null],
       );
     const conflictRow = conflictResult.rows[0];
     let conflictId = conflictRow?.id ?? null;

@@ -11,7 +11,6 @@
 import { randomUUID } from 'node:crypto';
 import {
   syncFleetAndAlert,
-  sendTelegram as trackerSendTelegram,
   formatLocationUpdateAlert,
   getVehicleEmoji,
   IDLE_ALERT_THRESHOLDS_MINUTES,
@@ -34,14 +33,13 @@ import { renumberNoToRecordNos } from './noToRecordNumberService.js';
 import { syncUnlinkedGpsTripLogsToTravelOrders } from './travelOrderSyncService.js';
 import { syncHistoryBackedAlerts, type HistoryAlertSyncSummary } from './historyAlertSyncService.js';
 
-type SendTelegramFn = typeof trackerSendTelegram;
-let sendTelegram: SendTelegramFn = trackerSendTelegram;
+import {
+  dispatchTelegramAlert, ensureTelegramAlertCompatibility, prepareTelegramAlert,
+  retryPendingTelegramAlerts, setTelegramAlertSenderForTest,
+} from './telegramAlertDispatcher.js';
 
-export function setSendTelegramForTest(fn: SendTelegramFn | null): void {
-  sendTelegram = fn ?? trackerSendTelegram;
-}
-
-// ── Scheduler State ────────────────────────────────────────────
+export const setSendTelegramForTest = setTelegramAlertSenderForTest;
+let cycleDeadlineAtMs: number | undefined;
 
 interface SchedulerState {
   running: boolean;
@@ -439,45 +437,7 @@ async function reloadVehicleState(vehicleId: string): Promise<{
   };
 }
 
-// ── Helper: Send Telegram for a saved telemetry record ─────────
-
-async function sendTelegramForTelemetry(
-  telemetryId: string,
-  message: string,
-): Promise<{ sent: boolean; error: string | null }> {
-  const attemptedAt = new Date().toISOString();
-  let sent = false;
-  let error: string | null = null;
-  try {
-    const tg = await sendTelegram(message);
-    if (tg?.ok) {
-      sent = true;
-    } else {
-      error = tg?.error ?? 'telegram_not_ok';
-    }
-  } catch (err) {
-    error = errorMessage(err);
-  }
-
-  try {
-    await updateTelemetryTelegramDelivery(
-      telemetryId,
-      sent ? 'sent' : 'failed',
-      sent ? null : error,
-      attemptedAt,
-    );
-  } catch (deliveryStateError) {
-    const deliveryStateMessage = errorMessage(deliveryStateError);
-    error = error
-      ? `${error}; delivery_status_update_failed: ${deliveryStateMessage}`
-      : `delivery_status_update_failed: ${deliveryStateMessage}`;
-    console.error(`[scheduler] Alert saved but Telegram delivery status update failed telemetry=${telemetryId}:`, deliveryStateMessage);
-  }
-  return { sent, error };
-}
-
-// Helper: Resolve pre-formatted telegram message from tracker emittedAlerts.
-
+// Resolve the existing pre-formatted tracker message.
 function resolveMessageFromEmitted(
   emittedAlerts: Array<{ vehicleId?: string; eventType?: string; message?: string }>,
   vehicleId: string,
@@ -516,7 +476,7 @@ async function saveTelemetryAndSendTelegram(
     throw new Error(`Cannot insert sendable telemetry without message vehicle=${vehicleId} event=${eventType}`);
   }
 
-  const savedTelemetry = await insertTelemetry({
+  const event = {
     vehicleId,
     plateNumber,
     eventType,
@@ -534,21 +494,14 @@ async function saveTelemetryAndSendTelegram(
     telegramMessage: resolvedMessage,
     telegramStatus: initialTelegramStatus(eventType),
     idlingThresholdMinutes: idlingThresholdMinutes ?? null,
-  });
-
-  if (!savedTelemetry.id) {
-    return { saved: false, telemetryId: null, telegramSent: false, telegramError: null };
-  }
-
-  // Telegram delivery: attempt to send if message is present and event is sendable,
-  // regardless of whether the row was newly inserted or found as a duplicate.
+  };
   if (resolvedMessage && shouldSendTelegram(eventType)) {
-    const tgResult = await sendTelegramForTelemetry(savedTelemetry.id, resolvedMessage);
-    return { saved: savedTelemetry.inserted, telemetryId: savedTelemetry.id, telegramSent: tgResult.sent, telegramError: tgResult.error };
+    const delivery = await dispatchTelegramAlert(event, { deadlineAtMs: cycleDeadlineAtMs });
+    return { saved: delivery.saved, telemetryId: delivery.telemetryId,
+      telegramSent: delivery.outcome === 'accepted', telegramError: delivery.error };
   }
-
-  // No message to send - mark as skipped
-  if (savedTelemetry.id && !resolvedMessage) {
+  const savedTelemetry = await insertTelemetry(event);
+  if (savedTelemetry.id) {
     try {
       await updateTelemetryTelegramDelivery(savedTelemetry.id, 'skipped', null, new Date().toISOString());
     } catch (deliveryStateError) {
@@ -597,10 +550,12 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     return skippedCycleSummary('lock_active');
   }
   cycleLock = true;
+  cycleDeadlineAtMs = options.deadlineAtMs;
 
   if (state.paused) {
     console.log('[scheduler] Paused — skipping cycle');
     cycleLock = false;
+    cycleDeadlineAtMs = undefined;
     return skippedCycleSummary('paused');
   }
 
@@ -615,6 +570,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
 
   try {
     // Fetch TO numbers and driver IDs for vehicles with active travel orders
+    await ensureTelegramAlertCompatibility();
     const toNumberOverrides: Record<string, string> = {};
     const driverIdOverrides: Record<string, string | null> = {};
     try {
@@ -717,8 +673,9 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     let telemetrySaved = 0;
     let telemetrySkipped = 0;
     let telemetryFailed = 0;
-    let telegramSent = 0;
-    let telegramFailed = 0;
+    const retrySummary = await retryPendingTelegramAlerts({ deadlineAtMs: options.deadlineAtMs });
+    let telegramSent = retrySummary.sent;
+    let telegramFailed = retrySummary.failed;
 
     const vehicles = result.data as unknown as Array<{
       id: string;
@@ -848,7 +805,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
               snapshotTravelOrderId,
               snapshotDriverId,
             );
-            if (!saveResult.saved) {
+            if (!saveResult.telemetryId) {
               console.error(`[scheduler-state] CRITICAL: IGNITION_ON insert failed vehicle=${vehicleId}`);
               throw new Error(`Failed to insert IGNITION_ON telemetry for vehicle=${vehicleId}`);
             }
@@ -1050,7 +1007,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
               ignitionOffTravelOrderId,
               ignitionOffDriverId,
             );
-            if (!saveResult.saved) {
+            if (!saveResult.telemetryId) {
               console.error(`[scheduler-state] CRITICAL: IGNITION_OFF insert failed vehicle=${vehicleId}`);
               throw new Error(`Failed to insert IGNITION_OFF telemetry for vehicle=${vehicleId}`);
             }
@@ -1545,6 +1502,7 @@ async function runCycle(options: SchedulerCycleOptions = {}): Promise<SchedulerC
     }));
     throw error;
   } finally {
+    cycleDeadlineAtMs = undefined;
     cycleLock = false;
   }
 }
@@ -1779,11 +1737,14 @@ export interface HandleIdlingAlertTxResult {
 }
 
 export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTxParams): Promise<HandleIdlingAlertTxResult> {
-  await ensureIdlingDedupSchema();
   const pool = getPool();
+  await ensureTelegramAlertCompatibility(pool);
+  await ensureIdlingDedupSchema();
   const client = await pool.connect();
+  let released = false;
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`telegram-alert:${params.vehicleId}`]);
     const lockResult = await client.query<{ last_alerted_duration_minutes: number | null }>(
       `SELECT last_alerted_duration_minutes
          FROM gps_idling_dedup
@@ -1830,75 +1791,31 @@ export async function handleIdlingAlertInTransaction(params: HandleIdlingAlertTx
          threshold_minutes = EXCLUDED.threshold_minutes`,
       [params.vehicleId, params.activeTripId, params.thresholdMinutes],
     );
-    const telemResult = await client.query<{ id: string }>(
-      `INSERT INTO gps_telemetry
-         (vehicle_id, plate_number, event_type, latitude, longitude, speed_kmh, fuel_liters,
-           ignition, location_name, driver_id, travel_order_id, recorded_at, active_trip_id,
-           idling_threshold_minutes, telegram_message, telegram_status)
-        VALUES ($1, $2, 'IDLING_TOO_LONG', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULL)
-        RETURNING id`,
-      [
-        params.vehicleId,
-        params.plateNumber,
-        params.latitude,
-        params.longitude,
-        params.speedKmh,
-        params.fuelLiters,
-        params.ignition,
-        params.locationName,
-        params.driverId,
-        params.travelOrderId,
-        params.recordedAt,
-        params.activeTripId,
-        params.thresholdMinutes,
-        params.telegramMessage,
-      ],
-    );
-    const telemetryId = telemResult.rows[0]?.id ?? null;
-    // COMMIT before sending Telegram to avoid holding the transaction open
-    // during the potentially slow HTTP call to the Telegram API.
+    const event = {
+      vehicleId: params.vehicleId, plateNumber: params.plateNumber, eventType: 'IDLING_TOO_LONG',
+      latitude: params.latitude, longitude: params.longitude, speedKmh: params.speedKmh,
+      fuelLiters: params.fuelLiters, ignition: params.ignition, locationName: params.locationName,
+      driverId: params.driverId, travelOrderId: params.travelOrderId, recordedAt: params.recordedAt,
+      activeTripId: params.activeTripId, idlingThresholdMinutes: params.thresholdMinutes,
+      idlingStartedAt: params.idlingStartedAt,
+      telegramMessage: params.telegramMessage,
+    };
+    const prepared = await prepareTelegramAlert(event, client);
+    const telemetryId = prepared.id;
     await client.query('COMMIT');
-    let telegramSent = false;
-    let telegramError: string | null = null;
-    const attemptedAt = new Date().toISOString();
-    if (telemetryId && params.telegramMessage) {
-      try {
-        const tg = await sendTelegram(params.telegramMessage);
-        if (tg?.ok) {
-          telegramSent = true;
-        } else {
-          telegramError = tg?.error ?? 'telegram_not_ok';
-        }
-      } catch (err) {
-        telegramError = errorMessage(err);
-      }
-    }
-    if (telemetryId) {
-      try {
-        await updateTelemetryTelegramDelivery(
-          telemetryId,
-          telegramSent ? 'sent' : telegramError ? 'failed' : 'skipped',
-          telegramError,
-          attemptedAt,
-        );
-      } catch (deliveryStateError) {
-        // The alert row has already committed. A secondary delivery-state
-        // update must never turn successful persistence into a retry that can
-        // obscure or duplicate the durable alert.
-        const deliveryStateMessage = errorMessage(deliveryStateError);
-        telegramError = telegramError
-          ? `${telegramError}; delivery_status_update_failed: ${deliveryStateMessage}`
-          : `delivery_status_update_failed: ${deliveryStateMessage}`;
-        console.error(`[scheduler] Alert saved but Telegram delivery status update failed telemetry=${telemetryId}:`, deliveryStateMessage);
-      }
-    }
+    client.release();
+    released = true;
+    if (!telemetryId) return { skipped: true, reason: 'telemetry_exists', telemetryId: null, telegramSent: false, telegramError: null };
+    const delivery = await dispatchTelegramAlert(event, { telemetryId, deadlineAtMs: cycleDeadlineAtMs });
+    const telegramSent = delivery.outcome === 'accepted';
+    const telegramError = delivery.error;
     return { skipped: false, telemetryId, telegramSent, telegramError };
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (!released) await client.query('ROLLBACK').catch(() => {});
     console.error(`[idling-dedup] handleIdlingAlertInTransaction failed vehicle=${params.vehicleId} trip=${params.activeTripId}:`, errorMessage(err));
     throw err;
   } finally {
-    client.release();
+    if (!released) client.release();
   }
 }
 

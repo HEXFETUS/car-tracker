@@ -25,6 +25,7 @@ export const LOW_FUEL_LITERS: number;
 export const CARTRACK_TIMEOUT_MS: number;
 export const CARTRACK_RETRIES: number;
 export const TELEGRAM_TIMEOUT_MS: number;
+export function closeTrackerDatabase(): Promise<void>;
 export const GEOCODING_TIMEOUT_MS: number;
 
 /** Per-vehicle status object returned in the sync result data array. */
@@ -135,7 +136,38 @@ export function selectFleetBatch(
   batchLimit?: number,
 ): { allVehicles: any[]; vehicles: any[]; offset: number };
 
-export function sendTelegram(message: string): Promise<{ ok: boolean; error?: string }>;
+export interface TelegramResponse {
+  ok: boolean;
+  error?: string;
+  httpStatus?: number;
+  error_code?: number;
+  outcome?: 'rejected' | 'unknown';
+  parameters?: { retry_after?: number };
+  result?: { message_id: number; chat: { id: number }; date: number };
+}
+export function sendTelegram(message: string): Promise<TelegramResponse>;
+export interface TrackerAlertEvent {
+  message?: string;
+  vehicle_id?: string | null;
+  vehicleId?: string | null;
+  plate?: string;
+  eventType?: string;
+  type?: string;
+  timestamp?: string;
+  coordinates?: { latitude?: number; longitude?: number; lat?: number; lng?: number };
+  location?: string | null;
+  speed?: number;
+  fuel?: number | null;
+  ignition?: boolean;
+  tripId?: string | null;
+  idlingThresholdReached?: number | null;
+  idlingStartedAt?: string | null;
+  driver_id?: string | null;
+  travelOrderId?: string | null;
+}
+export function sendVehicleAlerts(alerts: TrackerAlertEvent[], options?: { deadlineAtMs?: number }): Promise<{
+  queued: number; sent: number; skipped: number; failed: number; persisted: number;
+}>;
 
 export function getVehicleEmoji(plateNumber: string): string;
 

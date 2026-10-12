@@ -1,9 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   IDLE_ALERT_THRESHOLDS_MINUTES,
   LOW_FUEL_LITERS,
   SPEED_LIMIT_KMH,
-  sendTelegram,
 } from '@car-tracker/tracker';
 import { getPool } from '../db/db.js';
 import {
@@ -11,13 +10,12 @@ import {
   getCartrackFleetIdentities,
   type CartrackHistoryPoint,
 } from './cartrackHistoryService.js';
-import { insertTelemetry, updateTelemetryTelegramDelivery } from './gpsTelemetryService.js';
+import { dispatchTelegramAlert, ensureTelegramAlertCompatibility, retryPendingTelegramAlerts } from './telegramAlertDispatcher.js';
 import { createNotificationForRoles } from './notificationService.js';
 
 const INITIAL_LOOKBACK_MS = 10 * 60 * 1000;
 const HISTORY_OVERLAP_MS = 2 * 60 * 1000;
 const MAX_HISTORY_DAYS_PER_RUN = 2;
-const TELEGRAM_RETRY_LIMIT = 25;
 const NOTIFICATION_ROLES = ['SUPERADMIN', 'ADMIN', 'DISPATCHER', 'HR', 'VIEWER'];
 
 let historyAlertSchemaPromise: Promise<void> | null = null;
@@ -233,14 +231,6 @@ export function deriveHistoryAlerts(
   };
 }
 
-function sourceEventKey(vehicleId: string, point: NormalizedPoint, alert: HistoryAlert): string {
-  return createHash('sha256').update([
-    'cartrack-history-v1', vehicleId, alert.eventType, point.recordedAt,
-    point.latitude ?? '', point.longitude ?? '', point.locationName ?? '',
-    alert.idlingThresholdMinutes ?? '',
-  ].join('|')).digest('hex');
-}
-
 function alertMessage(plate: string, point: NormalizedPoint, alert: HistoryAlert): string {
   const title = alert.eventType.replaceAll('_', ' ');
   const details = [
@@ -274,39 +264,6 @@ function datesToFetch(fromMs: number, toMs: number): string[] {
   const finalDate = manilaDate(toMs);
   if (dates.length < MAX_HISTORY_DAYS_PER_RUN && !dates.includes(finalDate)) dates.push(finalDate);
   return dates;
-}
-
-async function deliver(telemetryId: string, message: string): Promise<boolean> {
-  const attemptedAt = new Date().toISOString();
-  try {
-    const result = await sendTelegram(message);
-    const sent = result?.ok === true;
-    await updateTelemetryTelegramDelivery(
-      telemetryId, sent ? 'sent' : 'failed', sent ? null : result?.error ?? 'telegram_not_ok', attemptedAt,
-    );
-    return sent;
-  } catch (error) {
-    const messageText = error instanceof Error ? error.message : String(error);
-    await updateTelemetryTelegramDelivery(telemetryId, 'failed', messageText, attemptedAt).catch(() => {});
-    return false;
-  }
-}
-
-async function retryHistoryTelegram(summary: HistoryAlertSyncSummary): Promise<void> {
-  const result = await getPool().query<{ id: string; telegram_message: string }>(
-    `SELECT id, telegram_message
-       FROM gps_telemetry
-      WHERE source_event_key IS NOT NULL
-        AND telegram_message IS NOT NULL
-        AND telegram_status IS DISTINCT FROM 'sent'
-      ORDER BY recorded_at ASC
-      LIMIT $1`,
-    [TELEGRAM_RETRY_LIMIT],
-  );
-  for (const row of result.rows) {
-    if (await deliver(row.id, row.telegram_message)) summary.telegramSent += 1;
-    else summary.telegramFailed += 1;
-  }
 }
 
 async function loadCursor(vehicleId: string): Promise<CursorState> {
@@ -365,8 +322,11 @@ export async function syncHistoryBackedAlerts(options: {
     vehiclesExamined: 0, historyPointsExamined: 0, alertsSaved: 0,
     alertsSkipped: 0, telegramSent: 0, telegramFailed: 0, vehiclesFailed: 0,
   };
+  await ensureTelegramAlertCompatibility();
   await ensureHistoryAlertSchema();
-  await retryHistoryTelegram(summary);
+  const retries = await retryPendingTelegramAlerts({ deadlineAtMs: options.deadlineAtMs });
+  summary.telegramSent += retries.sent;
+  summary.telegramFailed += retries.failed;
 
   const identities = await getCartrackFleetIdentities();
   const identityByPlate = new Map(identities.map((item) => [item.plateNumber.toUpperCase(), item]));
@@ -419,7 +379,7 @@ export async function syncHistoryBackedAlerts(options: {
           const alertTripId = alert.eventType === 'IGNITION_OFF'
             ? cursor.activeTripId
             : derived.next.activeTripId;
-          const saved = await insertTelemetry({
+          const delivered = await dispatchTelegramAlert({
             vehicleId: vehicle.id,
             plateNumber: vehicle.plate_number,
             eventType: alert.eventType,
@@ -432,14 +392,16 @@ export async function syncHistoryBackedAlerts(options: {
             recordedAt: point.recordedAt,
             activeTripId: alertTripId,
             idlingThresholdMinutes: alert.idlingThresholdMinutes ?? null,
+            idlingStartedAt: alert.eventType === 'IDLING_TOO_LONG' ? derived.next.idleStartedAt : null,
             telegramMessage: message,
             telegramStatus: null,
-            sourceEventKey: sourceEventKey(vehicle.id, point, alert),
-          });
+          }, { deadlineAtMs: options.deadlineAtMs });
+          const saved = { inserted: delivered.saved, id: delivered.telemetryId };
+          if (!saved.id) throw new Error('Historical alert could not acquire a durable telemetry record');
+          if (delivered.outcome === 'accepted') summary.telegramSent += 1;
+          else if (delivered.error) summary.telegramFailed += 1;
           if (saved.inserted && saved.id) {
             summary.alertsSaved += 1;
-            if (await deliver(saved.id, message)) summary.telegramSent += 1;
-            else summary.telegramFailed += 1;
             if (alert.eventType === 'IDLING_TOO_LONG') {
               try {
                 await createNotificationForRoles(NOTIFICATION_ROLES, {

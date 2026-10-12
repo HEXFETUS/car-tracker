@@ -1022,12 +1022,19 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
   // SELECT ... FOR UPDATE + committed UPSERT would in Postgres.
   function makeIdlingMockPool(options: { failDeliveryUpdate?: boolean; failTelemetryInsert?: boolean } = {}) {
     const dedupRows: Array<{ vehicle_id: string; active_trip_id: string; last_alerted_duration_minutes: number }> = [];
-    const telemetryRows: Array<{ vehicle_id: string; active_trip_id: string; event_type: string; idling_threshold_minutes: number; travel_order_id: string | null; driver_id: string | null }> = [];
+    const telemetryRows: Array<{ id: string; vehicle_id: string; active_trip_id: string; event_type: string; idling_threshold_minutes: number; travel_order_id: string | null; driver_id: string | null; telegram_error: string | null; telegram_status: string | null; telegram_message: string; source_event_key: string }> = [];
     const sentTelegrams: string[] = [];
     const order: string[] = [];
     let dedupLock: Promise<void> = Promise.resolve();
 
     const handler = (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM pg_attribute')) return { rows: [
+        { name: 'telegram_error', type: 'text' }, { name: 'telegram_status', type: 'text' },
+        { name: 'source_event_key', type: 'text' }, { name: 'telegram_attempted_at', type: 'timestamp with time zone' },
+      ] };
+      if (sql.includes('SELECT id, source_event_key, telegram_status')) {
+        return { rows: telemetryRows.filter(row => row.id === params?.[0]) };
+      }
       if (sql.includes('BEGIN')) { order.push('BEGIN'); return { rows: [] }; }
       if (sql.includes('COMMIT')) { order.push('COMMIT'); return { rows: [] }; }
       if (sql.includes('ROLLBACK')) { order.push('ROLLBACK'); return { rows: [] }; }
@@ -1072,23 +1079,34 @@ describe('idling dedup race — handleIdlingAlertInTransaction', () => {
         if (options.failTelemetryInsert) throw new Error('telemetry insert unavailable');
         const p = params as unknown[];
         const vehicleId = String(p[0]);
-        const activeTripId = String(p[11]);
-        const threshold = Number(p[12]);
+        const activeTripId = String(p[12]);
+        const threshold = Number(p[13]);
         telemetryRows.push({
+          id: `tel-${telemetryRows.length + 1}`,
           vehicle_id: vehicleId,
           active_trip_id: activeTripId,
           event_type: 'IDLING_TOO_LONG',
           idling_threshold_minutes: threshold,
-          driver_id: p[8] == null ? null : String(p[8]),
-          travel_order_id: p[9] == null ? null : String(p[9]),
+          driver_id: p[9] == null ? null : String(p[9]),
+          travel_order_id: p[10] == null ? null : String(p[10]),
+          telegram_message: String(p[14]), telegram_status: null,
+          telegram_error: String(p[16]), source_event_key: String(p[18]),
         });
         order.push('INSERT_TELEMETRY');
         return { rows: [{ id: `tel-${telemetryRows.length}` }] };
       }
 
       if (sql.includes('UPDATE gps_telemetry')) {
-        if (options.failDeliveryUpdate) throw new Error('delivery status unavailable');
-        return { rows: [], rowCount: 1 };
+        if (options.failDeliveryUpdate && sql.includes('SET telegram_status')) throw new Error('delivery status unavailable');
+        const row = telemetryRows.find(row => row.id === params?.[0]);
+        if (!row || row.telegram_error !== params?.[3]) return { rows: [] };
+        if (sql.includes('SET telegram_status')) {
+          row.telegram_status = String(params?.[1]);
+          row.telegram_error = params?.[2] as string | null;
+        } else {
+          row.telegram_error = String(params?.[1]);
+        }
+        return { rows: [{ id: row.id }], rowCount: 1 };
       }
 
       // ensureIdlingDedupSchema DDL — ignore

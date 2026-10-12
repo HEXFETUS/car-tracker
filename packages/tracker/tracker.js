@@ -15,7 +15,7 @@
 //   FLEET_STALE_CACHE_SECONDS (default 3600)
 //   BOT_TOKEN, CHAT_ID (Telegram)
 
-import { alreadySentRecently, getJson, setJson } from './state.js';
+import { getJson, setJson } from './state.js';
 import { insertAlertsToSupabase, isSupabaseConfigured, findVehicleIdByPlate } from './supabase.js';
 import { buildTripLogRecord } from './tripLogTransformer.js';
 import pg from 'pg';
@@ -356,7 +356,7 @@ export async function sendTelegram(message) {
   const { BOT_TOKEN, CHAT_ID } = process.env;
   if (!BOT_TOKEN || !CHAT_ID) {
     console.log('Missing Telegram config - BOT_TOKEN or CHAT_ID not set');
-    return { ok: false, error: 'missing_telegram_config' };
+    return { ok: false, error: 'missing_telegram_config', outcome: 'rejected', error_code: 400 };
   }
 
   try {
@@ -366,15 +366,31 @@ export async function sendTelegram(message) {
       body: new URLSearchParams({ chat_id: CHAT_ID, text: message }),
     }, TELEGRAM_TIMEOUT_MS);
 
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.ok) console.log('Telegram error:', response.status, result);
-    return result;
+    const result = await response.json().catch(() => null);
+    if (response.ok && result?.ok === true
+      && Number.isSafeInteger(result.result?.message_id)
+      && Number.isSafeInteger(result.result?.chat?.id)
+      && Number.isInteger(result.result?.date)) {
+      return { ...result, httpStatus: response.status };
+    }
+    // Only an explicit Bot API rejection establishes a safe-to-retry outcome.
+    // A proxy error or unreadable response may follow an accepted message.
+    const rejected = result?.ok === false && Number.isInteger(result.error_code);
+    return {
+      ok: false,
+      httpStatus: response.status,
+      error_code: rejected ? result.error_code : undefined,
+      error: rejected ? `telegram_api_${result.error_code}` : 'telegram_unknown_response',
+      parameters: rejected && Number.isFinite(result.parameters?.retry_after)
+        ? { retry_after: result.parameters.retry_after } : undefined,
+      outcome: rejected ? 'rejected' : 'unknown',
+    };
   } catch (error) {
     const message = error?.name === 'AbortError'
       ? `telegram_timeout_after_${TELEGRAM_TIMEOUT_MS}ms`
-      : String(error?.message || error);
+      : 'telegram_network_outcome_unknown';
     console.log('Telegram request failed:', message);
-    return { ok: false, error: message };
+    return { ok: false, error: message, outcome: 'unknown' };
   }
 }
 
@@ -432,6 +448,14 @@ function getPostgresPool() {
     });
   }
   return postgresPool;
+}
+
+export async function closeTrackerDatabase() {
+  if (postgresPool) {
+    const pool = postgresPool;
+    postgresPool = null;
+    await pool.end();
+  }
 }
 
 function canonicalEventType(eventType) {
@@ -492,40 +516,11 @@ function recordedAtFromAlert(alert) {
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
 }
 
-async function insertGpsTelemetry(alert) {
-  void alert;
-  console.log('[tracker] gps_telemetry persistence is handled by backend insertTelemetry(); skipping tracker direct INSERT');
-  return null;
+export async function sendVehicleAlerts(alerts, options = {}) {
+  if (!alerts.length) return { queued: 0, sent: 0, skipped: 0, failed: 0, persisted: 0 };
+  const { dispatchTrackerAlerts } = await import('../../backend/dist/services/trackerAlertBridge.js');
+  return dispatchTrackerAlerts(alerts, options);
 }
-
-export async function sendVehicleAlerts(alerts) {
-  const result = { queued: alerts.length, sent: 0, skipped: 0, failed: 0, persisted: 0 };
-  if (!alerts.length) return result;
-  const nowMs = Date.now();
-  for (const raw of alerts) {
-    const alert = normalizeAlert(raw);
-    if (!alert?.message) continue;
-    if (await alreadySentRecently(alert.message, nowMs, ALERT_DEDUPE_SECONDS)) {
-      result.skipped += 1;
-      continue;
-    }
-
-    const telemetryId = await insertGpsTelemetry(alert);
-
-    console.log(`[tracker] Before Telegram send telemetry_id=${telemetryId}`);
-    const telegram = await sendTelegram(alert.message);
-    if (telegram?.ok) {
-      result.sent += 1;
-      console.log(`[tracker] Telegram send succeeded telemetry_id=${telemetryId}`);
-    } else {
-      result.failed += 1;
-      console.error(`[tracker] Telegram send failed telemetry_id=${telemetryId}: ${telegram?.error ?? 'telegram_not_ok'}`);
-    }
-  }
-  return result;
-}
-
-// ── Cartrack API ──────────────────────────────────────────────
 
 export async function getFleetData() {
   const { CARTRACK_API_URL, CARTRACK_USERNAME, CARTRACK_PASSWORD } = process.env;
@@ -1147,7 +1142,7 @@ export async function syncFleetAndAlert(options = {}) {
           'idling_too_long',
           formatIdlingTooLongAlert(name, thresholdReached, fuel, location, eventTime, toNumber, driver, driverId),
           null,
-          { tripId: currentTripId, idlingThresholdReached: thresholdReached },
+          { tripId: currentTripId, idlingThresholdReached: thresholdReached, idlingStartedAt: idle.idleStartedAt == null ? null : new Date(Number(idle.idleStartedAt)).toISOString() },
         );
       }
       if (ignition && moving && !prevMoving && prevIdlingTooLong) {
@@ -1174,13 +1169,13 @@ export async function syncFleetAndAlert(options = {}) {
           'idling_too_long',
           formatIdlingTooLongAlert(name, thresholdReached, fuel, location, eventTime, toNumber, driver, driverId),
           null,
-          { tripId: currentTripId, idlingThresholdReached: thresholdReached },
+          { tripId: currentTripId, idlingThresholdReached: thresholdReached, idlingStartedAt: idle.idleStartedAt == null ? null : new Date(Number(idle.idleStartedAt)).toISOString() },
         );
       }
     }
 
     if (dispatchAlerts) {
-      const alertResult = await sendVehicleAlerts(alerts);
+      const alertResult = await sendVehicleAlerts(alerts, { deadlineAtMs });
       alertSummary.queued += alertResult.queued;
       alertSummary.sent += alertResult.sent;
       alertSummary.skipped += alertResult.skipped;
@@ -1290,7 +1285,7 @@ export async function syncFleetAndAlert(options = {}) {
           ea.eventType === 'IDLING'
             ? ea.idlingThresholdReached ?? null
             : undefined,
-        idlingStartedAt: ea.eventType === 'IDLING' ? idle.idleStartedAt : undefined,
+        idlingStartedAt: ea.eventType === 'IDLING' && idle.idleStartedAt != null ? new Date(Number(idle.idleStartedAt)).toISOString() : undefined,
       });
     }
   }
