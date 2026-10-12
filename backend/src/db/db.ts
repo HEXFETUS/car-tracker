@@ -50,10 +50,26 @@ export function getPool(): pg.Pool {
       loggedDatabaseTarget = true;
     }
 
+    const ca = process.env.DATABASE_CA_CERT?.replace(/\\n/g, '\n');
+
+    if (process.env.NODE_ENV === 'production' && !ca) {
+      throw new Error(
+        'DATABASE_CA_CERT is required for production PostgreSQL connections'
+      );
+    }
+
     pool = new Pool({
       connectionString: DATABASE_URL,
-      max: 10,
-      idleTimeoutMillis: 30_000,
+      ...(ca
+        ? {
+            ssl: {
+              ca,
+              rejectUnauthorized: true,
+            },
+          }
+        : {}),
+      max: 5,
+      idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 10_000,
     });
 
