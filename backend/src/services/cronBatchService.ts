@@ -64,31 +64,6 @@ export function nextCronProgress(
 
 async function ensureProgressSchema(client: pg.PoolClient): Promise<void> {
   await client.query(`
-    CREATE TABLE IF NOT EXISTS cron_scheduler_progress (
-      scheduler_name TEXT PRIMARY KEY,
-      next_vehicle_offset INTEGER NOT NULL DEFAULT 0 CHECK (next_vehicle_offset >= 0),
-      fleet_pass BIGINT NOT NULL DEFAULT 1 CHECK (fleet_pass >= 1),
-      last_started_at TIMESTAMPTZ,
-      last_completed_at TIMESTAMPTZ,
-      last_attempt_at TIMESTAMPTZ,
-      last_result TEXT,
-      last_skip_reason TEXT,
-      last_error TEXT,
-      last_batch_offset INTEGER,
-      last_vehicles_examined INTEGER,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `);
-  await client.query(`
-    ALTER TABLE cron_scheduler_progress
-      ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS last_result TEXT,
-      ADD COLUMN IF NOT EXISTS last_skip_reason TEXT,
-      ADD COLUMN IF NOT EXISTS last_error TEXT,
-      ADD COLUMN IF NOT EXISTS last_batch_offset INTEGER,
-      ADD COLUMN IF NOT EXISTS last_vehicles_examined INTEGER
-  `);
-  await client.query(`
     INSERT INTO cron_scheduler_progress (scheduler_name)
     VALUES ($1)
     ON CONFLICT (scheduler_name) DO NOTHING
