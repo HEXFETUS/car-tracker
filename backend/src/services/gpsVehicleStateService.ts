@@ -89,34 +89,6 @@ let schemaReady = false;
 
 export async function ensureVehicleStateSchema(): Promise<void> {
   if (schemaReady) return;
-  const pool = getPool();
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS gps_vehicle_state (
-      vehicle_id UUID PRIMARY KEY,
-      ignition_state TEXT NOT NULL DEFAULT 'OFF',
-      last_confirmed_ignition BOOLEAN NOT NULL DEFAULT false,
-      last_confirmed_ignition_at TIMESTAMPTZ,
-      pending_ignition BOOLEAN,
-      pending_since TIMESTAMPTZ,
-      pending_poll_count INTEGER NOT NULL DEFAULT 0,
-      active_trip_id UUID,
-      last_packet_time TIMESTAMPTZ,
-      last_speed DOUBLE PRECISION NOT NULL DEFAULT 0,
-      last_latitude DOUBLE PRECISION,
-      last_longitude DOUBLE PRECISION,
-      last_location_name TEXT,
-      last_event_type TEXT,
-      last_low_fuel_alert_liter INTEGER,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      version INTEGER NOT NULL DEFAULT 1
-    );
-  `);
-  await pool.query(`
-    ALTER TABLE gps_vehicle_state ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
-  `);
-  await pool.query(`
-    ALTER TABLE gps_vehicle_state ADD COLUMN IF NOT EXISTS last_low_fuel_alert_liter INTEGER;
-  `);
   schemaReady = true;
 }
 

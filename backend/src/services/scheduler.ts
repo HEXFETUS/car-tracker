@@ -1613,13 +1613,6 @@ async function ensureIdlingDedupSchema(): Promise<void> {
   if (idlingSchemaReady) return;
   const pool = getPool();
   await pool.query(`
-    ALTER TABLE gps_idling_dedup ALTER COLUMN threshold_minutes DROP NOT NULL;
-    ALTER TABLE gps_idling_dedup
-      ADD COLUMN IF NOT EXISTS idling_started_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS last_alerted_duration_minutes INTEGER,
-      ADD COLUMN IF NOT EXISTS last_alerted_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true,
-      ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
     UPDATE gps_idling_dedup
        SET idling_started_at = COALESCE(idling_started_at, created_at),
            last_alerted_duration_minutes = COALESCE(last_alerted_duration_minutes, threshold_minutes),
@@ -1628,10 +1621,6 @@ async function ensureIdlingDedupSchema(): Promise<void> {
      WHERE idling_started_at IS NULL
         OR last_alerted_duration_minutes IS NULL
         OR last_alerted_at IS NULL;
-    DROP INDEX IF EXISTS idx_gps_idling_dedup_active_trip;
-    CREATE INDEX IF NOT EXISTS idx_gps_idling_dedup_active_trip
-      ON gps_idling_dedup (vehicle_id, active_trip_id, COALESCE(last_alerted_duration_minutes, threshold_minutes, 0) DESC)
-      WHERE is_active = true;
   `);
   idlingSchemaReady = true;
 }
