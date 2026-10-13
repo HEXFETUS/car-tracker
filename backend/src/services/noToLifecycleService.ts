@@ -31,7 +31,7 @@ import {
   failLifecycleSync,
   type LifecycleSyncOptions,
 } from './lifecycleSyncProgressService.js';
-import { generateNoToRecordNo } from './noToRecordNumberService.js';
+import { generateNoToRecordNo, lockNoToWriters, lockNoToYear, noToYear } from './noToRecordNumberService.js';
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -538,79 +538,165 @@ export function buildNoToLifecycleTrips(
  * This replaces the old upsertNoToTrip logic with full lifecycle fields.
  */
 export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<'created' | 'updated'> {
-  const pool = getPool();
-  const gpsDistanceKm = calculateRouteDistanceKm(trip.points);
-  const lastTelemetryAt = timestampToIso(trip.points[trip.points.length - 1]?.recorded_at);
-  const metricsEndTime = trip.endTime ?? lastTelemetryAt ?? trip.startedAt;
-  const engineHours = Math.max(0, (new Date(metricsEndTime).getTime() - new Date(trip.startedAt).getTime()) / 3600000);
-  const anomalyReason = 'Vehicle completed trip without matching approved travel order.';
+  const startedAt = new Date(trip.startedAt);
+  if (!Number.isFinite(startedAt.getTime())) throw new Error('Invalid No-TO journey timestamp');
+  trip = { ...trip, startedAt: startedAt.toISOString() };
+  const tripDate = tripDateFromTimestamp(trip.startedAt);
+  const year = noToYear(tripDate);
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await lockNoToWriters(client);
+    // Discover an existing business year before taking year locks in sorted order.
+    // Renumbering cannot change the row while this transaction holds the shared gate.
+    const prior = await client.query<{ trip_date: string }>(
+      `SELECT trip_date::text FROM gps_no_to_logs
+        WHERE vehicle_id = $1 AND departure_time = $2::timestamptz AT TIME ZONE 'UTC'
+        ORDER BY created_at ASC, id ASC LIMIT 1`, [trip.vehicleId, trip.startedAt],
+    );
+    const years = [...new Set([year, ...prior.rows.map(row => noToYear(row.trip_date))])].sort((a, b) => a - b);
+    for (const lockedYear of years) await lockNoToYear(client, lockedYear);
+    const gpsDistanceKm = calculateRouteDistanceKm(trip.points);
+    const lastTelemetryAt = timestampToIso(trip.points[trip.points.length - 1]?.recorded_at);
+    const metricsEndTime = trip.endTime ?? lastTelemetryAt ?? trip.startedAt;
+    const engineHours = Math.max(0, (new Date(metricsEndTime).getTime() - new Date(trip.startedAt).getTime()) / 3600000);
+    const anomalyReason = 'Vehicle completed trip without matching approved travel order.';
 
-  // A tracker session can contain several origin-to-return journeys. The first
-  // telemetry timestamp is the stable identity within a vehicle; active-trip
-  // IDs remain route membership metadata only.
-  const activeTripIdArray = Array.from(trip.activeTripIds);
-  let noToLogId: string | null = null;
-  let status: 'created' | 'updated' = 'created';
+    // A tracker session can contain several origin-to-return journeys. The first
+    // telemetry timestamp is the stable identity within a vehicle; active-trip
+    // IDs remain route membership metadata only.
+    const activeTripIdArray = Array.from(trip.activeTripIds);
+    let noToLogId: string | null = null;
+    let status: 'created' | 'updated' = 'created';
 
-  const existing = await pool.query<{ id: string }>(
-    `SELECT id
-       FROM gps_no_to_logs
-      WHERE vehicle_id = $1
-        AND departure_time = $2::timestamptz AT TIME ZONE 'UTC'
-      ORDER BY created_at ASC, id ASC
-      LIMIT 1`,
-    [trip.vehicleId, trip.startedAt],
-  );
-  noToLogId = existing.rows[0]?.id ?? null;
-  if (noToLogId) status = 'updated';
+    const existing = await client.query<{ id: string }>(
+      `SELECT id
+         FROM gps_no_to_logs
+        WHERE vehicle_id = $1
+          AND departure_time = $2::timestamptz AT TIME ZONE 'UTC'
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1`,
+      [trip.vehicleId, trip.startedAt],
+    );
+    noToLogId = existing.rows[0]?.id ?? null;
+    if (noToLogId) status = 'updated';
 
-  if (noToLogId) {
-    // ── UPDATE existing log ──
-    // Determine primary active_trip_id (prefer first/earliest)
-    const primaryActiveTripId = activeTripIdArray.length > 0 ? activeTripIdArray[0] : null;
+    if (noToLogId) {
+      // ── UPDATE existing log ──
+      // Determine primary active_trip_id (prefer first/earliest)
+      const primaryActiveTripId = activeTripIdArray.length > 0 ? activeTripIdArray[0] : null;
 
-    await pool.query(
-      `UPDATE gps_no_to_logs
-          SET driver_id = COALESCE($2, driver_id),
-              origin_address = $3,
-              origin_coordinates = $4,
-              destination_address = $5,
-              destination_coordinates = $6,
-              departure_time = $7::timestamptz AT TIME ZONE 'UTC',
-              arrival_time = $8::timestamptz AT TIME ZONE 'UTC',
-              distance_km = $9,
-              engine_hours = $10,
-              max_speed_kph = $11,
-              status = CASE WHEN status = 'linked' THEN status ELSE 'unmatched' END,
-              anomaly_flag = true,
-              anomaly_reason = $12,
-              business_trip_status = $13,
-              arrived_location_name = $14,
-              arrived_coordinates = $15,
-              destination_reached_at = $16::timestamptz AT TIME ZONE 'UTC',
-              returned_to_base_at = $17::timestamptz AT TIME ZONE 'UTC',
-              paused_at = $18::timestamptz AT TIME ZONE 'UTC',
-              pause_location = $19,
-              resumed_at = $20::timestamptz AT TIME ZONE 'UTC',
-              end_address = $21,
-              end_coordinates = $22,
-              end_time = $23::timestamptz AT TIME ZONE 'UTC',
-              farthest_distance_m = $24,
-              candidate_destination_address = $25,
-              candidate_destination_coordinates = $26,
-              active_trip_id = $27,
-              parent_trip_id = CASE
-                WHEN status = 'unmatched'
-                 AND converted_gps_trip_log_id IS NULL
-                 AND travel_order_id IS NULL
-                THEN NULL
-                ELSE parent_trip_id
-              END,
-              updated_at = current_timestamp
-        WHERE id = $1`,
-      [
-        noToLogId,
+      await client.query(
+        `UPDATE gps_no_to_logs
+            SET driver_id = COALESCE($2, driver_id),
+                origin_address = $3,
+                origin_coordinates = $4,
+                destination_address = $5,
+                destination_coordinates = $6,
+                departure_time = $7::timestamptz AT TIME ZONE 'UTC',
+                arrival_time = $8::timestamptz AT TIME ZONE 'UTC',
+                distance_km = $9,
+                engine_hours = $10,
+                max_speed_kph = $11,
+                status = CASE WHEN status = 'linked' THEN status ELSE 'unmatched' END,
+                anomaly_flag = true,
+                anomaly_reason = $12,
+                business_trip_status = $13,
+                arrived_location_name = $14,
+                arrived_coordinates = $15,
+                destination_reached_at = $16::timestamptz AT TIME ZONE 'UTC',
+                returned_to_base_at = $17::timestamptz AT TIME ZONE 'UTC',
+                paused_at = $18::timestamptz AT TIME ZONE 'UTC',
+                pause_location = $19,
+                resumed_at = $20::timestamptz AT TIME ZONE 'UTC',
+                end_address = $21,
+                end_coordinates = $22,
+                end_time = $23::timestamptz AT TIME ZONE 'UTC',
+                farthest_distance_m = $24,
+                candidate_destination_address = $25,
+                candidate_destination_coordinates = $26,
+                active_trip_id = $27,
+                parent_trip_id = CASE
+                  WHEN status = 'unmatched'
+                   AND converted_gps_trip_log_id IS NULL
+                   AND travel_order_id IS NULL
+                  THEN NULL
+                  ELSE parent_trip_id
+                END,
+                updated_at = current_timestamp
+          WHERE id = $1`,
+        [
+          noToLogId,
+          trip.driverId,
+          trip.originName,
+          trip.originCoord,
+          trip.destinationName,
+          trip.destinationCoord,
+          trip.startedAt,
+          trip.arrivalAt,
+          Number(gpsDistanceKm.toFixed(2)),
+          Number(engineHours.toFixed(2)),
+          Number(trip.maxSpeedKph.toFixed(2)),
+          anomalyReason,
+          trip.status,
+          trip.arrivedLocationName,
+          trip.arrivedCoordinates,
+          trip.destinationReachedAt,
+          trip.returnedToBaseAt,
+          trip.pausedAt,
+          trip.pauseLocation,
+          trip.resumedAt,
+          trip.endAddress,
+          trip.endCoordinates,
+          trip.endTime,
+          Number(trip.farthestDistanceM.toFixed(2)),
+          trip.candidateDestinationAddress,
+          trip.candidateDestinationCoordinates,
+          primaryActiveTripId,
+        ],
+      );
+    } else {
+      // ── INSERT new log ──
+      const noToRecordNo = await generateNoToRecordNo(tripDate, client);
+      const primaryActiveTripId = activeTripIdArray.length > 0 ? activeTripIdArray[0] : null;
+      const insertColumns = [
+        'no_to_record_no',
+        'vehicle_id',
+        'driver_id',
+        'trip_date',
+        'origin_address',
+        'origin_coordinates',
+        'destination_address',
+        'destination_coordinates',
+        'departure_time',
+        'arrival_time',
+        'distance_km',
+        'engine_hours',
+        'max_speed_kph',
+        'status',
+        'anomaly_flag',
+        'anomaly_reason',
+        'business_trip_status',
+        'arrived_location_name',
+        'arrived_coordinates',
+        'destination_reached_at',
+        'returned_to_base_at',
+        'paused_at',
+        'pause_location',
+        'resumed_at',
+        'end_address',
+        'end_coordinates',
+        'end_time',
+        'farthest_distance_m',
+        'candidate_destination_address',
+        'candidate_destination_coordinates',
+        'active_trip_id',
+      ];
+      const insertValues = [
+        noToRecordNo,
+        trip.vehicleId,
         trip.driverId,
+        tripDateFromTimestamp(trip.startedAt),
         trip.originName,
         trip.originCoord,
         trip.destinationName,
@@ -620,6 +706,8 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
         Number(gpsDistanceKm.toFixed(2)),
         Number(engineHours.toFixed(2)),
         Number(trip.maxSpeedKph.toFixed(2)),
+        'unmatched',
+        true,
         anomalyReason,
         trip.status,
         trip.arrivedLocationName,
@@ -636,147 +724,62 @@ export async function upsertNoToTripLifecycle(trip: NoToLifecycleTrip): Promise<
         trip.candidateDestinationAddress,
         trip.candidateDestinationCoordinates,
         primaryActiveTripId,
-      ],
-    );
-  } else {
-    // ── INSERT new log ──
-    const noToRecordNo = await generateNoToRecordNo(tripDateFromTimestamp(trip.startedAt));
-    const primaryActiveTripId = activeTripIdArray.length > 0 ? activeTripIdArray[0] : null;
-    const insertColumns = [
-      'no_to_record_no',
-      'vehicle_id',
-      'driver_id',
-      'trip_date',
-      'origin_address',
-      'origin_coordinates',
-      'destination_address',
-      'destination_coordinates',
-      'departure_time',
-      'arrival_time',
-      'distance_km',
-      'engine_hours',
-      'max_speed_kph',
-      'status',
-      'anomaly_flag',
-      'anomaly_reason',
-      'business_trip_status',
-      'arrived_location_name',
-      'arrived_coordinates',
-      'destination_reached_at',
-      'returned_to_base_at',
-      'paused_at',
-      'pause_location',
-      'resumed_at',
-      'end_address',
-      'end_coordinates',
-      'end_time',
-      'farthest_distance_m',
-      'candidate_destination_address',
-      'candidate_destination_coordinates',
-      'active_trip_id',
-    ];
-    const insertValues = [
-      noToRecordNo,
-      trip.vehicleId,
-      trip.driverId,
-      tripDateFromTimestamp(trip.startedAt),
-      trip.originName,
-      trip.originCoord,
-      trip.destinationName,
-      trip.destinationCoord,
-      trip.startedAt,
-      trip.arrivalAt,
-      Number(gpsDistanceKm.toFixed(2)),
-      Number(engineHours.toFixed(2)),
-      Number(trip.maxSpeedKph.toFixed(2)),
-      'unmatched',
-      true,
-      anomalyReason,
-      trip.status,
-      trip.arrivedLocationName,
-      trip.arrivedCoordinates,
-      trip.destinationReachedAt,
-      trip.returnedToBaseAt,
-      trip.pausedAt,
-      trip.pauseLocation,
-      trip.resumedAt,
-      trip.endAddress,
-      trip.endCoordinates,
-      trip.endTime,
-      Number(trip.farthestDistanceM.toFixed(2)),
-      trip.candidateDestinationAddress,
-      trip.candidateDestinationCoordinates,
-      primaryActiveTripId,
-    ];
-    const insertSql = `INSERT INTO gps_no_to_logs
-       (${insertColumns.join(', ')})
-     VALUES (${insertColumns.map((_, i) => `$${i + 1}`).join(', ')})
-     RETURNING id`;
+      ];
+      const insertSql = `INSERT INTO gps_no_to_logs
+         (${insertColumns.join(', ')})
+       VALUES (${insertColumns.map((_, i) => `$${i + 1}`).join(', ')})
+       RETURNING id`;
 
-    console.log('[no-to-insert-debug]', {
-      insertColumnCount: insertColumns.length,
-      insertValueCount: insertValues.length,
-    });
+      console.log('[no-to-insert-debug]', {
+        insertColumnCount: insertColumns.length,
+        insertValueCount: insertValues.length,
+      });
 
-    let lastError: Error | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const inserted = await pool.query<{ id: string }>(insertSql, insertValues);
-        noToLogId = inserted.rows[0]?.id ?? null;
-        if (noToLogId) break;
-      } catch (err: any) {
-        lastError = err;
-        // If duplicate key on no_to_record_no, regenerate and retry
-        if (err?.code === '23505' && err?.constraint === 'gps_no_to_logs_no_to_record_no_key') {
-          const newNo = await generateNoToRecordNo(tripDateFromTimestamp(trip.startedAt));
-          insertValues[0] = newNo;
-          continue;
-        }
-        // Otherwise rethrow
-        throw err;
-      }
+      const inserted = await client.query<{ id: string }>(insertSql, insertValues);
+      noToLogId = inserted.rows[0]?.id ?? null;
     }
 
-    if (!noToLogId && lastError) {
-      throw lastError;
+    // ── Sync active trip sessions ──
+    if (!noToLogId) {
+      throw new Error('No-TO insertion did not return a journey ID');
     }
-  }
 
-  // ── Sync active trip sessions ──
-  if (!noToLogId) {
-    console.warn('[no-to-upsert] Skipping active trip sync — no noToLogId');
+    await client.query(`DELETE FROM gps_no_to_log_active_trips WHERE gps_no_to_log_id = $1`, [noToLogId]);
+
+    for (const activeTripId of trip.activeTripIds) {
+      const activePoints = trip.points.filter((point) => point.active_trip_id === activeTripId);
+      const startTime = timestampToIso(activePoints[0]?.recorded_at);
+      const endTimeForSession = timestampToIso(activePoints[activePoints.length - 1]?.recorded_at);
+      await client.query(
+        `INSERT INTO gps_no_to_log_active_trips
+           (gps_no_to_log_id, active_trip_id, start_time, end_time)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (gps_no_to_log_id, active_trip_id)
+         DO UPDATE SET
+           start_time = LEAST(COALESCE(gps_no_to_log_active_trips.start_time, EXCLUDED.start_time), EXCLUDED.start_time),
+           end_time = GREATEST(COALESCE(gps_no_to_log_active_trips.end_time, EXCLUDED.end_time), EXCLUDED.end_time)`,
+        [noToLogId, activeTripId, startTime, endTimeForSession],
+      );
+
+      await client.query(
+        `UPDATE gps_telemetry
+            SET driver_id = COALESCE(driver_id, $2)
+          WHERE vehicle_id = $1
+            AND active_trip_id = $3
+            AND ($4::timestamptz IS NULL OR recorded_at >= $4::timestamptz)
+            AND ($5::timestamptz IS NULL OR recorded_at <= $5::timestamptz)`,
+        [trip.vehicleId, trip.driverId, activeTripId, startTime, endTimeForSession],
+      );
+    }
+
+    await client.query('COMMIT');
     return status;
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch { /* Preserve the original error. */ }
+    throw error;
+  } finally {
+    client.release();
   }
-
-  await pool.query(`DELETE FROM gps_no_to_log_active_trips WHERE gps_no_to_log_id = $1`, [noToLogId]);
-
-  for (const activeTripId of trip.activeTripIds) {
-    const activePoints = trip.points.filter((point) => point.active_trip_id === activeTripId);
-    const startTime = timestampToIso(activePoints[0]?.recorded_at);
-    const endTimeForSession = timestampToIso(activePoints[activePoints.length - 1]?.recorded_at);
-    await pool.query(
-      `INSERT INTO gps_no_to_log_active_trips
-         (gps_no_to_log_id, active_trip_id, start_time, end_time)
-       VALUES ($1,$2,$3,$4)
-       ON CONFLICT (gps_no_to_log_id, active_trip_id)
-       DO UPDATE SET
-         start_time = LEAST(COALESCE(gps_no_to_log_active_trips.start_time, EXCLUDED.start_time), EXCLUDED.start_time),
-         end_time = GREATEST(COALESCE(gps_no_to_log_active_trips.end_time, EXCLUDED.end_time), EXCLUDED.end_time)`,
-      [noToLogId, activeTripId, startTime, endTimeForSession],
-    );
-
-    await pool.query(
-      `UPDATE gps_telemetry
-          SET driver_id = COALESCE(driver_id, $2)
-        WHERE vehicle_id = $1
-          AND active_trip_id = $3
-          AND ($4::timestamptz IS NULL OR recorded_at >= $4::timestamptz)
-          AND ($5::timestamptz IS NULL OR recorded_at <= $5::timestamptz)`,
-      [trip.vehicleId, trip.driverId, activeTripId, startTime, endTimeForSession],
-    );
-  }
-
-  return status;
 }
 
 // ── Main Sync Function ────────────────────────────────────────────
