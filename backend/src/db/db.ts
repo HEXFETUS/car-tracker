@@ -65,6 +65,9 @@ export function getPool(): pg.Pool {
             ssl: {
               ca,
               rejectUnauthorized: true,
+              // pg wraps an existing socket without a TLS host for IP targets.
+              // Set the certificate verification host explicitly instead of localhost.
+              host: new URL(DATABASE_URL).hostname.replace(/^\[|\]$/g, ''),
             },
           }
         : {}),
