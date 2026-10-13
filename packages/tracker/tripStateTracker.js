@@ -25,6 +25,7 @@
 
 import { getJson, setJson } from './state.js';
 import pg from 'pg';
+import { getDatabaseConfig } from './database.js';
 
 const { Pool } = pg;
 let telemetryPool = null;
@@ -33,7 +34,7 @@ function getTelemetryPool() {
   if (!process.env.DATABASE_URL) return null;
   if (!telemetryPool) {
     telemetryPool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      ...getDatabaseConfig(),
       max: 3,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,

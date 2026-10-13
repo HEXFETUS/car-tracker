@@ -5,7 +5,7 @@
 import { API_BASE as ROOT_API_BASE } from '@/shared/api';
 import { apiFetch } from '@/shared/api-client';
 
-const API_BASE = '/api/gps-logs';
+const API_BASE = `${ROOT_API_BASE}/api/gps-logs`;
 
 export interface EnrichedGpsTripLog {
   id: string;

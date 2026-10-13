@@ -28,8 +28,18 @@ function ensurePool(): pg.Pool | null {
   if (pool) return pool;
   if (!isSupabaseConfigured()) return null;
 
+  const ca = process.env.DATABASE_CA_CERT?.replace(/\\n/g, '\n');
+  if (process.env.NODE_ENV === 'production' && !ca) {
+    throw new Error('DATABASE_CA_CERT is required for production PostgreSQL connections');
+  }
+
   pool = new Pool({
     connectionString: DATABASE_URL,
+    ...(ca ? { ssl: {
+      ca,
+      rejectUnauthorized: true,
+      host: new URL(DATABASE_URL).hostname.replace(/^\[|\]$/g, ''),
+    } } : {}),
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,

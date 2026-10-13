@@ -3,8 +3,9 @@
 // Frontend API client for the aggregated dashboard endpoint.
 
 import { apiFetch } from '@/shared/api-client';
+import { API_BASE as ROOT_API_BASE } from '@/shared/api';
 
-const API_BASE = '/api/dashboard';
+const API_BASE = `${ROOT_API_BASE}/api/dashboard`;
 
 export interface DashboardKpis {
   fleet: {

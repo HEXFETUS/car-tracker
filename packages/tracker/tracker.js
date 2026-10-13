@@ -2,7 +2,7 @@
 //
 // Core tracking module: fetches fleet data from the Cartrack API,
 // extracts vehicle status, computes speeding/idling/fuel thresholds,
-// generates Telegram notifications, and persists alerts to Supabase.
+// generates Telegram notifications; backend services persist telemetry to PostgreSQL.
 //
 // Environment Variables (loaded automatically via process.env):
 //   CARTRACK_API_URL, CARTRACK_USERNAME, CARTRACK_PASSWORD
@@ -16,7 +16,7 @@
 //   BOT_TOKEN, CHAT_ID (Telegram)
 
 import { alreadySentRecently, getJson, setJson } from './state.js';
-import { insertAlertsToSupabase, isSupabaseConfigured, findVehicleIdByPlate } from './supabase.js';
+import { getDatabaseConfig } from './database.js';
 import { buildTripLogRecord } from './tripLogTransformer.js';
 import pg from 'pg';
 import {
@@ -422,7 +422,7 @@ function getPostgresPool() {
       loggedPostgresTarget = true;
     }
     postgresPool = new pg.Pool({
-      connectionString: DATABASE_URL,
+      ...getDatabaseConfig(),
       max: 3,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
@@ -972,7 +972,10 @@ export async function syncFleetAndAlert(options = {}) {
 
     const resolvedVehicleId = resolveFn
       ? await resolveFn(plateNumber)
-      : await findVehicleIdByPlate(plateNumber);
+      : (await getPostgresPool().query(
+          'SELECT id FROM vehicles WHERE lower(trim(plate_number)) = lower(trim($1)) LIMIT 1',
+          [plateNumber],
+        )).rows[0]?.id;
     if (!resolvedVehicleId) {
       // Plate number does not exist in our vehicles table — skip entirely.
       // Do not attempt to guess or auto-create metadata.
